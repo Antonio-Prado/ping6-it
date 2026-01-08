@@ -229,7 +229,7 @@ export default function App() {
 
           <div>
             <h3 style={{ margin: "0 0 6px 0" }}>RAW v6</h3>
-            <pre style={{ padding: 12, "#111827", color: "#f9fafb", border: "1px solid #111827", lineHeight: 1.35, borderRadius: 8, overflowX: "auto" }}>
+            <pre style={{ padding: 12, background: "#111827", color: "#f9fafb", border: "1px solid #111827", lineHeight: 1.35, borderRadius: 8, overflowX: "auto" }}>
               {v6.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
             </pre>
           </div>
