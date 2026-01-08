@@ -740,6 +740,7 @@ export default function App() {
               trace
             </label>
           </>
+	)}
         {cmd === "http" && (
           <>
             <label>
