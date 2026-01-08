@@ -90,18 +90,37 @@ export default function App() {
           Cancel
         </button>
       </div>
+{err && (
+  <div
+    style={{
+      background: "#fee",
+      color: "#111",
+      border: "1px solid #f99",
+      padding: 12,
+      marginBottom: 12,
+      whiteSpace: "pre-wrap",
+    }}
+  >
+    {err}
+  </div>
+)}
 
-      {err && (
-        <div style={{ background: "#fee", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
-          {err}
-        </div>
-      )}
+{out && (
+  <pre
+    style={{
+      padding: 12,
+      background: "#f3f4f6",
+      color: "#111",
+      border: "1px solid #ddd",
+      borderRadius: 8,
+      overflowX: "auto",
+      whiteSpace: "pre-wrap",
+    }}
+  >
+    {out}
+  </pre>
+)}
 
-      {out && (
-        <pre style={{ padding: 12, background: "#fafafa", border: "1px solid #eee", borderRadius: 8, overflowX: "auto" }}>
-          {out}
-        </pre>
-      )}
     </div>
   );
 }
