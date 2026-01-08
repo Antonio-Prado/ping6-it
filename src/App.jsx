@@ -415,6 +415,7 @@ export default function App() {
   const [v4, setV4] = useState(null);
   const [v6, setV6] = useState(null);
   const [showRaw, setShowRaw] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
 
   const abortRef = useRef(null);
 
@@ -645,7 +646,15 @@ export default function App() {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <label>
           Command{" "}
-          <select value={cmd} onChange={(e) => setCmd(e.target.value)} disabled={running} style={{ padding: 6 }}>
+          <select
+            value={cmd}
+            onChange={(e) => {
+              setCmd(e.target.value);
+              setAdvanced(false);
+            }}
+            disabled={running}
+            style={{ padding: 6 }}
+          >
             <option value="ping">ping</option>
             <option value="traceroute">traceroute</option>
             <option value="mtr">mtr</option>
@@ -673,7 +682,7 @@ export default function App() {
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
 
-        {(cmd === "ping" || cmd === "mtr") && (
+        {advanced && (cmd === "ping" || cmd === "mtr") && (
           <label>
             {cmd === "mtr" ? "Packets/hop" : "Packets"}{" "}
             <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
@@ -691,7 +700,7 @@ export default function App() {
               </select>
             </label>
 
-            {((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
+            {advanced && ((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
               <label>
                 Port{" "}
                 <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
@@ -706,48 +715,61 @@ export default function App() {
               Query{" "}
               <select value={dnsQuery} onChange={(e) => setDnsQuery(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 {["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV", "CAA", "ANY"].map((q) => (
-                  <option key={q} value={q}>{q}</option>
+                  <option key={q} value={q}>
+                    {q}
+                  </option>
                 ))}
               </select>
             </label>
 
-            <label>
-              Proto{" "}
-              <select value={dnsProto} onChange={(e) => setDnsProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
-                <option value="UDP">UDP</option>
-                <option value="TCP">TCP</option>
-              </select>
-            </label>
+            {advanced && (
+              <>
+                <label>
+                  Proto{" "}
+                  <select value={dnsProto} onChange={(e) => setDnsProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
+                    <option value="UDP">UDP</option>
+                    <option value="TCP">TCP</option>
+                  </select>
+                </label>
 
-            <label>
-              Port{" "}
-              <input value={dnsPort} onChange={(e) => setDnsPort(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
-            </label>
+                <label>
+                  Port{" "}
+                  <input
+                    value={dnsPort}
+                    onChange={(e) => setDnsPort(e.target.value)}
+                    disabled={running}
+                    style={{ padding: 6, width: 70 }}
+                  />
+                </label>
 
-            <label>
-              Resolver{" "}
-              <input
-                value={dnsResolver}
-                onChange={(e) => setDnsResolver(e.target.value)}
-                disabled={running}
-                placeholder="(vuoto = default)"
-                style={{ padding: 6, width: 220 }}
-              />
-            </label>
+                <label>
+                  Resolver{" "}
+                  <input
+                    value={dnsResolver}
+                    onChange={(e) => setDnsResolver(e.target.value)}
+                    disabled={running}
+                    placeholder="(vuoto = default)"
+                    style={{ padding: 6, width: 220 }}
+                  />
+                </label>
 
-            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <input type="checkbox" checked={dnsTrace} onChange={(e) => setDnsTrace(e.target.checked)} disabled={running} />
-              trace
-            </label>
+                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="checkbox" checked={dnsTrace} onChange={(e) => setDnsTrace(e.target.checked)} disabled={running} />
+                  trace
+                </label>
+              </>
+            )}
           </>
-	)}
+        )}
         {cmd === "http" && (
           <>
             <label>
               Method{" "}
               <select value={httpMethod} onChange={(e) => setHttpMethod(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 {["GET", "HEAD", "OPTIONS"].map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
               </select>
             </label>
@@ -761,34 +783,48 @@ export default function App() {
               </select>
             </label>
 
-            <label>
-              Path{" "}
-              <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
-            </label>
+            {advanced && (
+              <>
+                <label>
+                  Path{" "}
+                  <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
+                </label>
 
-            <label>
-              Query{" "}
-              <input value={httpQuery} onChange={(e) => setHttpQuery(e.target.value)} disabled={running} placeholder="(optional)" style={{ padding: 6, width: 160 }} />
-            </label>
+                <label>
+                  Query{" "}
+                  <input
+                    value={httpQuery}
+                    onChange={(e) => setHttpQuery(e.target.value)}
+                    disabled={running}
+                    placeholder="(optional)"
+                    style={{ padding: 6, width: 160 }}
+                  />
+                </label>
 
-            <label>
-              Port{" "}
-              <input value={httpPort} onChange={(e) => setHttpPort(e.target.value)} disabled={running} placeholder="default" style={{ padding: 6, width: 90 }} />
-            </label>
+                <label>
+                  Port{" "}
+                  <input
+                    value={httpPort}
+                    onChange={(e) => setHttpPort(e.target.value)}
+                    disabled={running}
+                    placeholder="default"
+                    style={{ padding: 6, width: 90 }}
+                  />
+                </label>
 
-            <label>
-              Resolver{" "}
-              <input
-                value={httpResolver}
-                onChange={(e) => setHttpResolver(e.target.value)}
-                disabled={running}
-                placeholder="(vuoto = default)"
-                style={{ padding: 6, width: 220 }}
-              />
-            </label>
+                <label>
+                  Resolver{" "}
+                  <input
+                    value={httpResolver}
+                    onChange={(e) => setHttpResolver(e.target.value)}
+                    disabled={running}
+                    placeholder="(vuoto = default)"
+                    style={{ padding: 6, width: 220 }}
+                  />
+                </label>
+              </>
+            )}
           </>
-        )}
-
         )}
 
         <input
@@ -804,6 +840,9 @@ export default function App() {
         </button>
         <button onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
           Cancel
+        </button>
+        <button onClick={() => setAdvanced((s) => !s)} disabled={running} style={{ padding: "8px 12px" }}>
+          {advanced ? "Basic" : "Advanced"}
         </button>
         <button
           onClick={() => setShowRaw((s) => !s)}
