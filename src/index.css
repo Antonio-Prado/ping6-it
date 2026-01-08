@@ -95,3 +95,18 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+button {
+  color: #111 !important;
+  background: #e5e7eb !important;
+  border: 1px solid #9ca3af !important;
+}
+
+button:hover {
+  background: #d1d5db !important;
+}
+
+button:disabled {
+  opacity: 0.6 !important;
+  cursor: default !important;
+}
+
