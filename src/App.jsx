@@ -119,7 +119,7 @@ export default function App() {
         }
       } else if (cmd === "dns") {
         measurementOptions = {
-          query: (dnsQuery || "A").toUpperCase(),
+	query: { type: (dnsQuery || "A").toUpperCase() },
           protocol: (dnsProto || "UDP").toUpperCase(),
           port: Math.max(1, Math.min(65535, Number(dnsPort) || 53)),
           trace: Boolean(dnsTrace),

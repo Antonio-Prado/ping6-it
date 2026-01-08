@@ -117,29 +117,20 @@ function sanitize(body) {
   }
 
   if (type === "dns") {
-    const query = String(moIn.query || "A").toUpperCase();
-    const allowedQ = new Set(["A","AAAA","CNAME","MX","NS","TXT","SOA","PTR","SRV","CAA","ANY"]);
-    if (!allowedQ.has(query)) throw new Error("Invalid dns query type");
-    mo.query = query;
+			// query può arrivare come stringa ("A") oppure come oggetto { type: "A" }
+let qType = "A";
+if (typeof moIn.query === "string") qType = moIn.query;
+else if (moIn.query && typeof moIn.query === "object") qType = moIn.query.type || "A";
 
-    const proto = String(moIn.protocol || "UDP").toUpperCase();
-    if (!["UDP", "TCP"].includes(proto)) throw new Error("Invalid dns protocol (UDP/TCP)");
-    mo.protocol = proto;
+qType = String(qType).toUpperCase();
 
-    mo.port = clampInt(moIn.port, 1, 65535, 53);
+const allowedQ = new Set([
+  "A","AAAA","ANY","CNAME","DNSKEY","DS","HTTPS","MX","NS","NSEC","PTR","RRSIG","SOA","TXT","SRV","SVCB"
+]);
+if (!allowedQ.has(qType)) throw new Error("Invalid dns query type");
 
-    if (moIn.trace !== undefined) mo.trace = Boolean(moIn.trace);
+mo.query = { type: qType };
 
-    if (moIn.resolver !== undefined && moIn.resolver !== null) {
-      const r = String(moIn.resolver).trim();
-      if (r) {
-        if (r.length > 253) throw new Error("Resolver too long");
-        if (/\s/.test(r)) throw new Error("Resolver contains spaces");
-        if (hasSchemeOrPath(r)) throw new Error("Resolver must be hostname/IP only");
-        if (isBlockedIpLiteral(r)) throw new Error("Blocked resolver IP (private/local)");
-        mo.resolver = r;
-      }
-    }
   }
 
   return {
