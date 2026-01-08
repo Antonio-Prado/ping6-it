@@ -12,16 +12,21 @@ function ms(n) {
   return `${n.toFixed(1)} ms`;
 }
 
+function probeHeader(x, idx) {
+  const p = x?.probe || {};
+  return `--- probe ${idx + 1}: ${p.city || ""} ${p.country || ""} AS${p.asn || ""} ${p.network || ""}`.trim();
+}
+
 export default function App() {
   const [target, setTarget] = useState("example.com");
-
-  // NEW: command + traceroute protocol/port
-  const [cmd, setCmd] = useState("ping"); // "ping" | "traceroute"
-  const [trProto, setTrProto] = useState("ICMP"); // ICMP | TCP | UDP
-  const [trPort, setTrPort] = useState(80);
-
-  const [limit, setLimit] = useState(3); // tienilo basso per traceroute
+  const [cmd, setCmd] = useState("ping"); // ping | traceroute
   const [from, setFrom] = useState("Western Europe");
+  const [limit, setLimit] = useState(3);
+
+  const [packets, setPackets] = useState(3); // ping only
+
+  const [trProto, setTrProto] = useState("ICMP"); // traceroute: ICMP | TCP | UDP
+  const [trPort, setTrPort] = useState(80); // traceroute TCP only
 
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -38,7 +43,7 @@ export default function App() {
     const t = target.trim();
     if (!t) return;
 
-    // ipVersion (4/6) è consentito solo se target è hostname: per compare v4/v6 richiediamo hostname :contentReference[oaicite:2]{index=2}
+    // Compare v4/v6: richiede hostname (non IP literal)
     if (isIpLiteral(t)) {
       setErr("Per il confronto v4/v6 inserisci un hostname (non un IP).");
       return;
@@ -50,16 +55,16 @@ export default function App() {
 
     setRunning(true);
     try {
-      const loc = from.trim() || "Western Europe";
+      const loc = (from.trim() || "Western Europe");
+      const probes = Math.max(1, Math.min(10, Number(limit) || 3));
 
-      // measurementOptions dipende dal tipo :contentReference[oaicite:3]{index=3}
       let measurementOptions = {};
       if (cmd === "ping") {
-        measurementOptions = { packets: 3 };
+        measurementOptions = { packets: Math.max(1, Math.min(10, Number(packets) || 3)) };
       } else if (cmd === "traceroute") {
         measurementOptions = { protocol: trProto };
         if (trProto === "TCP") {
-          measurementOptions.port = Number(trPort) || 80;
+          measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
         }
       }
 
@@ -67,7 +72,7 @@ export default function App() {
         type: cmd,
         target: t,
         locations: [{ magic: loc }],
-        limit: Math.max(1, Math.min(10, Number(limit) || 3)),
+        limit: probes,
         inProgressUpdates: true,
       };
 
@@ -77,7 +82,7 @@ export default function App() {
         ac.signal
       );
 
-      // v6 sugli stessi probe: locations = m4.id :contentReference[oaicite:4]{index=4}
+      // v6 sugli stessi probe (locations = id v4)
       const m6 = await createMeasurement(
         { ...base, locations: m4.id, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
         ac.signal
@@ -117,6 +122,23 @@ export default function App() {
           </select>
         </label>
 
+        <label>
+          From{" "}
+          <input value={from} onChange={(e) => setFrom(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
+        </label>
+
+        <label>
+          Probes{" "}
+          <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+        </label>
+
+        {cmd === "ping" && (
+          <label>
+            Packets{" "}
+            <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+          </label>
+        )}
+
         {cmd === "traceroute" && (
           <>
             <label>
@@ -131,32 +153,17 @@ export default function App() {
             {trProto === "TCP" && (
               <label>
                 Port{" "}
-                <input
-                  value={trPort}
-                  onChange={(e) => setTrPort(e.target.value)}
-                  disabled={running}
-                  style={{ padding: 6, width: 90 }}
-                />
+                <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
               </label>
             )}
           </>
         )}
 
-        <label>
-          From{" "}
-          <input value={from} onChange={(e) => setFrom(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
-        </label>
-
-        <label>
-          Probes{" "}
-          <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
-        </label>
-
         <input
           value={target}
           onChange={(e) => setTarget(e.target.value)}
           placeholder="hostname (es. example.com)"
-          style={{ padding: 8, minWidth: 280 }}
+          style={{ padding: 8, minWidth: 260 }}
           disabled={running}
         />
 
@@ -216,30 +223,18 @@ export default function App() {
           <div>
             <h3 style={{ margin: "0 0 6px 0" }}>RAW v4</h3>
             <pre style={{ padding: 12, background: "#f3f4f6", color: "#111", border: "1px solid #ddd", borderRadius: 8, overflowX: "auto" }}>
-              {v4.results?.map((x, idx) => {
-                const p = x.probe;
-                const raw = x.result?.rawOutput ?? "";
-                return `--- probe ${idx + 1}: ${p?.city || ""} ${p?.country || ""} AS${p?.asn || ""} ${p?.network || ""}\n${raw}\n`;
-              }).join("\n")}
+              {v4.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
             </pre>
           </div>
 
           <div>
             <h3 style={{ margin: "0 0 6px 0" }}>RAW v6</h3>
             <pre style={{ padding: 12, background: "#f3f4f6", color: "#111", border: "1px solid #ddd", borderRadius: 8, overflowX: "auto" }}>
-              {v6.results?.map((x, idx) => {
-                const p = x.probe;
-                const raw = x.result?.rawOutput ?? "";
-                return `--- probe ${idx + 1}: ${p?.city || ""} ${p?.country || ""} AS${p?.asn || ""} ${p?.network || ""}\n${raw}\n`;
-              }).join("\n")}
+              {v6.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
             </pre>
           </div>
         </div>
       )}
-
-      <div style={{ marginTop: 10, opacity: 0.8 }}>
-        Traceroute protocol support (ICMP/TCP/UDP) e ipVersion (4/6 solo con hostname) sono definiti nella spec API. :contentReference[oaicite:5]{index=5}
-      </div>
     </div>
   );
 }
