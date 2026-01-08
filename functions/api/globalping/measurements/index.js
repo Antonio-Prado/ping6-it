@@ -62,8 +62,8 @@ function sanitize(body) {
   if (!body || typeof body !== "object") throw new Error("Invalid JSON body");
 
   const type = String(body.type || "").trim();
-  if (!["ping", "traceroute", "mtr", "dns"].includes(type)) {
-    throw new Error("Unsupported type (allowed: ping, traceroute, mtr, dns)");
+  if (!["ping", "traceroute", "mtr", "dns", "http"].includes(type)) {
+    throw new Error("Unsupported type (allowed: ping, traceroute, mtr, dns, http)");
   }
 
   const target = String(body.target || "").trim();
