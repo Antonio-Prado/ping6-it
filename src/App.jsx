@@ -11,13 +11,17 @@ export default function App() {
   const [target, setTarget] = useState("example.com");
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
-  const [out, setOut] = useState("");
+const [v4, setV4] = useState(null);
+const [v6, setV6] = useState(null);
+
 
   const abortRef = useRef(null);
 
   async function run() {
     setErr("");
-    setOut("");
+setV4(null);
+setV6(null);
+
 
     const t = target.trim();
     if (!t) return;
@@ -58,7 +62,9 @@ export default function App() {
         waitForMeasurement(m6.id, { signal: ac.signal }),
       ]);
 
-      setOut(JSON.stringify({ v4: r4, v6: r6 }, null, 2));
+setV4(r4);
+setV6(r6);
+
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -105,20 +111,74 @@ export default function App() {
   </div>
 )}
 
-{out && (
-  <pre
-    style={{
-      padding: 12,
-      background: "#f3f4f6",
-      color: "#111",
-      border: "1px solid #ddd",
-      borderRadius: 8,
-      overflowX: "auto",
-      whiteSpace: "pre-wrap",
-    }}
-  >
-    {out}
-  </pre>
+{v4 && v6 && (
+  <div style={{ display: "grid", gap: 16 }}>
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%" }}>
+        <thead>
+          <tr>
+            {["#", "probe", "ASN", "network", "v4 avg", "v4 loss", "v6 avg", "v6 loss"].map((h) => (
+              <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {v4.results?.map((a, i) => {
+            const b = v6.results?.[i];
+            const p = a?.probe || b?.probe;
+            const r4 = a?.result?.status === "finished" ? a.result : null;
+            const r6 = b?.result?.status === "finished" ? b.result : null;
+
+            const avg4 = r4?.stats?.avg;
+            const avg6 = r6?.stats?.avg;
+            const loss4 = r4?.stats?.loss;
+            const loss6 = r6?.stats?.loss;
+
+            return (
+              <tr key={i}>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                  {p ? `${p.city}, ${p.country}` : "-"}
+                </td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p?.asn ?? "-"}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p?.network ?? "-"}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{avg4 != null ? `${avg4.toFixed(1)} ms` : "-"}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{loss4 ?? "-"}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{avg6 != null ? `${avg6.toFixed(1)} ms` : "-"}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{loss6 ?? "-"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div>
+        <h3 style={{ margin: "0 0 6px 0" }}>RAW v4</h3>
+        <pre style={{ padding: 12, background: "#f3f4f6", color: "#111", border: "1px solid #ddd", borderRadius: 8, overflowX: "auto" }}>
+          {v4.results?.map((x, idx) => {
+            const p = x.probe;
+            const raw = x.result?.rawOutput ?? "";
+            return `--- probe ${idx + 1}: ${p?.city || ""} ${p?.country || ""} AS${p?.asn || ""} ${p?.network || ""}\n${raw}\n`;
+          }).join("\n")}
+        </pre>
+      </div>
+
+      <div>
+        <h3 style={{ margin: "0 0 6px 0" }}>RAW v6</h3>
+        <pre style={{ padding: 12, background: "#f3f4f6", color: "#111", border: "1px solid #ddd", borderRadius: 8, overflowX: "auto" }}>
+          {v6.results?.map((x, idx) => {
+            const p = x.probe;
+            const raw = x.result?.rawOutput ?? "";
+            return `--- probe ${idx + 1}: ${p?.city || ""} ${p?.country || ""} AS${p?.asn || ""} ${p?.network || ""}\n${raw}\n`;
+          }).join("\n")}
+        </pre>
+      </div>
+    </div>
+  </div>
 )}
 
     </div>
