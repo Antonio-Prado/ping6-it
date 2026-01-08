@@ -1,7 +1,5 @@
 import { useMemo, useRef, useState } from "react";
 import { createMeasurement, waitForMeasurement } from "./lib/globalping";
-import { fetchNlnogPrefix } from "./lib/nlnog";
-
 function isIpLiteral(s) {
   const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/;
   const ipv6 = /^[0-9a-fA-F:]+$/;
@@ -418,14 +416,6 @@ export default function App() {
   const [advanced, setAdvanced] = useState(false);
 
   const abortRef = useRef(null);
-
-  // NLNOG UI
-  const [nlnogQ, setNlnogQ] = useState("193.0.14.0/23");
-  const [nlnogNodes, setNlnogNodes] = useState("BITTERBAL1-V4,BITTERBAL1-V6");
-  const [nlnogRunning, setNlnogRunning] = useState(false);
-  const [nlnogErr, setNlnogErr] = useState("");
-  const [nlnogOut, setNlnogOut] = useState("");
-
   async function run() {
     setErr("");
     setV4(null);
@@ -573,28 +563,6 @@ export default function App() {
     abortRef.current?.abort();
     setRunning(false);
   }
-
-  async function runNlnog() {
-    setNlnogErr("");
-    setNlnogOut("");
-
-    const q = nlnogQ.trim();
-    const nodes = nlnogNodes.trim();
-    if (!q || !nodes) {
-      setNlnogErr("Devi specificare sia q (prefix) che nodes.");
-      return;
-    }
-
-    setNlnogRunning(true);
-    try {
-      const res = await fetchNlnogPrefix({ q, nodes });
-      if (typeof res === "string") setNlnogOut(res);
-      else setNlnogOut(JSON.stringify(res, null, 2));
-    } catch (e) {
-      setNlnogErr(e?.message || String(e));
-    } finally {
-      setNlnogRunning(false);
-    }
   }
 
   const showPingTable = cmd === "ping" && v4 && v6;
@@ -1164,35 +1132,6 @@ export default function App() {
           </div>
         </div>
       )}
-
-      {/* NLNOG section */}
-      <h2 style={{ margin: "16px 0 8px 0" }}>NLNOG LG (BGP prefix)</h2>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-        <label>
-          q{" "}
-          <input value={nlnogQ} onChange={(e) => setNlnogQ(e.target.value)} disabled={nlnogRunning} style={{ padding: 6, width: 220 }} />
-        </label>
-        <label>
-          nodes{" "}
-          <input value={nlnogNodes} onChange={(e) => setNlnogNodes(e.target.value)} disabled={nlnogRunning} style={{ padding: 6, width: 320 }} />
-        </label>
-
-        <button onClick={runNlnog} disabled={nlnogRunning} style={{ padding: "8px 12px" }}>
-          Query
-        </button>
-
-        <button onClick={() => setNlnogNodes("BITTERBAL1-V4,BITTERBAL1-V6")} disabled={nlnogRunning} style={{ padding: "8px 12px" }}>
-          BIT (v4+v6)
-        </button>
-      </div>
-
-      {nlnogErr && (
-        <div style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
-          {nlnogErr}
-        </div>
-      )}
-
-      {nlnogOut && <pre style={preStyle}>{nlnogOut}</pre>}
     </div>
   );
 }
