@@ -27,7 +27,7 @@ function applyGpTag(fromStr, tag) {
   if (!t || t === "any") return (fromStr || "").trim();
 
   const raw = (fromStr || "").trim();
-  if (!raw) return t; // se non specifichi location, puoi usare direttamente "eyeball"/"datacenter" :contentReference[oaicite:1]{index=1}
+  if (!raw) return t; // se non specifichi location, puoi usare direttamente "eyeball"/"datacenter" 
 
   // Se l'utente ha già messo il tag a mano, non duplicare
   if (raw.includes(`+${t}`) || raw === t) return raw;
@@ -380,7 +380,7 @@ export default function App() {
       {nlnogOut && <pre style={preStyle}>{nlnogOut}</pre>}
 
       <div style={{ marginTop: 10, opacity: 0.75 }}>
-        Nota: Globalping supporta i tag <code>eyeball</code>/<code>datacenter</code> e li combina alle location con <code>+</code> (anche su <code>world</code> o regioni tipo “Western Europe”). :contentReference[oaicite:2]{index=2}
+        Nota: Globalping supporta i tag <code>eyeball</code>/<code>datacenter</code> e li combina alle location con <code>+</code> (anche su <code>world</code> o regioni tipo “Western Europe”). 
       </div>
     </div>
   );
