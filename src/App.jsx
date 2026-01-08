@@ -123,6 +123,97 @@ function buildDnsCompare(v4, v6) {
 }
 
 
+function parseHttpInput(raw) {
+  const s = (raw || "").trim();
+  if (!s) return null;
+
+  try {
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s);
+    const u = hasScheme ? new URL(s) : new URL(`https://${s}`);
+    return {
+      host: u.hostname,
+      path: u.pathname || "/",
+      query: u.search ? u.search.slice(1) : "",
+      protocol: u.protocol === "http:" ? "HTTP" : u.protocol === "https:" ? "HTTPS" : null,
+      port: u.port ? Number(u.port) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function pickHttpTotalMs(x) {
+  const r = x?.result;
+  if (r?.status && r.status !== "finished") return null;
+  if (r?.error) return null;
+  const t = r?.timings?.total;
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+function pickHttpStatusCode(x) {
+  const r = x?.result;
+  if (r?.status && r.status !== "finished") return null;
+  const sc = r?.statusCode;
+  return Number.isFinite(sc) ? sc : null;
+}
+
+function buildHttpCompare(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+
+  const rows = a.map((x, i) => {
+    const y = bMap.get(probeKey(x)) ?? b[i];
+    const p = x?.probe || y?.probe || {};
+
+    const v4ms = pickHttpTotalMs(x);
+    const v6ms = pickHttpTotalMs(y);
+
+    const v4sc = pickHttpStatusCode(x);
+    const v6sc = pickHttpStatusCode(y);
+
+    const delta = Number.isFinite(v4ms) && Number.isFinite(v6ms) ? v6ms - v4ms : null;
+    const ratio = Number.isFinite(v4ms) && Number.isFinite(v6ms) && v4ms > 0 ? v6ms / v4ms : null;
+
+    return {
+      key: probeKey(x) || String(i),
+      idx: i,
+      probe: p,
+      v4ms,
+      v6ms,
+      v4sc,
+      v6sc,
+      delta,
+      ratio,
+      winner:
+        Number.isFinite(v4ms) && v4ms > 0 && Number.isFinite(v6ms) && v6ms > 0
+          ? v4ms < v6ms
+            ? "v4"
+            : v6ms < v4ms
+              ? "v6"
+              : "tie"
+          : "-",
+    };
+  });
+
+  const v4msArr = rows.map((r) => r.v4ms).filter(Number.isFinite);
+  const v6msArr = rows.map((r) => r.v6ms).filter(Number.isFinite);
+  const dArr = rows.map((r) => r.delta).filter(Number.isFinite);
+
+  const summary = {
+    n: rows.length,
+    both: rows.filter((r) => Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)).length,
+    median_v4: percentile(v4msArr, 0.5),
+    median_v6: percentile(v6msArr, 0.5),
+    p95_v4: percentile(v4msArr, 0.95),
+    p95_v6: percentile(v6msArr, 0.95),
+    median_delta: percentile(dArr, 0.5),
+  };
+
+  return { rows, summary };
+}
+
+
 function pickTracerouteDstMs(x) {
   const r = x?.result;
   if (!r || (r.status && r.status !== "finished")) return { reached: false, hops: null, dstMs: null };
@@ -291,7 +382,7 @@ function buildMtrCompare(v4, v6) {
 export default function App() {
   // Globalping UI
   const [target, setTarget] = useState("example.com");
-  const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns
+  const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns | http
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
@@ -309,6 +400,15 @@ export default function App() {
   const [dnsPort, setDnsPort] = useState(53);
   const [dnsResolver, setDnsResolver] = useState(""); // empty => default resolver on probe
   const [dnsTrace, setDnsTrace] = useState(false);
+
+  // http
+  const [httpMethod, setHttpMethod] = useState("GET"); // GET | HEAD | OPTIONS
+  const [httpProto, setHttpProto] = useState("HTTPS"); // HTTP | HTTPS | HTTP2
+  const [httpPath, setHttpPath] = useState("/");
+  const [httpQuery, setHttpQuery] = useState("");
+  const [httpPort, setHttpPort] = useState(""); // empty => default (80/443)
+  const [httpResolver, setHttpResolver] = useState(""); // empty => default resolver on probe
+
 
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -334,9 +434,40 @@ export default function App() {
     const t = target.trim();
     if (!t) return;
 
-    // Per ping/traceroute/mtr vogliamo hostname (non IP literal) per il compare v4/v6.
+    let effectiveTarget = t;
+
+    // HTTP: accettiamo anche un URL e lo scomponiamo in host/path/query.
+    let httpParsed = null;
+    let httpEffectiveProto = httpProto;
+    let httpEffectivePath = (httpPath || "/").trim() || "/";
+    let httpEffectiveQuery = (httpQuery || "").trim();
+    let httpEffectivePort = (httpPort || "").trim();
+
+    if (cmd === "http") {
+      httpParsed = parseHttpInput(t);
+      if (!httpParsed?.host) {
+        setErr("Per HTTP inserisci un URL o hostname valido.");
+        return;
+      }
+
+      effectiveTarget = httpParsed.host;
+
+      if (httpParsed.protocol) {
+        httpEffectiveProto = httpParsed.protocol;
+        // manteniamo il selettore coerente se l'utente ha scritto http:// o https://
+        if (httpProto !== httpParsed.protocol) setHttpProto(httpParsed.protocol);
+      }
+
+      if ((httpEffectivePath === "/" || !httpEffectivePath) && httpParsed.path && httpParsed.path !== "/") {
+        httpEffectivePath = httpParsed.path;
+      }
+      if (!httpEffectiveQuery && httpParsed.query) httpEffectiveQuery = httpParsed.query;
+      if (!httpEffectivePort && Number.isFinite(httpParsed.port) && httpParsed.port > 0) httpEffectivePort = String(httpParsed.port);
+    }
+
+    // Per ping/traceroute/mtr/http vogliamo hostname (non IP literal) per il compare v4/v6.
     // Per DNS invece l'input può anche essere un IP (es. PTR), quindi non blocchiamo.
-    if (cmd !== "dns" && isIpLiteral(t)) {
+    if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
       setErr("Per il confronto v4/v6 inserisci un hostname (non un IP).");
       return;
     }
@@ -376,11 +507,36 @@ export default function App() {
         };
         const r = (dnsResolver || "").trim();
         if (r) measurementOptions.resolver = r;
+      } else if (cmd === "http") {
+        const method = (httpMethod || "GET").toUpperCase();
+        const proto = (httpEffectiveProto || "HTTPS").toUpperCase();
+
+        let path = (httpEffectivePath || "/").trim() || "/";
+        if (!path.startsWith("/")) path = `/${path}`;
+
+        let q = (httpEffectiveQuery || "").trim();
+        if (q.startsWith("?")) q = q.slice(1);
+
+        measurementOptions = {
+          request: { method, path },
+          protocol: proto,
+        };
+
+        if (q) measurementOptions.request.query = q;
+
+        const r = (httpResolver || "").trim();
+        if (r) measurementOptions.resolver = r;
+
+        const p = (httpEffectivePort || "").trim();
+        if (p) {
+          const port = Math.max(1, Math.min(65535, Number(p) || 0));
+          if (port) measurementOptions.port = port;
+        }
       }
 
       const base = {
         type: cmd,
-        target: t,
+        target: effectiveTarget,
         locations: [{ magic: fromWithTag || "world" }],
         limit: probes,
         inProgressUpdates: true,
@@ -445,11 +601,18 @@ export default function App() {
   const showMtrTable = cmd === "mtr" && v4 && v6;
 
   const showDnsTable = cmd === "dns" && v4 && v6;
+  const showHttpTable = cmd === "http" && v4 && v6;
 
   const dnsCompare = useMemo(() => {
     if (!showDnsTable) return null;
     return buildDnsCompare(v4, v6);
   }, [showDnsTable, v4, v6]);
+
+  const httpCompare = useMemo(() => {
+    if (!showHttpTable) return null;
+    return buildHttpCompare(v4, v6);
+  }, [showHttpTable, v4, v6]);
+
 
   const trCompare = useMemo(() => {
     if (!showTracerouteTable) return null;
@@ -487,6 +650,7 @@ export default function App() {
             <option value="traceroute">traceroute</option>
             <option value="mtr">mtr</option>
             <option value="dns">dns</option>
+            <option value="http">http</option>
           </select>
         </label>
 
@@ -576,12 +740,60 @@ export default function App() {
               trace
             </label>
           </>
+        {cmd === "http" && (
+          <>
+            <label>
+              Method{" "}
+              <select value={httpMethod} onChange={(e) => setHttpMethod(e.target.value)} disabled={running} style={{ padding: 6 }}>
+                {["GET", "HEAD", "OPTIONS"].map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Proto{" "}
+              <select value={httpProto} onChange={(e) => setHttpProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
+                <option value="HTTP">HTTP</option>
+                <option value="HTTPS">HTTPS</option>
+                <option value="HTTP2">HTTP2</option>
+              </select>
+            </label>
+
+            <label>
+              Path{" "}
+              <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
+            </label>
+
+            <label>
+              Query{" "}
+              <input value={httpQuery} onChange={(e) => setHttpQuery(e.target.value)} disabled={running} placeholder="(optional)" style={{ padding: 6, width: 160 }} />
+            </label>
+
+            <label>
+              Port{" "}
+              <input value={httpPort} onChange={(e) => setHttpPort(e.target.value)} disabled={running} placeholder="default" style={{ padding: 6, width: 90 }} />
+            </label>
+
+            <label>
+              Resolver{" "}
+              <input
+                value={httpResolver}
+                onChange={(e) => setHttpResolver(e.target.value)}
+                disabled={running}
+                placeholder="(vuoto = default)"
+                style={{ padding: 6, width: 220 }}
+              />
+            </label>
+          </>
+        )}
+
         )}
 
         <input
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          placeholder={cmd === "dns" ? "name (es. example.com)" : "hostname (es. example.com)"}
+          placeholder={cmd === "dns" ? "name (es. example.com)" : cmd === "http" ? "url o hostname (es. https://example.com/)" : "hostname (es. example.com)"}
           style={{ padding: 8, minWidth: 260 }}
           disabled={running}
         />
@@ -848,6 +1060,51 @@ export default function App() {
           </table>
         </div>
       )}
+
+      {/* HTTP timing compare table */}
+      {showHttpTable && httpCompare && (
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>HTTP timings (v4 vs v6)</h3>
+            <div style={{ opacity: 0.85 }}>
+              both: {httpCompare.summary.both}/{httpCompare.summary.n} · median v4 {ms(httpCompare.summary.median_v4)} ·
+              median v6 {ms(httpCompare.summary.median_v6)} · Δ {ms(httpCompare.summary.median_delta)}
+              <br />
+              p95 v4 {ms(httpCompare.summary.p95_v4)} · p95 v6 {ms(httpCompare.summary.p95_v6)}
+            </div>
+          </div>
+
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                {["#", "location", "ASN", "network", "v4 status", "v6 status", "v4 total", "v6 total", "Δ v6-v4", "ratio", "winner"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {httpCompare.rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4sc ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6sc ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
 
       {/* RAW outputs */}
       {showRaw && v4 && v6 && (
