@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createMeasurement, waitForMeasurement } from "./lib/globalping";
 import { fetchNlnogPrefix } from "./lib/nlnog";
 
@@ -39,6 +39,79 @@ function applyGpTag(fromStr, tag) {
     })
     .join(", ");
 }
+
+function percentile(arr, p) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const i = (s.length - 1) * p;
+  const lo = Math.floor(i),
+    hi = Math.ceil(i);
+  if (lo === hi) return s[lo];
+  return s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+
+function probeKey(x) {
+  const p = x?.probe || {};
+  return p.id ?? `${p.city ?? ""}|${p.country ?? ""}|${p.asn ?? ""}|${p.network ?? ""}`;
+}
+
+function pickDnsTotalMs(x) {
+  const r = x?.result;
+  const t = r?.timings?.total;
+  return Number.isFinite(t) ? t : null;
+}
+
+function buildDnsCompare(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+
+  const rows = a.map((x, i) => {
+    const y = bMap.get(probeKey(x)) ?? b[i];
+    const p = x?.probe || y?.probe || {};
+
+    const v4ms = pickDnsTotalMs(x);
+    const v6ms = pickDnsTotalMs(y);
+
+    const delta = Number.isFinite(v4ms) && Number.isFinite(v6ms) ? v6ms - v4ms : null;
+    const ratio = Number.isFinite(v4ms) && Number.isFinite(v6ms) && v4ms > 0 ? v6ms / v4ms : null;
+
+    return {
+      key: probeKey(x) || String(i),
+      idx: i,
+      probe: p,
+      v4ms,
+      v6ms,
+      delta,
+      ratio,
+      winner:
+        Number.isFinite(v4ms) && Number.isFinite(v6ms)
+          ? v4ms < v6ms
+            ? "v4"
+            : v6ms < v4ms
+              ? "v6"
+              : "tie"
+          : "-",
+    };
+  });
+
+  const v4msArr = rows.map((r) => r.v4ms).filter(Number.isFinite);
+  const v6msArr = rows.map((r) => r.v6ms).filter(Number.isFinite);
+  const dArr = rows.map((r) => r.delta).filter(Number.isFinite);
+
+  const summary = {
+    n: rows.length,
+    both: rows.filter((r) => Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)).length,
+    median_v4: percentile(v4msArr, 0.5),
+    median_v6: percentile(v6msArr, 0.5),
+    p95_v4: percentile(v4msArr, 0.95),
+    p95_v6: percentile(v6msArr, 0.95),
+    median_delta: percentile(dArr, 0.5),
+  };
+
+  return { rows, summary };
+}
+
 
 export default function App() {
   // Globalping UI
@@ -191,6 +264,13 @@ export default function App() {
   }
 
   const showPingTable = cmd === "ping" && v4 && v6;
+
+  const showDnsTable = cmd === "dns" && v4 && v6;
+
+  const dnsCompare = useMemo(() => {
+    if (!showDnsTable) return null;
+    return buildDnsCompare(v4, v6);
+  }, [showDnsTable, v4, v6]);
 
   const preStyle = {
     padding: 12,
@@ -370,6 +450,55 @@ export default function App() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* DNS timing compare table */}
+      {showDnsTable && dnsCompare && (
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>DNS timings (v4 vs v6)</h3>
+            <div style={{ opacity: 0.85 }}>
+              both: {dnsCompare.summary.both}/{dnsCompare.summary.n} · median v4 {ms(dnsCompare.summary.median_v4)} ·
+              median v6 {ms(dnsCompare.summary.median_v6)} · Δ {ms(dnsCompare.summary.median_delta)}
+              <br />
+              p95 v4 {ms(dnsCompare.summary.p95_v4)} · p95 v6 {ms(dnsCompare.summary.p95_v6)}
+            </div>
+          </div>
+
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                {["#", "location", "ASN", "network", "v4 total", "v6 total", "Δ v6-v4", "ratio", "winner"].map((h) => (
+                  <th
+                    key={h}
+                    style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dnsCompare.rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                    {r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}
+                  </td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                    {Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}
+                  </td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
