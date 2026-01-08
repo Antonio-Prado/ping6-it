@@ -607,7 +607,21 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ margin: "8px 0" }}>ping6.it</h1>
+<div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+  <picture>
+    <source srcSet="/favicon-dark.svg" media="(prefers-color-scheme: dark)" />
+    <img
+      src="/favicon.svg"
+      alt="Ping6"
+      width="28"
+      height="28"
+      style={{ display: "block" }}
+    />
+  </picture>
+
+  <span style={{ fontSize: "1.6rem", fontWeight: 700 }}>ping6.it</span>
+</div>
+
 
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
