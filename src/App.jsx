@@ -106,6 +106,16 @@ export default function App() {
           measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
         }
       }
+	} else if (cmd === "mtr") {
+  measurementOptions = {
+    packets: Math.max(1, Math.min(16, Number(packets) || 3)),
+    protocol: trProto,
+  };
+  if (trProto !== "ICMP") {
+    measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
+  }
+}
+
 
       const base = {
         type: cmd,
@@ -192,6 +202,7 @@ export default function App() {
           <select value={cmd} onChange={(e) => setCmd(e.target.value)} disabled={running} style={{ padding: 6 }}>
             <option value="ping">ping</option>
             <option value="traceroute">traceroute</option>
+		<option value="mtr">mtr</option>
           </select>
         </label>
 
@@ -214,32 +225,31 @@ export default function App() {
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
 
-        {cmd === "ping" && (
-          <label>
-            Packets{" "}
-            <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
-          </label>
-        )}
+{(cmd === "ping" || cmd === "mtr") && (
+  <label>
+    {cmd === "mtr" ? "Packets/hop" : "Packets"}{" "}
+    <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+  </label>
+)}
+{(cmd === "traceroute" || cmd === "mtr") && (
+  <>
+    <label>
+      Proto{" "}
+      <select value={trProto} onChange={(e) => setTrProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
+        <option value="ICMP">ICMP</option>
+        <option value="UDP">UDP</option>
+        <option value="TCP">TCP</option>
+      </select>
+    </label>
 
-        {cmd === "traceroute" && (
-          <>
-            <label>
-              Proto{" "}
-              <select value={trProto} onChange={(e) => setTrProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
-                <option value="ICMP">ICMP</option>
-                <option value="UDP">UDP</option>
-                <option value="TCP">TCP</option>
-              </select>
-            </label>
-
-            {trProto === "TCP" && (
-              <label>
-                Port{" "}
-                <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
-              </label>
-            )}
-          </>
-        )}
+    {((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
+      <label>
+        Port{" "}
+        <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
+      </label>
+    )}
+  </>
+)}
 
         <input
           value={target}
