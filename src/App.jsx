@@ -439,7 +439,7 @@ export default function App() {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["#", "location", "ASN", "network", "v4 avg", "v4 loss", "v6 avg", "v6 loss"].map((h) => (
+                {["#", "location", "ASN", "network", "v4 avg", "v4 loss", "v6 avg", "v6 loss", "Δ v6-v4", "winner"].map((h) => (
                   <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                     {h}
                   </th>
@@ -453,16 +453,32 @@ export default function App() {
                 const r4 = a?.result?.status === "finished" ? a.result : null;
                 const r6 = b?.result?.status === "finished" ? b.result : null;
 
+                const v4avg =
+                  Number.isFinite(r4?.stats?.avg) && r4.stats.avg > 0 && Number(r4?.stats?.loss ?? 0) < 100 ? r4.stats.avg : null;
+                const v6avg =
+                  Number.isFinite(r6?.stats?.avg) && r6.stats.avg > 0 && Number(r6?.stats?.loss ?? 0) < 100 ? r6.stats.avg : null;
+                const delta = Number.isFinite(v4avg) && Number.isFinite(v6avg) ? v6avg - v4avg : null;
+                const winner =
+                  Number.isFinite(v4avg) && Number.isFinite(v6avg)
+                    ? v4avg < v6avg
+                      ? "v4"
+                      : v6avg < v4avg
+                        ? "v6"
+                        : "tie"
+                    : "-";
+
                 return (
                   <tr key={i}>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p ? `${p.city}, ${p.country}` : "-"}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p?.asn ?? "-"}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p?.network ?? "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r4?.stats?.avg)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(v4avg)}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r4?.stats?.loss ?? "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r6?.stats?.avg)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(v6avg)}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r6?.stats?.loss ?? "-"}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(delta)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{winner}</td>
                   </tr>
                 );
               })}
