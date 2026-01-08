@@ -106,7 +106,7 @@ export default function App() {
           measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
         }
       }
-	} else if (cmd === "mtr") {
+	else if (cmd === "mtr") {
   measurementOptions = {
     packets: Math.max(1, Math.min(16, Number(packets) || 3)),
     protocol: trProto,
