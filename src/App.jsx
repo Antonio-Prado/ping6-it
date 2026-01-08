@@ -57,8 +57,12 @@ function probeKey(x) {
 
 function pickDnsTotalMs(x) {
   const r = x?.result;
+  // se non è finito non confrontiamo
+  if (r?.status && r.status !== "finished") return null;
+  // se c'è un errore/timeout evitiamo che un 0 ms 'vinca' il confronto
+  if (r?.error) return null;
   const t = r?.timings?.total;
-  return Number.isFinite(t) ? t : null;
+  return Number.isFinite(t) && t > 0 ? t : null;
 }
 
 function buildDnsCompare(v4, v6) {
@@ -85,7 +89,7 @@ function buildDnsCompare(v4, v6) {
       delta,
       ratio,
       winner:
-        Number.isFinite(v4ms) && Number.isFinite(v6ms)
+        Number.isFinite(v4ms) && v4ms > 0 && Number.isFinite(v6ms) && v6ms > 0
           ? v4ms < v6ms
             ? "v4"
             : v6ms < v4ms
