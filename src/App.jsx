@@ -143,6 +143,7 @@ export default function App() {
   const [err, setErr] = useState("");
   const [v4, setV4] = useState(null);
   const [v6, setV6] = useState(null);
+  const [showRaw, setShowRaw] = useState(false);
 
   const abortRef = useRef(null);
 
@@ -157,6 +158,7 @@ export default function App() {
     setErr("");
     setV4(null);
     setV6(null);
+    setShowRaw(false);
 
     const t = target.trim();
     if (!t) return;
@@ -282,6 +284,9 @@ export default function App() {
     color: "#f9fafb",
     border: "1px solid #111827",
     borderRadius: 8,
+    maxWidth: "100%",
+    width: "100%",
+    boxSizing: "border-box",
     overflowX: "auto",
     lineHeight: 1.35,
   };
@@ -404,6 +409,13 @@ export default function App() {
         <button onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
           Cancel
         </button>
+        <button
+          onClick={() => setShowRaw((s) => !s)}
+          disabled={!v4 || !v6}
+          style={{ padding: "8px 12px" }}
+        >
+          {showRaw ? "Hide raw" : "Raw"}
+        </button>
       </div>
 
       {/* quick presets */}
@@ -509,16 +521,16 @@ export default function App() {
       )}
 
       {/* RAW outputs */}
-      {v4 && v6 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
-          <div>
+      {showRaw && v4 && v6 && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12, marginBottom: 18 }}>
+          <div style={{ minWidth: 0 }}>
             <h3 style={{ margin: "0 0 6px 0" }}>RAW v4</h3>
             <pre style={preStyle}>
               {v4.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
             </pre>
           </div>
 
-          <div>
+          <div style={{ minWidth: 0 }}>
             <h3 style={{ margin: "0 0 6px 0" }}>RAW v6</h3>
             <pre style={preStyle}>
               {v6.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
