@@ -18,28 +18,21 @@ function probeHeader(x, idx) {
   return `--- probe ${idx + 1}: ${p.city || ""} ${p.country || ""} AS${p.asn || ""} ${p.network || ""}`.trim();
 }
 
-// Applica tag Globalping (eyeball/datacenter) a una stringa "from" anche se contiene più location separate da virgola.
-// Esempi: "Western Europe" + eyeball => "Western Europe+eyeball"
-//         "Berlin,Paris" + datacenter => "Berlin+datacenter,Paris+datacenter"
-//         "eyeball" (da solo) resta "eyeball"
 function applyGpTag(fromStr, tag) {
   const t = (tag || "").trim();
   if (!t || t === "any") return (fromStr || "").trim();
 
   const raw = (fromStr || "").trim();
-  if (!raw) return t; // se non specifichi location, puoi usare direttamente "eyeball"/"datacenter" 
+  if (!raw) return t;
 
-  // Se l'utente ha già messo il tag a mano, non duplicare
   if (raw.includes(`+${t}`) || raw === t) return raw;
 
-  // Multi-location: "A,B,C"
   return raw
     .split(",")
     .map((p) => {
       const s = p.trim();
       if (!s) return s;
       if (s.includes(`+${t}`) || s === t) return s;
-      // evita doppio tag se contiene già l'altro
       if (t === "eyeball" && (s.includes("+datacenter") || s === "datacenter")) return s;
       if (t === "datacenter" && (s.includes("+eyeball") || s === "eyeball")) return s;
       return `${s}+${t}`;
@@ -50,14 +43,24 @@ function applyGpTag(fromStr, tag) {
 export default function App() {
   // Globalping UI
   const [target, setTarget] = useState("example.com");
-  const [cmd, setCmd] = useState("ping"); // ping | traceroute
+  const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
 
-  const [packets, setPackets] = useState(3); // ping only
-  const [trProto, setTrProto] = useState("ICMP"); // traceroute: ICMP | TCP | UDP
-  const [trPort, setTrPort] = useState(80); // traceroute TCP only
+  // ping/mtr
+  const [packets, setPackets] = useState(3);
+
+  // traceroute/mtr
+  const [trProto, setTrProto] = useState("ICMP"); // ICMP | TCP | UDP
+  const [trPort, setTrPort] = useState(80);
+
+  // dns
+  const [dnsQuery, setDnsQuery] = useState("A"); // A, AAAA, MX, TXT, NS, SOA, CNAME, PTR, SRV, CAA, ANY
+  const [dnsProto, setDnsProto] = useState("UDP"); // UDP | TCP
+  const [dnsPort, setDnsPort] = useState(53);
+  const [dnsResolver, setDnsResolver] = useState(""); // empty => default resolver on probe
+  const [dnsTrace, setDnsTrace] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -81,8 +84,9 @@ export default function App() {
     const t = target.trim();
     if (!t) return;
 
-    // Compare v4/v6: richiede hostname (non IP literal)
-    if (isIpLiteral(t)) {
+    // Per ping/traceroute/mtr vogliamo hostname (non IP literal) per il compare v4/v6.
+    // Per DNS invece l'input può anche essere un IP (es. PTR), quindi non blocchiamo.
+    if (cmd !== "dns" && isIpLiteral(t)) {
       setErr("Per il confronto v4/v6 inserisci un hostname (non un IP).");
       return;
     }
@@ -94,10 +98,10 @@ export default function App() {
     setRunning(true);
     try {
       const probes = Math.max(1, Math.min(10, Number(limit) || 3));
-
       const fromWithTag = applyGpTag(from, gpTag);
 
       let measurementOptions = {};
+
       if (cmd === "ping") {
         measurementOptions = { packets: Math.max(1, Math.min(10, Number(packets) || 3)) };
       } else if (cmd === "traceroute") {
@@ -105,17 +109,24 @@ export default function App() {
         if (trProto === "TCP") {
           measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
         }
+      } else if (cmd === "mtr") {
+        measurementOptions = {
+          packets: Math.max(1, Math.min(16, Number(packets) || 3)),
+          protocol: trProto,
+        };
+        if (trProto !== "ICMP") {
+          measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
+        }
+      } else if (cmd === "dns") {
+        measurementOptions = {
+          query: (dnsQuery || "A").toUpperCase(),
+          protocol: (dnsProto || "UDP").toUpperCase(),
+          port: Math.max(1, Math.min(65535, Number(dnsPort) || 53)),
+          trace: Boolean(dnsTrace),
+        };
+        const r = (dnsResolver || "").trim();
+        if (r) measurementOptions.resolver = r;
       }
-	else if (cmd === "mtr") {
-  measurementOptions = {
-    packets: Math.max(1, Math.min(16, Number(packets) || 3)),
-    protocol: trProto,
-  };
-  if (trProto !== "ICMP") {
-    measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
-  }
-}
-
 
       const base = {
         type: cmd,
@@ -202,7 +213,8 @@ export default function App() {
           <select value={cmd} onChange={(e) => setCmd(e.target.value)} disabled={running} style={{ padding: 6 }}>
             <option value="ping">ping</option>
             <option value="traceroute">traceroute</option>
-		<option value="mtr">mtr</option>
+            <option value="mtr">mtr</option>
+            <option value="dns">dns</option>
           </select>
         </label>
 
@@ -225,36 +237,79 @@ export default function App() {
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
 
-{(cmd === "ping" || cmd === "mtr") && (
-  <label>
-    {cmd === "mtr" ? "Packets/hop" : "Packets"}{" "}
-    <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
-  </label>
-)}
-{(cmd === "traceroute" || cmd === "mtr") && (
-  <>
-    <label>
-      Proto{" "}
-      <select value={trProto} onChange={(e) => setTrProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
-        <option value="ICMP">ICMP</option>
-        <option value="UDP">UDP</option>
-        <option value="TCP">TCP</option>
-      </select>
-    </label>
+        {(cmd === "ping" || cmd === "mtr") && (
+          <label>
+            {cmd === "mtr" ? "Packets/hop" : "Packets"}{" "}
+            <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+          </label>
+        )}
 
-    {((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
-      <label>
-        Port{" "}
-        <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
-      </label>
-    )}
-  </>
-)}
+        {(cmd === "traceroute" || cmd === "mtr") && (
+          <>
+            <label>
+              Proto{" "}
+              <select value={trProto} onChange={(e) => setTrProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
+                <option value="ICMP">ICMP</option>
+                <option value="UDP">UDP</option>
+                <option value="TCP">TCP</option>
+              </select>
+            </label>
+
+            {((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
+              <label>
+                Port{" "}
+                <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
+              </label>
+            )}
+          </>
+        )}
+
+        {cmd === "dns" && (
+          <>
+            <label>
+              Query{" "}
+              <select value={dnsQuery} onChange={(e) => setDnsQuery(e.target.value)} disabled={running} style={{ padding: 6 }}>
+                {["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV", "CAA", "ANY"].map((q) => (
+                  <option key={q} value={q}>{q}</option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Proto{" "}
+              <select value={dnsProto} onChange={(e) => setDnsProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
+                <option value="UDP">UDP</option>
+                <option value="TCP">TCP</option>
+              </select>
+            </label>
+
+            <label>
+              Port{" "}
+              <input value={dnsPort} onChange={(e) => setDnsPort(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+            </label>
+
+            <label>
+              Resolver{" "}
+              <input
+                value={dnsResolver}
+                onChange={(e) => setDnsResolver(e.target.value)}
+                disabled={running}
+                placeholder="(vuoto = default)"
+                style={{ padding: 6, width: 220 }}
+              />
+            </label>
+
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={dnsTrace} onChange={(e) => setDnsTrace(e.target.checked)} disabled={running} />
+              trace
+            </label>
+          </>
+        )}
 
         <input
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          placeholder="hostname (es. example.com)"
+          placeholder={cmd === "dns" ? "name (es. example.com)" : "hostname (es. example.com)"}
           style={{ padding: 8, minWidth: 260 }}
           disabled={running}
         />
@@ -267,25 +322,13 @@ export default function App() {
         </button>
       </div>
 
+      {/* quick presets */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <button onClick={() => setFrom("Western Europe")} disabled={running} style={{ padding: "6px 10px" }}>
-          Western Europe
-        </button>
-        <button onClick={() => setFrom("Northern Europe")} disabled={running} style={{ padding: "6px 10px" }}>
-          Northern Europe
-        </button>
-        <button onClick={() => setFrom("Southern Europe")} disabled={running} style={{ padding: "6px 10px" }}>
-          Southern Europe
-        </button>
-        <button onClick={() => setFrom("Eastern Europe")} disabled={running} style={{ padding: "6px 10px" }}>
-          Eastern Europe
-        </button>
-        <button onClick={() => setFrom("Europe")} disabled={running} style={{ padding: "6px 10px" }}>
-          Europe
-        </button>
-        <button onClick={() => setFrom("world")} disabled={running} style={{ padding: "6px 10px" }}>
-          world
-        </button>
+        {["Western Europe", "Northern Europe", "Southern Europe", "Eastern Europe", "Europe", "world"].map((p) => (
+          <button key={p} onClick={() => setFrom(p)} disabled={running} style={{ padding: "6px 10px" }}>
+            {p}
+          </button>
+        ))}
       </div>
 
       {err && (
@@ -360,23 +403,14 @@ export default function App() {
         </label>
         <label>
           nodes{" "}
-          <input
-            value={nlnogNodes}
-            onChange={(e) => setNlnogNodes(e.target.value)}
-            disabled={nlnogRunning}
-            style={{ padding: 6, width: 320 }}
-          />
+          <input value={nlnogNodes} onChange={(e) => setNlnogNodes(e.target.value)} disabled={nlnogRunning} style={{ padding: 6, width: 320 }} />
         </label>
 
         <button onClick={runNlnog} disabled={nlnogRunning} style={{ padding: "8px 12px" }}>
           Query
         </button>
 
-        <button
-          onClick={() => setNlnogNodes("BITTERBAL1-V4,BITTERBAL1-V6")}
-          disabled={nlnogRunning}
-          style={{ padding: "8px 12px" }}
-        >
+        <button onClick={() => setNlnogNodes("BITTERBAL1-V4,BITTERBAL1-V6")} disabled={nlnogRunning} style={{ padding: "8px 12px" }}>
           BIT (v4+v6)
         </button>
       </div>
@@ -388,10 +422,6 @@ export default function App() {
       )}
 
       {nlnogOut && <pre style={preStyle}>{nlnogOut}</pre>}
-
-      <div style={{ marginTop: 10, opacity: 0.75 }}>
-        Nota: Globalping supporta i tag <code>eyeball</code>/<code>datacenter</code> e li combina alle location con <code>+</code> (anche su <code>world</code> o regioni tipo “Western Europe”). 
-      </div>
     </div>
   );
 }
