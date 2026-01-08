@@ -13,6 +13,12 @@ function ms(n) {
   return `${n.toFixed(1)} ms`;
 }
 
+function pct(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "-";
+  return `${n.toFixed(1)}%`;
+}
+
+
 function probeHeader(x, idx) {
   const p = x?.probe || {};
   return `--- probe ${idx + 1}: ${p.city || ""} ${p.country || ""} AS${p.asn || ""} ${p.network || ""}`.trim();
@@ -116,6 +122,171 @@ function buildDnsCompare(v4, v6) {
   return { rows, summary };
 }
 
+
+function pickTracerouteDstMs(x) {
+  const r = x?.result;
+  if (!r || (r.status && r.status !== "finished")) return { reached: false, hops: null, dstMs: null };
+  if (r.error) return { reached: false, hops: null, dstMs: null };
+
+  const hops = Array.isArray(r.hops) ? r.hops : [];
+  const hopCount = hops.length;
+
+  const dstAddr = r.resolvedAddress || null;
+  const dstHost = r.resolvedHostname || null;
+
+  const dstHop =
+    dstAddr || dstHost
+      ? hops.find((h) => (dstAddr && h?.resolvedAddress === dstAddr) || (dstHost && h?.resolvedHostname === dstHost))
+      : null;
+
+  const rtts = (dstHop?.timings || []).map((t) => t?.rtt).filter((v) => Number.isFinite(v) && v > 0);
+  const dstMs = rtts.length ? Math.min(...rtts) : null;
+
+  return { reached: Boolean(dstHop), hops: hopCount, dstMs };
+}
+
+function pickMtrDstStats(x) {
+  const r = x?.result;
+  if (!r || (r.status && r.status !== "finished")) return { reached: false, hops: null, avgMs: null, lossPct: null };
+  if (r.error) return { reached: false, hops: null, avgMs: null, lossPct: null };
+
+  const hops = Array.isArray(r.hops) ? r.hops : [];
+  const hopCount = hops.length;
+
+  const dstAddr = r.resolvedAddress || null;
+  const dstHost = r.resolvedHostname || null;
+
+  const dstHop =
+    dstAddr || dstHost
+      ? hops.find((h) => (dstAddr && h?.resolvedAddress === dstAddr) || (dstHost && h?.resolvedHostname === dstHost))
+      : null;
+
+  const hopForStats = dstHop || (hops.length ? hops[hops.length - 1] : null);
+  const stats = hopForStats?.stats || null;
+
+  const avgMs = Number.isFinite(stats?.avg) && stats.avg > 0 ? stats.avg : null;
+  const lossPct = Number.isFinite(stats?.loss) ? stats.loss : null; // already a percentage in Globalping
+
+  return { reached: Boolean(dstHop), hops: hopCount, avgMs, lossPct };
+}
+
+function buildTracerouteCompare(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+
+  const rows = a.map((x, i) => {
+    const y = bMap.get(probeKey(x)) ?? b[i];
+    const p = x?.probe || y?.probe || {};
+
+    const s4 = pickTracerouteDstMs(x);
+    const s6 = pickTracerouteDstMs(y);
+
+    const delta = Number.isFinite(s4.dstMs) && Number.isFinite(s6.dstMs) ? s6.dstMs - s4.dstMs : null;
+
+    let winner = "-";
+    if (s4.reached && !s6.reached) winner = "v4";
+    else if (!s4.reached && s6.reached) winner = "v6";
+    else if (s4.reached && s6.reached && Number.isFinite(s4.dstMs) && Number.isFinite(s6.dstMs)) {
+      winner = s4.dstMs < s6.dstMs ? "v4" : s6.dstMs < s4.dstMs ? "v6" : "tie";
+    }
+
+    return {
+      key: probeKey(x) || String(i),
+      idx: i,
+      probe: p,
+      v4reached: s4.reached,
+      v4hops: s4.hops,
+      v4dst: s4.dstMs,
+      v6reached: s6.reached,
+      v6hops: s6.hops,
+      v6dst: s6.dstMs,
+      delta,
+      winner,
+    };
+  });
+
+  const v4Arr = rows.map((r) => r.v4dst).filter(Number.isFinite);
+  const v6Arr = rows.map((r) => r.v6dst).filter(Number.isFinite);
+  const dArr = rows.map((r) => r.delta).filter(Number.isFinite);
+
+  const summary = {
+    n: rows.length,
+    both: rows.filter((r) => Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst)).length,
+    median_v4: percentile(v4Arr, 0.5),
+    median_v6: percentile(v6Arr, 0.5),
+    p95_v4: percentile(v4Arr, 0.95),
+    p95_v6: percentile(v6Arr, 0.95),
+    median_delta: percentile(dArr, 0.5),
+  };
+
+  return { rows, summary };
+}
+
+function buildMtrCompare(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+
+  const rows = a.map((x, i) => {
+    const y = bMap.get(probeKey(x)) ?? b[i];
+    const p = x?.probe || y?.probe || {};
+
+    const s4 = pickMtrDstStats(x);
+    const s6 = pickMtrDstStats(y);
+
+    const deltaAvg = Number.isFinite(s4.avgMs) && Number.isFinite(s6.avgMs) ? s6.avgMs - s4.avgMs : null;
+    const deltaLoss = Number.isFinite(s4.lossPct) && Number.isFinite(s6.lossPct) ? s6.lossPct - s4.lossPct : null;
+
+    let winner = "-";
+    if (s4.reached && !s6.reached) winner = "v4";
+    else if (!s4.reached && s6.reached) winner = "v6";
+    else if (s4.reached && s6.reached) {
+      if (Number.isFinite(s4.lossPct) && Number.isFinite(s6.lossPct) && Math.abs(s4.lossPct - s6.lossPct) >= 0.1) {
+        winner = s4.lossPct < s6.lossPct ? "v4" : "v6";
+      } else if (Number.isFinite(s4.avgMs) && Number.isFinite(s6.avgMs)) {
+        winner = s4.avgMs < s6.avgMs ? "v4" : s6.avgMs < s4.avgMs ? "v6" : "tie";
+      }
+    }
+
+    return {
+      key: probeKey(x) || String(i),
+      idx: i,
+      probe: p,
+      v4reached: s4.reached,
+      v4hops: s4.hops,
+      v4loss: s4.lossPct,
+      v4avg: s4.avgMs,
+      v6reached: s6.reached,
+      v6hops: s6.hops,
+      v6loss: s6.lossPct,
+      v6avg: s6.avgMs,
+      deltaAvg,
+      deltaLoss,
+      winner,
+    };
+  });
+
+  const v4AvgArr = rows.map((r) => r.v4avg).filter(Number.isFinite);
+  const v6AvgArr = rows.map((r) => r.v6avg).filter(Number.isFinite);
+  const v4LossArr = rows.map((r) => r.v4loss).filter(Number.isFinite);
+  const v6LossArr = rows.map((r) => r.v6loss).filter(Number.isFinite);
+  const dAvgArr = rows.map((r) => r.deltaAvg).filter(Number.isFinite);
+  const dLossArr = rows.map((r) => r.deltaLoss).filter(Number.isFinite);
+
+  const summary = {
+    n: rows.length,
+    both: rows.filter((r) => Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)).length,
+    median_avg_v4: percentile(v4AvgArr, 0.5),
+    median_avg_v6: percentile(v6AvgArr, 0.5),
+    median_loss_v4: percentile(v4LossArr, 0.5),
+    median_loss_v6: percentile(v6LossArr, 0.5),
+    median_delta_avg: percentile(dAvgArr, 0.5),
+    median_delta_loss: percentile(dLossArr, 0.5),
+  };
+
+  return { rows, summary };
+}
 
 export default function App() {
   // Globalping UI
@@ -270,6 +441,8 @@ export default function App() {
   }
 
   const showPingTable = cmd === "ping" && v4 && v6;
+  const showTracerouteTable = cmd === "traceroute" && v4 && v6;
+  const showMtrTable = cmd === "mtr" && v4 && v6;
 
   const showDnsTable = cmd === "dns" && v4 && v6;
 
@@ -277,6 +450,16 @@ export default function App() {
     if (!showDnsTable) return null;
     return buildDnsCompare(v4, v6);
   }, [showDnsTable, v4, v6]);
+
+  const trCompare = useMemo(() => {
+    if (!showTracerouteTable) return null;
+    return buildTracerouteCompare(v4, v6);
+  }, [showTracerouteTable, v4, v6]);
+
+  const mtrCompare = useMemo(() => {
+    if (!showMtrTable) return null;
+    return buildMtrCompare(v4, v6);
+  }, [showMtrTable, v4, v6]);
 
   const preStyle = {
     padding: 12,
@@ -482,6 +665,136 @@ export default function App() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+
+      {/* Traceroute compare table */}
+      {showTracerouteTable && trCompare && (
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>Traceroute to destination (v4 vs v6)</h3>
+            <div style={{ opacity: 0.85 }}>
+              both: {trCompare.summary.both}/{trCompare.summary.n} · median v4 {ms(trCompare.summary.median_v4)} · median v6 {ms(trCompare.summary.median_v6)} · Δ{" "}
+              {ms(trCompare.summary.median_delta)}
+              <br />
+              p95 v4 {ms(trCompare.summary.p95_v4)} · p95 v6 {ms(trCompare.summary.p95_v6)}
+            </div>
+          </div>
+
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                {[
+                  "#",
+                  "location",
+                  "ASN",
+                  "network",
+                  "v4 reached",
+                  "v4 hops",
+                  "v4 dst",
+                  "v6 reached",
+                  "v6 hops",
+                  "v6 dst",
+                  "Δ v6-v4",
+                  "winner",
+                ].map((h) => (
+                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {trCompare.rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4dst)}</td>
+
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6dst)}</td>
+
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* MTR compare table */}
+      {showMtrTable && mtrCompare && (
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>MTR to destination (v4 vs v6)</h3>
+            <div style={{ opacity: 0.85 }}>
+              both: {mtrCompare.summary.both}/{mtrCompare.summary.n} · median avg v4 {ms(mtrCompare.summary.median_avg_v4)} · median avg v6{" "}
+              {ms(mtrCompare.summary.median_avg_v6)} · Δ {ms(mtrCompare.summary.median_delta_avg)}
+              <br />
+              median loss v4 {pct(mtrCompare.summary.median_loss_v4)} · median loss v6 {pct(mtrCompare.summary.median_loss_v6)} · Δ{" "}
+              {pct(mtrCompare.summary.median_delta_loss)}
+            </div>
+          </div>
+
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                {[
+                  "#",
+                  "location",
+                  "ASN",
+                  "network",
+                  "v4 reached",
+                  "v4 hops",
+                  "v4 loss",
+                  "v4 avg",
+                  "v6 reached",
+                  "v6 hops",
+                  "v6 loss",
+                  "v6 avg",
+                  "Δ avg",
+                  "Δ loss",
+                  "winner",
+                ].map((h) => (
+                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {mtrCompare.rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v4loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4avg)}</td>
+
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v6loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6avg)}</td>
+
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.deltaLoss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
