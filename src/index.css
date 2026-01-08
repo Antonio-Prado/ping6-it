@@ -1,4 +1,33 @@
 :root {
+  color: #111;
+  background-color: #fff;
+}
+
+body {
+  margin: 0;
+  color: #111;
+  background-color: #fff;
+}
+
+a { color: #0645ad; }
+
+input, select, button {
+  color: #111;
+  background: #fff;
+  border: 1px solid #bbb;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+
+:root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
