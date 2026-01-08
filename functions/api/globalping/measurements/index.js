@@ -17,7 +17,7 @@ function clampInt(v, min, max, fallback) {
 }
 
 function hasSchemeOrPath(t) {
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return true; // http:// ecc
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return true;
   if (t.includes("/") || t.includes("?") || t.includes("#")) return true;
   return false;
 }
@@ -27,18 +27,15 @@ function isIpv4Literal(t) {
 }
 
 function isIpv6Literal(t) {
-  // grezzo ma sufficiente per bloccare i casi più comuni
   return t.includes(":") && /^[0-9a-fA-F:]+$/.test(t);
 }
 
 function isBlockedIpLiteral(t) {
   const s = t.toLowerCase();
 
-  // v4 private/loopback/link-local/multicast
   if (isIpv4Literal(s)) {
     const p = s.split(".").map((x) => Number(x));
     if (p.some((x) => !Number.isFinite(x) || x < 0 || x > 255)) return true;
-
     const [a, b] = p;
     if (a === 10) return true;
     if (a === 127) return true;
@@ -46,16 +43,15 @@ function isBlockedIpLiteral(t) {
     if (a === 169 && b === 254) return true;
     if (a === 192 && b === 168) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a >= 224 && a <= 239) return true; // multicast
+    if (a >= 224 && a <= 239) return true;
     return false;
   }
 
-  // v6: loopback/unspecified/link-local/ULA/multicast
   if (isIpv6Literal(s)) {
     if (s === "::1" || s === "::") return true;
-    if (s.startsWith("fe80:")) return true; // link-local
-    if (s.startsWith("fc") || s.startsWith("fd")) return true; // ULA (fc00::/7)
-    if (s.startsWith("ff")) return true; // multicast
+    if (s.startsWith("fe80:")) return true;
+    if (s.startsWith("fc") || s.startsWith("fd")) return true;
+    if (s.startsWith("ff")) return true;
     return false;
   }
 
@@ -66,8 +62,8 @@ function sanitize(body) {
   if (!body || typeof body !== "object") throw new Error("Invalid JSON body");
 
   const type = String(body.type || "").trim();
-  if (!["ping", "traceroute", "mtr"].includes(type)) {
-    throw new Error("Unsupported type (allowed: ping, traceroute, mtr)");
+  if (!["ping", "traceroute", "mtr", "dns"].includes(type)) {
+    throw new Error("Unsupported type (allowed: ping, traceroute, mtr, dns)");
   }
 
   const target = String(body.target || "").trim();
@@ -77,7 +73,6 @@ function sanitize(body) {
   if (hasSchemeOrPath(target)) throw new Error("Target must be hostname/IP only (no scheme/path)");
   if (isBlockedIpLiteral(target)) throw new Error("Blocked target IP (private/local)");
 
-  // locations: accetta array o string (id)
   let locations = body.locations;
   if (typeof locations === "string") {
     const id = locations.trim();
@@ -85,7 +80,6 @@ function sanitize(body) {
     if (id.length > 64) throw new Error("locations id too long");
     locations = id;
   } else if (Array.isArray(locations)) {
-    // ok, ma non far esplodere
     if (locations.length > 10) throw new Error("Too many locations");
   } else {
     throw new Error("Missing/invalid locations");
@@ -94,11 +88,9 @@ function sanitize(body) {
   const limit = clampInt(body.limit, 1, 10, 3);
   const inProgressUpdates = Boolean(body.inProgressUpdates);
 
-  // measurementOptions (whitelist)
   const moIn = body.measurementOptions && typeof body.measurementOptions === "object" ? body.measurementOptions : {};
   const mo = {};
 
-  // ipVersion: solo 4 o 6 se presente
   if (moIn.ipVersion !== undefined) {
     const ipV = Number(moIn.ipVersion);
     if (ipV !== 4 && ipV !== 6) throw new Error("Invalid ipVersion (only 4 or 6)");
@@ -113,9 +105,7 @@ function sanitize(body) {
     const proto = String(moIn.protocol || "ICMP").toUpperCase();
     if (!["ICMP", "TCP", "UDP"].includes(proto)) throw new Error("Invalid traceroute protocol");
     mo.protocol = proto;
-    if (proto === "TCP") {
-      mo.port = clampInt(moIn.port, 1, 65535, 80);
-    }
+    if (proto === "TCP") mo.port = clampInt(moIn.port, 1, 65535, 80);
   }
 
   if (type === "mtr") {
@@ -123,8 +113,32 @@ function sanitize(body) {
     if (!["ICMP", "TCP", "UDP"].includes(proto)) throw new Error("Invalid mtr protocol");
     mo.protocol = proto;
     mo.packets = clampInt(moIn.packets, 1, 16, 3);
-    if (proto !== "ICMP") {
-      mo.port = clampInt(moIn.port, 1, 65535, 80);
+    if (proto !== "ICMP") mo.port = clampInt(moIn.port, 1, 65535, 80);
+  }
+
+  if (type === "dns") {
+    const query = String(moIn.query || "A").toUpperCase();
+    const allowedQ = new Set(["A","AAAA","CNAME","MX","NS","TXT","SOA","PTR","SRV","CAA","ANY"]);
+    if (!allowedQ.has(query)) throw new Error("Invalid dns query type");
+    mo.query = query;
+
+    const proto = String(moIn.protocol || "UDP").toUpperCase();
+    if (!["UDP", "TCP"].includes(proto)) throw new Error("Invalid dns protocol (UDP/TCP)");
+    mo.protocol = proto;
+
+    mo.port = clampInt(moIn.port, 1, 65535, 53);
+
+    if (moIn.trace !== undefined) mo.trace = Boolean(moIn.trace);
+
+    if (moIn.resolver !== undefined && moIn.resolver !== null) {
+      const r = String(moIn.resolver).trim();
+      if (r) {
+        if (r.length > 253) throw new Error("Resolver too long");
+        if (/\s/.test(r)) throw new Error("Resolver contains spaces");
+        if (hasSchemeOrPath(r)) throw new Error("Resolver must be hostname/IP only");
+        if (isBlockedIpLiteral(r)) throw new Error("Blocked resolver IP (private/local)");
+        mo.resolver = r;
+      }
     }
   }
 
@@ -141,9 +155,7 @@ function sanitize(body) {
 export async function onRequest(context) {
   const req = context.request;
 
-  if (req.method !== "POST") {
-    return json(405, { error: "Method not allowed" });
-  }
+  if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
   let body;
   try {
@@ -162,7 +174,6 @@ export async function onRequest(context) {
   const headers = new Headers();
   headers.set("content-type", "application/json");
 
-  // forward eventuale auth/key se un domani userai API key
   const auth = req.headers.get("authorization");
   if (auth) headers.set("authorization", auth);
   const xApiKey = req.headers.get("x-api-key");
