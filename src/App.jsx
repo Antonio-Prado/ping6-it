@@ -616,8 +616,8 @@ export default function App() {
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
     Feedback welcome.
   </a>
-</div>
 <br><br>
+</div>
 
 
 
