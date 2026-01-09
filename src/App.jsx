@@ -644,7 +644,17 @@ export default function App() {
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
     Feedback welcome.
   </a>
+  {" · "}
+  <a
+    href="https://github.com/Antonio-Prado/ping6-it#readme"
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{ textDecoration: "underline" }}
+  >
+    Docs
+  </a>
 </div>
+
 
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
