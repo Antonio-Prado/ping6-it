@@ -611,15 +611,12 @@ export default function App() {
   <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
   <span>ping6.it</span>
 </div>
-<div style={{ marginTop: 8, fontSize: 14, opacity: 0.85 }}>
+<div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
   Experimental beta: features may change and results may vary.{" "}
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
     Feedback welcome.
   </a>
 </div>
-
-
-
 
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
