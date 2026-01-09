@@ -635,12 +635,12 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
-<div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+<div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
   <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
-  <span>ping6.it</span>
-</div>
-<div style={{ marginTop: 6, fontSize: 14, opacity: 0.9 }}>
-IPv4 vs IPv6, side by side
+  <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  <span style={{ fontSize: 14, opacity: 0.85 }}>
+    IPv4 vs IPv6, side by side
+  </span>
 </div>
 <div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
   Experimental beta: features may change and results may vary.{" "}
