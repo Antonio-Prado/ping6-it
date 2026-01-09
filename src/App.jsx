@@ -94,6 +94,80 @@ function probeKey(x) {
   return p.id ?? `${p.city ?? ""}|${p.country ?? ""}|${p.asn ?? ""}|${p.network ?? ""}`;
 }
 
+function pickPingStats(x) {
+  const r = x?.result;
+  if (r?.status && r.status !== "finished") return { avgMs: null, lossPct: null };
+  if (r?.error) return { avgMs: null, lossPct: null };
+
+  const lossRaw = Number(r?.stats?.loss);
+  const avgRaw = Number(r?.stats?.avg);
+
+  const lossPct = Number.isFinite(lossRaw) ? lossRaw : null;
+  const avgMs =
+    Number.isFinite(avgRaw) && avgRaw > 0 && (lossPct === null || lossPct < 100) ? avgRaw : null;
+
+  return { avgMs, lossPct };
+}
+
+function buildPingCompare(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+
+  const rows = a.map((x, i) => {
+    const y = bMap.get(probeKey(x)) ?? b[i];
+    const p = x?.probe || y?.probe || {};
+
+    const s4 = pickPingStats(x);
+    const s6 = pickPingStats(y);
+
+    const deltaAvg = Number.isFinite(s4.avgMs) && Number.isFinite(s6.avgMs) ? s6.avgMs - s4.avgMs : null;
+    const deltaLoss = Number.isFinite(s4.lossPct) && Number.isFinite(s6.lossPct) ? s6.lossPct - s4.lossPct : null;
+
+    let winner = "-";
+    if (Number.isFinite(s4.lossPct) && Number.isFinite(s6.lossPct) && Math.abs(s4.lossPct - s6.lossPct) >= 0.1) {
+      winner = s4.lossPct < s6.lossPct ? "v4" : "v6";
+    } else if (Number.isFinite(s4.avgMs) && Number.isFinite(s6.avgMs)) {
+      winner = s4.avgMs < s6.avgMs ? "v4" : s6.avgMs < s4.avgMs ? "v6" : "tie";
+    }
+
+    return {
+      key: probeKey(x) || String(i),
+      idx: i,
+      probe: p,
+      v4avg: s4.avgMs,
+      v4loss: s4.lossPct,
+      v6avg: s6.avgMs,
+      v6loss: s6.lossPct,
+      deltaAvg,
+      deltaLoss,
+      winner,
+    };
+  });
+
+  const v4AvgArr = rows.map((r) => r.v4avg).filter(Number.isFinite);
+  const v6AvgArr = rows.map((r) => r.v6avg).filter(Number.isFinite);
+  const v4LossArr = rows.map((r) => r.v4loss).filter(Number.isFinite);
+  const v6LossArr = rows.map((r) => r.v6loss).filter(Number.isFinite);
+  const dAvgArr = rows.map((r) => r.deltaAvg).filter(Number.isFinite);
+  const dLossArr = rows.map((r) => r.deltaLoss).filter(Number.isFinite);
+
+  const summary = {
+    n: rows.length,
+    both: rows.filter((r) => Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)).length,
+    median_avg_v4: percentile(v4AvgArr, 0.5),
+    median_avg_v6: percentile(v6AvgArr, 0.5),
+    p95_avg_v4: percentile(v4AvgArr, 0.95),
+    p95_avg_v6: percentile(v6AvgArr, 0.95),
+    median_loss_v4: percentile(v4LossArr, 0.5),
+    median_loss_v6: percentile(v6LossArr, 0.5),
+    median_delta_avg: percentile(dAvgArr, 0.5),
+    median_delta_loss: percentile(dLossArr, 0.5),
+  };
+
+  return { rows, summary };
+}
+
 function pickDnsTotalMs(x) {
   const r = x?.result;
   // If it's not finished, we don't compare.
@@ -653,6 +727,11 @@ export default function App() {
   const showDnsTable = cmd === "dns" && v4 && v6;
   const showHttpTable = cmd === "http" && v4 && v6;
 
+  const pingCompare = useMemo(() => {
+    if (!showPingTable) return null;
+    return buildPingCompare(v4, v6);
+  }, [showPingTable, v4, v6]);
+
   const dnsCompare = useMemo(() => {
     if (!showDnsTable) return null;
     return buildDnsCompare(v4, v6);
@@ -1000,9 +1079,20 @@ export default function App() {
         </div>
       )}
 
-      {/* Ping summary table */}
-      {showPingTable && (
+            {/* Ping compare table */}
+      {showPingTable && pingCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>Ping RTT (v4 vs v6)</h3>
+            <div style={{ opacity: 0.85 }}>
+              both: {pingCompare.summary.both}/{pingCompare.summary.n} · median avg v4 {ms(pingCompare.summary.median_avg_v4)} · median avg v6{" "}
+              {ms(pingCompare.summary.median_avg_v6)} · Δ {ms(pingCompare.summary.median_delta_avg)}
+              <br />
+              p95 avg v4 {ms(pingCompare.summary.p95_avg_v4)} · p95 avg v6 {ms(pingCompare.summary.p95_avg_v6)} · median loss v4{" "}
+              {pct(pingCompare.summary.median_loss_v4)} · median loss v6 {pct(pingCompare.summary.median_loss_v6)}
+            </div>
+          </div>
+
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
@@ -1014,48 +1104,28 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {v4.results?.map((a, i) => {
-                const b = v6.results?.[i];
-                const p = a?.probe || b?.probe;
-                const r4 = a?.result?.status === "finished" ? a.result : null;
-                const r6 = b?.result?.status === "finished" ? b.result : null;
-
-                const v4avg =
-                  Number.isFinite(r4?.stats?.avg) && r4.stats.avg > 0 && Number(r4?.stats?.loss ?? 0) < 100 ? r4.stats.avg : null;
-                const v6avg =
-                  Number.isFinite(r6?.stats?.avg) && r6.stats.avg > 0 && Number(r6?.stats?.loss ?? 0) < 100 ? r6.stats.avg : null;
-                const delta = Number.isFinite(v4avg) && Number.isFinite(v6avg) ? v6avg - v4avg : null;
-                const winner =
-                  Number.isFinite(v4avg) && Number.isFinite(v6avg)
-                    ? v4avg < v6avg
-                      ? "v4"
-                      : v6avg < v4avg
-                        ? "v6"
-                        : "tie"
-                    : "-";
-
-                return (
-                  <tr key={i}>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p ? `${p.city}, ${p.country}` : "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p?.asn ?? "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{p?.network ?? "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(v4avg)}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r4?.stats?.loss ?? "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(v6avg)}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r6?.stats?.loss ?? "-"}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(delta)}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{winner}</td>
-                  </tr>
-                );
-              })}
+              {pingCompare.rows.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                    {r.probe ? `${r.probe.city}, ${r.probe.country}` : "-"}
+                  </td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v4loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v6loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-
-      {/* Traceroute compare table */}
+{/* Traceroute compare table */}
       {showTracerouteTable && trCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
