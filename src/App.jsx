@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { createMeasurement, waitForMeasurement } from "./lib/globalping";
+import { GEO_PRESETS } from "./geoPresets";
 function isIpLiteral(s) {
   const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/;
   const ipv6 = /^[0-9a-fA-F:]+$/;
@@ -384,6 +385,33 @@ export default function App() {
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
+
+  // Geo presets UI (macro + sub-regions)
+  const [macroId, setMacroId] = useState("eu");
+  const [subId, setSubId] = useState("eu-w");
+
+  const macroPreset = useMemo(
+    () => GEO_PRESETS.find((p) => p.id === macroId) ?? GEO_PRESETS[0],
+    [macroId]
+  );
+  const subPresets = macroPreset?.sub ?? [];
+
+  function selectMacro(id) {
+    const p = GEO_PRESETS.find((x) => x.id === id) ?? GEO_PRESETS[0];
+    setMacroId(p.id);
+    setSubId("");
+    setFrom(p.magic);
+  }
+
+  function selectSub(id) {
+    setSubId(id);
+    if (!id) {
+      setFrom(macroPreset.magic);
+      return;
+    }
+    const s = (macroPreset.sub ?? []).find((x) => x.id === id);
+    if (s?.magic) setFrom(s.magic);
+  }
 
   // ping/mtr
   const [packets, setPackets] = useState(3);
@@ -829,13 +857,41 @@ export default function App() {
         </button>
       </div>
 
-      {/* quick presets */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        {["Western Europe", "Northern Europe", "Southern Europe", "Eastern Europe", "Europe", "world"].map((p) => (
-          <button key={p} onClick={() => setFrom(p)} disabled={running} style={{ padding: "6px 10px" }}>
-            {p}
+      {/* quick presets: macro regions + sub-regions */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        {GEO_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => selectMacro(p.id)}
+            disabled={running}
+            style={{
+              padding: "6px 10px",
+              fontWeight: p.id === macroId ? 700 : 400,
+              border: p.id === macroId ? "1px solid #111" : "1px solid #ddd",
+              borderRadius: 6,
+              background: "transparent",
+              cursor: running ? "not-allowed" : "pointer",
+            }}
+          >
+            {p.label}
           </button>
         ))}
+
+        {subPresets.length > 0 && (
+          <select
+            value={subId}
+            onChange={(e) => selectSub(e.target.value)}
+            disabled={running}
+            style={{ padding: 6 }}
+          >
+            <option value="">All {macroPreset.label}</option>
+            {subPresets.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {err && (
