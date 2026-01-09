@@ -17,6 +17,40 @@ function pct(n) {
   return `${n.toFixed(1)}%`;
 }
 
+const TOOLTIP_CSS = `
+.tt{position:relative;display:inline-flex;align-items:center}
+.tt-bubble{position:absolute;left:50%;top:100%;transform:translateX(-50%) translateY(-2px);margin-top:8px;padding:8px 10px;width:max-content;max-width:360px;white-space:normal;font-size:12px;line-height:1.35;border-radius:10px;background:#111827;color:#fff;box-shadow:0 12px 28px rgba(0,0,0,.22);opacity:0;pointer-events:none;z-index:9999;transition:opacity 120ms ease,transform 120ms ease}
+.tt-bubble::before{content:"";position:absolute;top:-6px;left:50%;transform:translateX(-50%);border-width:0 6px 6px 6px;border-style:solid;border-color:transparent transparent #111827 transparent}
+.tt:hover .tt-bubble,.tt:focus .tt-bubble,.tt:focus-within .tt-bubble{opacity:1;transform:translateX(-50%) translateY(0)}
+.tt-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:999px;border:1px solid rgba(17,24,39,.35);color:rgba(17,24,39,.9);font-size:11px;line-height:1;opacity:.75;cursor:help;user-select:none}
+@media (prefers-reduced-motion: reduce){.tt-bubble{transition:none}}
+`;
+
+function Tip({ text, children }) {
+  return (
+    <span className="tt">
+      {children}
+      <span className="tt-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function Help({ text }) {
+  return (
+    <span className="tt" tabIndex={0} aria-label={text}>
+      <span className="tt-info" aria-hidden="true">
+        i
+      </span>
+      <span className="tt-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+
 
 function probeHeader(x, idx) {
   const p = x?.probe || {};
@@ -62,9 +96,9 @@ function probeKey(x) {
 
 function pickDnsTotalMs(x) {
   const r = x?.result;
-  // se non è finito non confrontiamo
+  // If it's not finished, we don't compare.
   if (r?.status && r.status !== "finished") return null;
-  // se c'è un errore/timeout evitiamo che un 0 ms 'vinca' il confronto
+  // If there is an error/timeout, avoid letting a 0 ms value 'win' the comparison.
   if (r?.error) return null;
   const t = r?.timings?.total;
   return Number.isFinite(t) && t > 0 ? t : null;
@@ -484,8 +518,8 @@ export default function App() {
       if (!httpEffectivePort && Number.isFinite(httpParsed.port) && httpParsed.port > 0) httpEffectivePort = String(httpParsed.port);
     }
 
-    // Per ping/traceroute/mtr/http vogliamo hostname (non IP literal) per il compare v4/v6.
-    // Per DNS invece l'input può anche essere un IP (es. PTR), quindi non blocchiamo.
+    // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
+    // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
     if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
       setErr("Per il confronto v4/v6 inserisci un hostname (non un IP).");
       return;
@@ -635,6 +669,7 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+      <style>{TOOLTIP_CSS}</style>
 <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
   <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
   <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
@@ -663,8 +698,8 @@ export default function App() {
 
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-        <label>
-          Command{" "}
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          Command <Help text="Measurement type to run. IPv4 and IPv6 are executed on the same probes for a fair comparison." />{" "}
           <select
             value={cmd}
             onChange={(e) => {
@@ -682,8 +717,8 @@ export default function App() {
           </select>
         </label>
 
-        <label>
-          Net{" "}
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          Net <Help text="Probe network profile filter: any, eyeball (access/consumer), or datacenter." />{" "}
           <select value={gpTag} onChange={(e) => setGpTag(e.target.value)} disabled={running} style={{ padding: 6 }}>
             <option value="any">any</option>
             <option value="eyeball">eyeball</option>
@@ -691,27 +726,27 @@ export default function App() {
           </select>
         </label>
 
-        <label>
-          From{" "}
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          From <Help text="Where probes are selected (Globalping location string). Presets below can fill this automatically." />{" "}
           <input value={from} onChange={(e) => setFrom(e.target.value)} disabled={running} style={{ padding: 6, width: 220 }} />
         </label>
 
-        <label>
-          Probes{" "}
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          Probes <Help text="Number of probes to run (1–10). More probes improve coverage but take longer." />{" "}
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
 
         {advanced && (cmd === "ping" || cmd === "mtr") && (
-          <label>
-            {cmd === "mtr" ? "Packets/hop" : "Packets"}{" "}
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {cmd === "mtr" ? "Packets/hop" : "Packets"} <Help text="Packets per probe (ping) or per hop (mtr)." />{" "}
             <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
           </label>
         )}
 
         {(cmd === "traceroute" || cmd === "mtr") && (
           <>
-            <label>
-              Proto{" "}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Proto <Help text="Transport protocol used by traceroute/mtr (ICMP, UDP, TCP)." />{" "}
               <select value={trProto} onChange={(e) => setTrProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 <option value="ICMP">ICMP</option>
                 <option value="UDP">UDP</option>
@@ -720,8 +755,8 @@ export default function App() {
             </label>
 
             {advanced && ((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
-              <label>
-                Port{" "}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                Port <Help text="Destination port (used for TCP traceroute or UDP/TCP mtr when applicable)." />{" "}
                 <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
               </label>
             )}
@@ -730,8 +765,8 @@ export default function App() {
 
         {cmd === "dns" && (
           <>
-            <label>
-              Query{" "}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Query <Help text="DNS record type to query (A, AAAA, MX, TXT, etc.)." />{" "}
               <select value={dnsQuery} onChange={(e) => setDnsQuery(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 {["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV", "CAA", "ANY"].map((q) => (
                   <option key={q} value={q}>
@@ -743,16 +778,16 @@ export default function App() {
 
             {advanced && (
               <>
-                <label>
-                  Proto{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Proto <Help text="DNS transport protocol: UDP (default) or TCP." />{" "}
                   <select value={dnsProto} onChange={(e) => setDnsProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
                     <option value="UDP">UDP</option>
                     <option value="TCP">TCP</option>
                   </select>
                 </label>
 
-                <label>
-                  Port{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Port <Help text="DNS server port (default: 53)." />{" "}
                   <input
                     value={dnsPort}
                     onChange={(e) => setDnsPort(e.target.value)}
@@ -761,8 +796,8 @@ export default function App() {
                   />
                 </label>
 
-                <label>
-                  Resolver{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Resolver <Help text="Override the resolver used by probes (IP or hostname). Leave empty to use the probe default resolver." />{" "}
                   <input
                     value={dnsResolver}
                     onChange={(e) => setDnsResolver(e.target.value)}
@@ -772,18 +807,21 @@ export default function App() {
                   />
                 </label>
 
-                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input type="checkbox" checked={dnsTrace} onChange={(e) => setDnsTrace(e.target.checked)} disabled={running} />
-                  trace
-                </label>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="checkbox" checked={dnsTrace} onChange={(e) => setDnsTrace(e.target.checked)} disabled={running} />
+                    trace
+                  </label>
+                  <Help text="Enable DNS trace (when supported) to see the resolution path and timing details." />
+                </div>
               </>
             )}
           </>
         )}
         {cmd === "http" && (
           <>
-            <label>
-              Method{" "}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Method <Help text="HTTP method used for the request." />{" "}
               <select value={httpMethod} onChange={(e) => setHttpMethod(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 {["GET", "HEAD", "OPTIONS"].map((m) => (
                   <option key={m} value={m}>
@@ -793,8 +831,8 @@ export default function App() {
               </select>
             </label>
 
-            <label>
-              Proto{" "}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Proto <Help text="HTTP protocol: HTTP, HTTPS, or HTTP2 (HTTPS implies TLS)." />{" "}
               <select value={httpProto} onChange={(e) => setHttpProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 <option value="HTTP">HTTP</option>
                 <option value="HTTPS">HTTPS</option>
@@ -804,13 +842,13 @@ export default function App() {
 
             {advanced && (
               <>
-                <label>
-                  Path{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Path <Help text="Request path (e.g. / or /index.html). If you paste a full URL in Target, path may be extracted automatically." />{" "}
                   <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
                 </label>
 
-                <label>
-                  Query{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Query <Help text="Query string without '?', e.g. a=1&b=2. If you paste a full URL in Target, query may be extracted automatically." />{" "}
                   <input
                     value={httpQuery}
                     onChange={(e) => setHttpQuery(e.target.value)}
@@ -820,8 +858,8 @@ export default function App() {
                   />
                 </label>
 
-                <label>
-                  Port{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Port <Help text="Override destination port. Leave empty for defaults (80/443)." />{" "}
                   <input
                     value={httpPort}
                     onChange={(e) => setHttpPort(e.target.value)}
@@ -831,8 +869,8 @@ export default function App() {
                   />
                 </label>
 
-                <label>
-                  Resolver{" "}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Resolver <Help text="Override the resolver used by probes for the HTTP target (IP or hostname). Leave empty to use the probe default resolver." />{" "}
                   <input
                     value={httpResolver}
                     onChange={(e) => setHttpResolver(e.target.value)}
@@ -846,59 +884,71 @@ export default function App() {
           </>
         )}
 
+        <Tip text="Target hostname. For HTTP you can paste a full URL; for DNS choose the record type above. Using a hostname is recommended for a fair IPv4/IPv6 comparison.">
         <input
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          placeholder={cmd === "dns" ? "name (es. example.com)" : cmd === "http" ? "url o hostname (es. https://example.com/)" : "hostname (es. example.com)"}
+          placeholder={cmd === "dns" ? "name (e.g. example.com)" : cmd === "http" ? "URL or hostname (e.g. https://example.com/)" : "hostname (e.g. example.com)"}
           style={{ padding: 8, minWidth: 260 }}
           disabled={running}
         />
+        </Tip>
 
-        <button onClick={run} disabled={running} style={{ padding: "8px 12px" }}>
-          Run
-        </button>
-        <button onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
-          Cancel
-        </button>
-        <button onClick={() => setAdvanced((s) => !s)} disabled={running} style={{ padding: "8px 12px" }}>
-          {advanced ? "Basic" : "Advanced"}
-        </button>
-        <button
-          onClick={() => setShowRaw((s) => !s)}
-          disabled={!v4 || !v6}
-          style={{ padding: "8px 12px" }}
-        >
-          {showRaw ? "Hide raw" : "Raw"}
-        </button>
+        <Tip text="Start the measurements (IPv4 and IPv6 side by side).">
+          <button onClick={run} disabled={running} style={{ padding: "8px 12px" }}>
+            Run
+          </button>
+        </Tip>
+        <Tip text="Abort the current run.">
+          <button onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
+            Cancel
+          </button>
+        </Tip>
+        <Tip text="Toggle advanced options for the selected command.">
+          <button onClick={() => setAdvanced((s) => !s)} disabled={running} style={{ padding: "8px 12px" }}>
+            {advanced ? "Basic" : "Advanced"}
+          </button>
+        </Tip>
+        <Tip text="Show or hide the raw Globalping output for each probe (IPv4 and IPv6).">
+          <button
+            onClick={() => setShowRaw((s) => !s)}
+            disabled={!v4 || !v6}
+            style={{ padding: "8px 12px" }}
+          >
+            {showRaw ? "Hide raw" : "Raw"}
+          </button>
+        </Tip>
       </div>
 
       {/* quick presets: macro regions + sub-regions */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         {GEO_PRESETS.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => selectMacro(p.id)}
-            disabled={running}
-            style={{
-              padding: "6px 10px",
-              fontWeight: p.id === macroId ? 700 : 400,
-              border: p.id === macroId ? "1px solid #111" : "1px solid #ddd",
-              borderRadius: 6,
-              background: "transparent",
-              cursor: running ? "not-allowed" : "pointer",
-            }}
-          >
-            {p.label}
-          </button>
+          <Tip key={p.id} text={`Preset: ${p.label}. Updates the "From" field.`}>
+            <button
+              onClick={() => selectMacro(p.id)}
+              disabled={running}
+              style={{
+                padding: "6px 10px",
+                fontWeight: p.id === macroId ? 700 : 400,
+                border: p.id === macroId ? "1px solid #111" : "1px solid #ddd",
+                borderRadius: 6,
+                background: "transparent",
+                cursor: running ? "not-allowed" : "pointer",
+              }}
+            >
+              {p.label}
+            </button>
+          </Tip>
         ))}
 
         {subPresets.length > 0 && (
-          <select
-            value={subId}
-            onChange={(e) => selectSub(e.target.value)}
-            disabled={running}
-            style={{ padding: 6 }}
-          >
+          <Tip text="Refine probes within the selected macro-region.">
+            <select
+              value={subId}
+              onChange={(e) => selectSub(e.target.value)}
+              disabled={running}
+              style={{ padding: 6 }}
+            >
             <option value="">All {macroPreset.label}</option>
             {subPresets.map((s) => (
               <option key={s.id} value={s.id}>
@@ -906,6 +956,7 @@ export default function App() {
               </option>
             ))}
           </select>
+          </Tip>
         )}
       </div>
 
