@@ -606,7 +606,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
   <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
   <span>ping6.it</span>
@@ -1137,7 +1137,22 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <footer
+        style={{
+          marginTop: "auto",
+          paddingTop: 24,
+          paddingBottom: 8,
+          textAlign: "center",
+          fontSize: 14,
+          opacity: 0.8,
+        }}
+      >
+        Made by{" "}
+        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noopener noreferrer">
+          The Internet Floopaloo
+        </a>
+      </footer>
     </div>
   );
 }
-
