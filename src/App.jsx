@@ -639,6 +639,9 @@ export default function App() {
   <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
   <span>ping6.it</span>
 </div>
+<div style={{ marginTop: 6, fontSize: 14, opacity: 0.9 }}>
+IPv4 vs IPv6, side by side
+</div>
 <div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
   Experimental beta: features may change and results may vary.{" "}
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
