@@ -42,17 +42,23 @@ ping6.it does not run probes itself. Measurements are executed by Globalping pro
 
 ## How the v4/v6 comparison works
 
-For each run, ping6.it creates **two measurements**:
+For each run, ping6.it creates **two measurements** and reuses the **same probes** across IPv4 and IPv6 to keep the comparison fair.
 
-1. A first measurement forced to **IPv4** (`ipVersion: 4`) to select the probes.
-2. A second measurement forced to **IPv6** (`ipVersion: 6`) executed **on the same probes** as the IPv4 measurement.
+The ordering depends on the **IPv6-capable probes only** toggle:
 
-This “same-probes” approach keeps the comparison fair: v4 and v6 results come from identical vantage points.
+- **Enabled (default):**  
+  1) run **IPv6 first** (`ipVersion: 6`) to select only probes that can actually execute IPv6  
+  2) run **IPv4** (`ipVersion: 4`) on the **exact same probes** by referencing the IPv6 measurement id
+
+- **Disabled:**  
+  1) run **IPv4 first** (`ipVersion: 4`) to select probes  
+  2) run **IPv6** (`ipVersion: 6`) on the **same probes** by referencing the IPv4 measurement id
 
 ### Target validation
 
 - For `ping`, `traceroute`, `mtr`, and `http`, the target must be a **hostname** (IP literals are rejected) to keep the comparison meaningful.
 - For `dns`, the input may also be an **IP literal** (e.g., for `PTR`).
+- When the target is an IP literal, **IPv6-capable probes only** is disabled and probe selection falls back to the IPv4-first flow.
 
 ---
 
@@ -103,13 +109,21 @@ The UI includes presets that simply fill the **From** field:
 The **From** field remains fully editable and is authoritative.
 
 ### Probes
-Number of probes used for the IPv4 measurement (and thus also for IPv6, since probes are reused).
+Number of probes requested for the **first** measurement (and thus also used for the second one, since probes are reused).
 
 - Allowed range: **1–10**
 - Values are clamped to this range.
 
+### IPv6-capable probes only
+When enabled, ping6.it selects probes by running the **IPv6** measurement first, ensuring every probe can actually execute IPv6, and then runs **IPv4** on the **same probes**.
+
+When disabled, ping6.it selects probes with **IPv4** first and then runs **IPv6** on the same probes (default Globalping behavior).
+
+Notes:
+- Requires a **hostname** target (the toggle is disabled for IP literals).
+- May reduce probe availability in sparse regions and/or when using the `eyeball` / `datacenter` Net filter.
 ### Run / Cancel
-- **Run** starts the IPv4 + IPv6 measurement sequence.
+- **Run** starts the IPv4/IPv6 measurement pair on the same probes.
 - **Cancel** aborts the in-progress run.
 
 ### Basic / Advanced
