@@ -638,14 +638,16 @@ export default function App() {
 <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
   <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
   <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+ {" · "}
   <span style={{ fontSize: 14, opacity: 0.85 }}>
     IPv4 vs IPv6, side by side
   </span>
 </div>
 <div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
-  Experimental beta: features may change and results may vary.{" "}
+  Experimental beta: features may change and results may vary{" "}
+ {" · "}
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
-    Feedback welcome.
+    Feedback welcome
   </a>
   {" · "}
   <a
