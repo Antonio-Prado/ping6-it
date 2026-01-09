@@ -419,6 +419,7 @@ export default function App() {
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
+  const [requireV6Capable, setRequireV6Capable] = useState(true);
 
   // Geo presets UI (macro + sub-regions)
   const [macroId, setMacroId] = useState("eu");
@@ -429,6 +430,7 @@ export default function App() {
     [macroId]
   );
   const subPresets = macroPreset?.sub ?? [];
+  const canRequireV6Capable = !isIpLiteral((target || "").trim());
 
   function selectMacro(id) {
     const p = GEO_PRESETS.find((x) => x.id === id) ?? GEO_PRESETS[0];
@@ -489,7 +491,7 @@ export default function App() {
 
     let effectiveTarget = t;
 
-    // HTTP: accettiamo anche un URL e lo scomponiamo in host/path/query.
+    // HTTP: we also accept a full URL and split it into host/path/query.
     let httpParsed = null;
     let httpEffectiveProto = httpProto;
     let httpEffectivePath = (httpPath || "/").trim() || "/";
@@ -499,7 +501,7 @@ export default function App() {
     if (cmd === "http") {
       httpParsed = parseHttpInput(t);
       if (!httpParsed?.host) {
-        setErr("Per HTTP inserisci un URL o hostname valido.");
+        setErr("For HTTP, enter a valid URL or hostname.");
         return;
       }
 
@@ -521,7 +523,7 @@ export default function App() {
     // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
     // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
     if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
-      setErr("Per il confronto v4/v6 inserisci un hostname (non un IP).");
+      setErr("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
       return;
     }
 
@@ -595,17 +597,35 @@ export default function App() {
         inProgressUpdates: true,
       };
 
-      // v4
-      const m4 = await createMeasurement(
-        { ...base, measurementOptions: { ...measurementOptions, ipVersion: 4 } },
-        ac.signal
-      );
+      const canEnforceV6 = requireV6Capable && !isIpLiteral(effectiveTarget);
 
-      // v6 sugli stessi probe (locations = id v4)
-      const m6 = await createMeasurement(
-        { ...base, locations: m4.id, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
-        ac.signal
-      );
+      let m4;
+      let m6;
+
+      if (canEnforceV6) {
+        // IPv6 first: select only probes that can actually run IPv6.
+        m6 = await createMeasurement(
+          { ...base, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
+          ac.signal
+        );
+
+        // IPv4 on the exact same probes (locations = measurement id).
+        m4 = await createMeasurement(
+          { ...base, locations: m6.id, measurementOptions: { ...measurementOptions, ipVersion: 4 } },
+          ac.signal
+        );
+      } else {
+        // Default behavior: IPv4 first, then IPv6 on the same probes.
+        m4 = await createMeasurement(
+          { ...base, measurementOptions: { ...measurementOptions, ipVersion: 4 } },
+          ac.signal
+        );
+
+        m6 = await createMeasurement(
+          { ...base, locations: m4.id, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
+          ac.signal
+        );
+      }
 
       const [r4, r6] = await Promise.all([
         waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
@@ -735,6 +755,20 @@ export default function App() {
           Probes <Help text="Number of probes to run (1–10). More probes improve coverage but take longer." />{" "}
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
+
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={requireV6Capable}
+              onChange={(e) => setRequireV6Capable(e.target.checked)}
+              disabled={running || !canRequireV6Capable}
+            />
+            IPv6-capable probes only
+          </label>
+          <Help text="Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target." />
+        </div>
+
 
         {advanced && (cmd === "ping" || cmd === "mtr") && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
