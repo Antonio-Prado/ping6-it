@@ -7,7 +7,7 @@ It is intended for **quick, reproducible v4 vs v6 troubleshooting**: reachabilit
 > Experimental beta: features may change and results may vary.
 
 Live: https://ping6.it  
-Feedback: mailto:antonio@prado.it?subject=Ping6%20feedback
+Feedback: mailto:antonio@prado.it
 
 ---
 
