@@ -752,7 +752,7 @@ export default function App() {
                     value={dnsResolver}
                     onChange={(e) => setDnsResolver(e.target.value)}
                     disabled={running}
-                    placeholder="(vuoto = default)"
+                    placeholder="(empty = default)"
                     style={{ padding: 6, width: 220 }}
                   />
                 </label>
@@ -822,7 +822,7 @@ export default function App() {
                     value={httpResolver}
                     onChange={(e) => setHttpResolver(e.target.value)}
                     disabled={running}
-                    placeholder="(vuoto = default)"
+                    placeholder="(empty = default)"
                     style={{ padding: 6, width: 220 }}
                   />
                 </label>
