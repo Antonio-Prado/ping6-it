@@ -1,4 +1,29 @@
+name: CI
+
 on:
   push:
   pull_request:
   workflow_dispatch:
+
+jobs:
+  build_test_audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Audit (fail on high/critical)
+        run: npm audit --audit-level=high
