@@ -1551,10 +1551,8 @@ export default function App() {
           opacity: 0.8,
         }}
       >
-        Made by{" "}
-        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noopener noreferrer">
-          The Internet Floopaloo
-        </a>
+	If it works, thank{" "}
+        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noreferrer">The Internet Floopaloo</a>. If not, blame IPv4
       </footer>
     </div>
   );
