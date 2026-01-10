@@ -1,6 +1,32 @@
 import { useMemo, useRef, useState } from "react";
-import { createMeasurement, waitForMeasurement } from "./lib/globalping";
+import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
+// Turnstile (Cloudflare) - load on demand (only when the user presses Run).
+let __turnstileScriptPromise = null;
+function loadTurnstileScript() {
+  if (typeof window === "undefined") return Promise.reject(new Error("Turnstile can only run in the browser."));
+  if (window.turnstile) return Promise.resolve();
+  if (__turnstileScriptPromise) return __turnstileScriptPromise;
+
+  __turnstileScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-turnstile="1"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Failed to load Turnstile script.")), { once: true });
+      return;
+    }
+
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    s.defer = true;
+    s.dataset.turnstile = "1";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Failed to load Turnstile script."));
+    document.head.appendChild(s);
+  });
+
+  return __turnstileScriptPromise;
+}
 function isIpLiteral(s) {
   const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/;
   const ipv6 = /^[0-9a-fA-F:]+$/;
@@ -554,6 +580,130 @@ export default function App() {
   const [advanced, setAdvanced] = useState(false);
 
   const abortRef = useRef(null);
+
+  // Turnstile (Cloudflare) - on-demand, executed only when the user presses Run.
+  const turnstileContainerRef = useRef(null);
+  const turnstileWidgetIdRef = useRef(null);
+  const turnstilePendingRef = useRef(null);
+  const [showTurnstile, setShowTurnstile] = useState(false);
+
+  async function getTurnstileToken(signal) {
+    const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
+    if (!sitekey) {
+      throw new Error('Turnstile is not configured. Set "VITE_TURNSTILE_SITEKEY" in Cloudflare Pages env vars.');
+    }
+
+    // Ensure the script is loaded.
+    await loadTurnstileScript();
+    if (!window.turnstile) throw new Error("Turnstile script loaded but API is not available.");
+
+    // Ensure we have a container.
+    const el = turnstileContainerRef.current;
+    if (!el) throw new Error("Turnstile container is missing.");
+
+    // Ensure we have a rendered widget (render once, then execute per run).
+    if (turnstileWidgetIdRef.current === null) {
+      el.innerHTML = "";
+      turnstileWidgetIdRef.current = window.turnstile.render(el, {
+        sitekey,
+        action: "ping6_run",
+        cData: "ping6",
+        execution: "execute",
+        appearance: "interaction-only",
+        callback: (token) => {
+          const pending = turnstilePendingRef.current;
+          if (!pending || pending.done) return;
+          pending.done = true;
+          pending.cleanup();
+          pending.resolve(token);
+        },
+        "error-callback": (code) => {
+          const pending = turnstilePendingRef.current;
+          if (!pending || pending.done) return;
+          pending.done = true;
+          pending.cleanup();
+          pending.reject(new Error(`Turnstile error: ${code || "unknown"}`));
+        },
+        "expired-callback": () => {
+          const pending = turnstilePendingRef.current;
+          if (!pending || pending.done) return;
+          pending.done = true;
+          pending.cleanup();
+          pending.reject(new Error("Turnstile token expired. Please press Run again."));
+        },
+        "timeout-callback": () => {
+          const pending = turnstilePendingRef.current;
+          if (!pending || pending.done) return;
+          pending.done = true;
+          pending.cleanup();
+          pending.reject(new Error("Turnstile timed out. Please press Run again."));
+        },
+      });
+    }
+
+    // Execute and wait for token.
+    setShowTurnstile(true);
+    const widgetId = turnstileWidgetIdRef.current;
+
+    return await new Promise((resolve, reject) => {
+      const onAbort = () => {
+        const pending = turnstilePendingRef.current;
+        if (!pending || pending.done) return;
+        pending.done = true;
+        pending.cleanup();
+        reject(new Error("Cancelled."));
+      };
+
+      const cleanup = () => {
+        try {
+          if (signal) signal.removeEventListener("abort", onAbort);
+        } catch {}
+        turnstilePendingRef.current = null;
+        setShowTurnstile(false);
+      };
+
+      turnstilePendingRef.current = { resolve, reject, cleanup, done: false };
+
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
+
+      try {
+        window.turnstile.reset(widgetId);
+        window.turnstile.execute(widgetId);
+      } catch (e) {
+        cleanup();
+        reject(e);
+      }
+    });
+  }
+
+  async function createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, signal) {
+    const res = await fetch("/api/measurements-pair", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ turnstileToken, base, measurementOptions, flow }),
+      signal,
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      const msg =
+        data?.error === "turnstile_failed"
+          ? "Human verification failed. Please retry."
+          : data?.error || `Request failed (${res.status})`;
+      const err = new Error(msg);
+      err.details = data;
+      throw err;
+    }
+
+    return data;
+  }
   async function run() {
     setErr("");
     setV4(null);
@@ -673,33 +823,13 @@ export default function App() {
 
       const canEnforceV6 = requireV6Capable && !isIpLiteral(effectiveTarget);
 
-      let m4;
-      let m6;
+      const flow = canEnforceV6 ? "v6first" : "v4first";
 
-      if (canEnforceV6) {
-        // IPv6 first: select only probes that can actually run IPv6.
-        m6 = await createMeasurement(
-          { ...base, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
-          ac.signal
-        );
+      // Human verification (Turnstile) is mandatory before creating measurements.
+      const turnstileToken = await getTurnstileToken(ac.signal);
 
-        // IPv4 on the exact same probes (locations = measurement id).
-        m4 = await createMeasurement(
-          { ...base, locations: m6.id, measurementOptions: { ...measurementOptions, ipVersion: 4 } },
-          ac.signal
-        );
-      } else {
-        // Default behavior: IPv4 first, then IPv6 on the same probes.
-        m4 = await createMeasurement(
-          { ...base, measurementOptions: { ...measurementOptions, ipVersion: 4 } },
-          ac.signal
-        );
-
-        m6 = await createMeasurement(
-          { ...base, locations: m4.id, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
-          ac.signal
-        );
-      }
+      // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
+      const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
 
       const [r4, r6] = await Promise.all([
         waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
@@ -717,7 +847,25 @@ export default function App() {
 
   function cancel() {
     abortRef.current?.abort();
+
+    // Best-effort: stop any pending Turnstile flow.
+    try {
+      if (turnstilePendingRef.current && !turnstilePendingRef.current.done) {
+        turnstilePendingRef.current.done = true;
+        turnstilePendingRef.current.cleanup();
+        turnstilePendingRef.current.reject(new Error("Cancelled."));
+      }
+    } catch {}
+    try {
+      if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+        window.turnstile.reset(turnstileWidgetIdRef.current);
+      }
+    } catch {}
+    setShowTurnstile(false);
+
     setRunning(false);
+  }
+
   }
 
   const showPingTable = cmd === "ping" && v4 && v6;
@@ -1052,6 +1200,12 @@ export default function App() {
             {showRaw ? "Hide raw" : "Raw"}
           </button>
         </Tip>
+        <div style={{ display: showTurnstile ? "block" : "none", width: "100%" }}>
+          <div style={{ marginTop: 6 }}>
+            <div ref={turnstileContainerRef} />
+          </div>
+        </div>
+
       </div>
 
       {/* quick presets: macro regions + sub-regions */}
