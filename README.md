@@ -304,3 +304,8 @@ Per probe:
 
 ping6.it is built on top of the Globalping measurement platform (API + distributed probes).
 
+## License
+
+- Source code: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see LICENSE.
+- Documentation and website content: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) — see LICENSE-DOCS.
+
