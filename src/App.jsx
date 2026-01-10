@@ -766,6 +766,15 @@ export default function App() {
     lineHeight: 1.35,
   };
 
+  // Licensing (AGPL) and build provenance (Cloudflare Pages commit SHA -> VITE_COMMIT_SHA)
+  const repoUrl = "https://github.com/Antonio-Prado/ping6-it";
+  const commitSha = String(import.meta.env.VITE_COMMIT_SHA || "").trim();
+  const commitRef = commitSha || "main";
+  const shortSha = commitSha ? commitSha.slice(0, 7) : "";
+  const sourceUrl = commitSha ? `${repoUrl}/tree/${commitSha}` : repoUrl;
+  const agplUrl = `${repoUrl}/blob/${commitRef}/LICENSE`;
+  const ccUrl = `${repoUrl}/blob/${commitRef}/LICENSE-DOCS`;
+
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
       <style>{TOOLTIP_CSS}</style>
@@ -791,6 +800,18 @@ export default function App() {
     style={{ textDecoration: "underline" }}
   >
     Docs
+  </a>
+  {" · "}
+  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
+    Source{shortSha ? ` @ ${shortSha}` : ""}
+  </a>
+  {" · "}
+  <a href={agplUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
+    AGPL
+  </a>
+  {" · "}
+  <a href={ccUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
+    CC BY-NC
   </a>
 </div>
 
