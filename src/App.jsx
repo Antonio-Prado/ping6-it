@@ -1552,7 +1552,7 @@ export default function App() {
         }}
       >
 	If it works, thank{" "}
-        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noreferrer">The Internet Floopaloo</a>. If not, blame IPv4
+        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noreferrer">The Internet Floopaloo</a>. If not, blame IPv4!
       </footer>
     </div>
   );
