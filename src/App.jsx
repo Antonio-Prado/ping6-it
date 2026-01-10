@@ -866,7 +866,6 @@ export default function App() {
     setRunning(false);
   }
 
-  }
 
   const showPingTable = cmd === "ping" && v4 && v6;
   const showTracerouteTable = cmd === "traceroute" && v4 && v6;
