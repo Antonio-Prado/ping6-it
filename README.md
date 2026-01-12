@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://ping6.it">
+    <img src="./public/logo-badge.svg" alt="ping6.it logo" width="220" />
+  </a>
+</p>
+
 # ping6.it
 
 **ping6.it** is a small web UI that runs the same network measurement over **IPv4 and IPv6** from multiple vantage points (Globalping probes) and presents a side-by-side comparison.
