@@ -1,0 +1,129 @@
+name: "🐛 Bug report"
+description: Report a problem to help us improve ping6.it
+title: "[Bug]: "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the sections below so we can reproduce and fix it quickly.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A clear and concise description of what the bug is.
+      placeholder: "Example: The Ping command shows an empty results table when selecting IPv6-only probes."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Go to https://ping6.it
+        2. Select command "ping"
+        3. Choose "Europe > Italy"
+        4. Enable "IPv6-only probes"
+        5. Click "Run"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+      placeholder: "Example: Results should show median v4/v6 values and at least one row per probe."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened.
+      placeholder: "Example: The table renders but all cells are blank; console shows a JSON parsing error."
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / recordings
+      description: Attach screenshots or short recordings if helpful (drag & drop here).
+    validations:
+      required: false
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How bad is it?
+      options:
+        - "Low (minor annoyance)"
+        - "Medium (feature partially broken)"
+        - "High (major feature broken)"
+        - "Critical (service unusable / data loss)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Frequency
+      description: How often does it happen?
+      options:
+        - "Always"
+        - "Often"
+        - "Sometimes"
+        - "Rarely"
+        - "Only once"
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: URL / page
+      description: Where did it happen?
+      placeholder: "https://ping6.it (or a specific page/route)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Provide details about your setup.
+      placeholder: |
+        - OS: (e.g., Windows 11 / macOS 14 / Ubuntu 22.04)
+        - Browser: (e.g., Chrome 121, Firefox 122, Safari 17)
+        - Network: (optional) IPv4-only / IPv6-only / dual-stack / behind CGNAT
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console / network logs
+      description: Paste any relevant browser console errors or network logs (redact sensitive info).
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: "I searched existing issues and did not find a duplicate."
+          required: true
+        - label: "I can reproduce this issue consistently (or I described when it happens)."
+          required: false
+        - label: "I included enough detail for maintainers to reproduce the issue."
+          required: true
+
