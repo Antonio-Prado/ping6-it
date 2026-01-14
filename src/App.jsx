@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
+import { ADVANCED_PRESET_GROUPS } from "./advancedPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -811,6 +812,22 @@ export default function App() {
     }
     const s = (macroPreset.sub ?? []).find((x) => x.id === id);
     if (s?.magic) setFrom(s.magic);
+  }
+
+  function applyAdvancedPreset(settings) {
+    if (!settings) return;
+    if (settings.clearFilters) {
+      setProbeAsn("");
+      setProbeIsp("");
+    }
+    if (settings.from !== undefined) setFrom(settings.from);
+    if (settings.gpTag !== undefined) setGpTag(settings.gpTag);
+    if (settings.limit !== undefined) setLimit(String(settings.limit));
+    if (settings.asn !== undefined) setProbeAsn(String(settings.asn));
+    if (settings.isp !== undefined) setProbeIsp(settings.isp);
+    if (settings.requireV6Capable !== undefined) setRequireV6Capable(settings.requireV6Capable);
+    if (settings.deltaThreshold !== undefined) setDeltaThreshold(String(settings.deltaThreshold));
+    if (settings.showAdvanced) setAdvanced(true);
   }
 
   // ping/mtr
@@ -2136,15 +2153,41 @@ export default function App() {
               disabled={running}
               style={{ padding: 6 }}
             >
-            <option value="">All {macroPreset.label}</option>
-            {subPresets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+              <option value="">All {macroPreset.label}</option>
+              {subPresets.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
           </Tip>
         )}
+      </div>
+      <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+        {ADVANCED_PRESET_GROUPS.map((group) => (
+          <div key={group.id} style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{group.label}</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {group.presets.map((preset) => (
+                <Tip key={preset.id} text={preset.description || `Preset avanzato: ${preset.label}.`}>
+                  <button
+                    onClick={() => applyAdvancedPreset(preset.settings)}
+                    disabled={running}
+                    style={{
+                      padding: "6px 10px",
+                      border: "1px solid #ddd",
+                      borderRadius: 6,
+                      background: "transparent",
+                      cursor: running ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                </Tip>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
       </>
       )}
