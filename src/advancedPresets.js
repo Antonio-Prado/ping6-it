@@ -51,6 +51,7 @@ export const ADVANCED_PRESET_GROUPS = [
           gpTag: "eyeball",
           asn: 1273,
           limit: 5,
+          requireV6Capable: false,
           clearFilters: true,
           showAdvanced: true,
         },
