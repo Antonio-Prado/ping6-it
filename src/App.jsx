@@ -906,59 +906,6 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
-    } catch {}
-  }, [history]);
-
-  useEffect(() => {
-    if (!history.length) return;
-    setHistoryCompareA((prev) => prev || history[0]?.id || "");
-    setHistoryCompareB((prev) => prev || history[1]?.id || "");
-  }, [history]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    applyUrlSettings(params, {
-      setCmd,
-      setTarget,
-      setFrom,
-      setGpTag,
-      setLimit,
-      setRequireV6Capable,
-      setPackets,
-      setTrProto,
-      setTrPort,
-      setDnsQuery,
-      setDnsProto,
-      setDnsPort,
-      setDnsResolver,
-      setDnsTrace,
-      setHttpMethod,
-      setHttpProto,
-      setHttpPath,
-      setHttpQuery,
-      setHttpPort,
-      setHttpResolver,
-      setProbeAsn,
-      setProbeIsp,
-      setDeltaThreshold,
-    });
-
-    const reportRaw = params.get("report");
-    const dataRaw = params.get("data");
-    if (reportRaw === "1" && dataRaw) {
-      const decoded = decodeReportPayload(dataRaw);
-      if (decoded) {
-        setReportMode(true);
-        setReportData(decoded);
-      }
-    }
-  }, []);
-
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
     if (!sitekey) {
@@ -1084,7 +1031,10 @@ export default function App() {
     setTurnstileStatus("");
 
     const t = target.trim();
-    if (!t) return;
+    if (!t) {
+      setErr("Please enter a target hostname or URL.");
+      return;
+    }
 
     let effectiveTarget = t;
 
@@ -1134,6 +1084,7 @@ export default function App() {
     abortRef.current = ac;
 
     setRunning(true);
+    setTurnstileStatus("Preparing measurement...");
     let turnstileTimedOut = false;
     try {
       const probes = Math.max(1, Math.min(10, Number(limit) || 3));
@@ -1296,6 +1247,7 @@ export default function App() {
       }
     } catch {}
     setShowTurnstile(false);
+    setTurnstileStatus("");
 
     setRunning(false);
   }
@@ -2012,12 +1964,12 @@ export default function App() {
         </Tip>
 
         <Tip text="Start the measurements (IPv4 and IPv6 side by side).">
-          <button onClick={run} disabled={running} style={{ padding: "8px 12px" }}>
+          <button type="button" onClick={run} disabled={running} style={{ padding: "8px 12px" }}>
             Run
           </button>
         </Tip>
         <Tip text="Abort the current run.">
-          <button onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
+          <button type="button" onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
             Cancel
           </button>
         </Tip>
@@ -2068,7 +2020,17 @@ export default function App() {
           </div>
         )}
         {turnstileStatus && (
-          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }}>{turnstileStatus}</div>
+          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }} aria-live="polite">
+            {turnstileStatus}
+          </div>
+        )}
+        {err && (
+          <div
+            style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, width: "100%", whiteSpace: "pre-wrap" }}
+            aria-live="polite"
+          >
+            {err}
+          </div>
         )}
         <div style={{ display: showTurnstile ? "block" : "none", width: "100%" }}>
           <div style={{ marginTop: 6 }}>
@@ -2316,12 +2278,6 @@ export default function App() {
               </a>
             ))}
           </div>
-        </div>
-      )}
-
-      {err && (
-        <div style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
-          {err}
         </div>
       )}
 
