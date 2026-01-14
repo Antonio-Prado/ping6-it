@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
-import { ADVANCED_PRESET_GROUPS } from "./advancedPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -829,21 +828,6 @@ export default function App() {
     if (s?.magic) setFrom(s.magic);
   }
 
-  function applyAdvancedPreset(settings) {
-    if (!settings) return;
-    if (settings.clearFilters) {
-      setProbeAsn("");
-      setProbeIsp("");
-    }
-    if (settings.from !== undefined) setFrom(settings.from);
-    if (settings.gpTag !== undefined) setGpTag(settings.gpTag);
-    if (settings.limit !== undefined) setLimit(String(settings.limit));
-    if (settings.asn !== undefined) setProbeAsn(String(settings.asn));
-    if (settings.isp !== undefined) setProbeIsp(settings.isp);
-    if (settings.requireV6Capable !== undefined) setRequireV6Capable(settings.requireV6Capable);
-    if (settings.deltaThreshold !== undefined) setDeltaThreshold(String(settings.deltaThreshold));
-    if (settings.showAdvanced) setAdvanced(true);
-  }
 
   // ping/mtr
   const [packets, setPackets] = useState(3);
@@ -1771,8 +1755,10 @@ export default function App() {
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
       <style>{TOOLTIP_CSS}</style>
 <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
-  <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
-  <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  <a href="https://ping6.it" style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", textDecoration: "none", color: "inherit" }}>
+    <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
+    <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  </a>
  {" · "}
   <span style={{ fontSize: 14, opacity: 0.85 }}>
     IPv4 vs IPv6, side by side
@@ -1874,7 +1860,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ISP <Help text="Filter probes by ISP name (substring match, e.g. Comcast)." />{" "}
+              ISP <Help text="ISP name filtering is not supported by the Globalping API: use an ASN when possible." />{" "}
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
@@ -2289,33 +2275,71 @@ export default function App() {
           </Tip>
         )}
       </div>
-      <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-        {ADVANCED_PRESET_GROUPS.map((group) => (
-          <div key={group.id} style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{group.label}</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {group.presets.map((preset) => (
-                <Tip key={preset.id} text={preset.description || `Preset avanzato: ${preset.label}.`}>
-                  <button
-                    onClick={() => applyAdvancedPreset(preset.settings)}
-                    disabled={running}
+      </>
+      )}
+
+      {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700 }}>Multi-target results</div>
+            {multiRunStatus && (
+              <div style={{ fontSize: 13, opacity: 0.8 }}>
+                Running {multiRunStatus.current}/{multiRunStatus.total} · {multiRunStatus.target}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Click a target to load its full results below.</div>
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {multiRunResults.length ? (
+              multiRunResults.map((entry) => {
+                const isActive = entry.id === multiActiveId;
+                return (
+                  <div
+                    key={entry.id}
                     style={{
-                      padding: "6px 10px",
-                      border: "1px solid #ddd",
-                      borderRadius: 6,
-                      background: "transparent",
-                      cursor: running ? "not-allowed" : "pointer",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 8,
+                      padding: 10,
+                      background: isActive ? "#f8fafc" : "transparent",
                     }}
                   >
-                    {preset.label}
-                  </button>
-                </Tip>
-              ))}
-            </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <strong>{entry.target}</strong>
+                      <span style={{ opacity: 0.8 }}>{entry.cmd}</span>
+                    </div>
+                    {entry.summary && (
+                      <div style={{ fontSize: 13, marginTop: 4 }}>
+                        median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ{" "}
+                        {ms(entry.summary.medianDelta)}
+                        {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                          <>
+                            {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        onClick={() => {
+                          setV4(entry.v4);
+                          setV6(entry.v6);
+                          setTarget(entry.target);
+                          setShowRaw(false);
+                          setMultiActiveId(entry.id);
+                        }}
+                        style={{ padding: "6px 10px" }}
+                      >
+                        {isActive ? "Viewing" : "View results"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>Waiting for the first result…</div>
+            )}
           </div>
-        ))}
-      </div>
-      </>
+        </div>
       )}
 
       {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
