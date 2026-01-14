@@ -4,6 +4,7 @@ import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
+const TURNSTILE_EXEC_TIMEOUT_MS = 30000;
 function loadTurnstileScript() {
   if (typeof window === "undefined") return Promise.reject(new Error("Turnstile can only run in the browser."));
   if (window.turnstile) return Promise.resolve();
@@ -850,6 +851,60 @@ export default function App() {
   const turnstileWidgetIdRef = useRef(null);
   const turnstilePendingRef = useRef(null);
   const [showTurnstile, setShowTurnstile] = useState(false);
+  const [turnstileStatus, setTurnstileStatus] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch {}
+  }, [history]);
+
+  useEffect(() => {
+    if (!history.length) return;
+    setHistoryCompareA((prev) => prev || history[0]?.id || "");
+    setHistoryCompareB((prev) => prev || history[1]?.id || "");
+  }, [history]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    applyUrlSettings(params, {
+      setCmd,
+      setTarget,
+      setFrom,
+      setGpTag,
+      setLimit,
+      setRequireV6Capable,
+      setPackets,
+      setTrProto,
+      setTrPort,
+      setDnsQuery,
+      setDnsProto,
+      setDnsPort,
+      setDnsResolver,
+      setDnsTrace,
+      setHttpMethod,
+      setHttpProto,
+      setHttpPath,
+      setHttpQuery,
+      setHttpPort,
+      setHttpResolver,
+      setProbeAsn,
+      setProbeIsp,
+      setDeltaThreshold,
+    });
+
+    const reportRaw = params.get("report");
+    const dataRaw = params.get("data");
+    if (reportRaw === "1" && dataRaw) {
+      const decoded = decodeReportPayload(dataRaw);
+      if (decoded) {
+        setReportMode(true);
+        setReportData(decoded);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1026,6 +1081,7 @@ export default function App() {
     setV4(null);
     setV6(null);
     setShowRaw(false);
+    setTurnstileStatus("");
 
     const t = target.trim();
     if (!t) return;
@@ -1078,6 +1134,7 @@ export default function App() {
     abortRef.current = ac;
 
     setRunning(true);
+    let turnstileTimedOut = false;
     try {
       const probes = Math.max(1, Math.min(10, Number(limit) || 3));
       const fromWithTag = applyGpTag(from, gpTag);
@@ -1153,7 +1210,14 @@ export default function App() {
       const flow = canEnforceV6 ? "v6first" : "v4first";
 
       // Human verification (Turnstile) is mandatory before creating measurements.
+      setTurnstileStatus("Waiting for human verification...");
+      const turnstileTimeoutId = setTimeout(() => {
+        turnstileTimedOut = true;
+        ac.abort();
+      }, TURNSTILE_EXEC_TIMEOUT_MS);
       const turnstileToken = await getTurnstileToken(ac.signal);
+      clearTimeout(turnstileTimeoutId);
+      setTurnstileStatus("");
 
       // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
       const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
@@ -1203,9 +1267,15 @@ export default function App() {
       };
       setHistory((prev) => [entry, ...prev].slice(0, HISTORY_LIMIT));
     } catch (e) {
-      setErr(e?.message || String(e));
+      const message = e?.message || String(e);
+      if (message === "Cancelled." && turnstileTimedOut) {
+        setErr("Human verification timed out. Please retry.");
+      } else {
+        setErr(message);
+      }
     } finally {
       setRunning(false);
+      setTurnstileStatus("");
     }
   }
 
@@ -1996,6 +2066,9 @@ export default function App() {
           <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }}>
             Link ready: <a href={shareUrl}>{shareUrl}</a>
           </div>
+        )}
+        {turnstileStatus && (
+          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }}>{turnstileStatus}</div>
         )}
         <div style={{ display: showTurnstile ? "block" : "none", width: "100%" }}>
           <div style={{ marginTop: 6 }}>
