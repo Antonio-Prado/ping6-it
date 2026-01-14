@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
@@ -52,6 +52,10 @@ const TOOLTIP_CSS = `
 @media (prefers-reduced-motion: reduce){.tt-bubble{transition:none}}
 `;
 
+const HISTORY_STORAGE_KEY = "ping6_history_v1";
+const HISTORY_LIMIT = 10;
+const SHARE_VERSION = 1;
+
 function Tip({ text, children }) {
   return (
     <span className="tt">
@@ -74,6 +78,197 @@ function Help({ text }) {
       </span>
     </span>
   );
+}
+
+function loadHistory() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeHistorySummary(cmd, v4, v6) {
+  if (!v4 || !v6) return null;
+  if (cmd === "ping") {
+    const { summary } = buildPingCompare(v4, v6);
+    return {
+      kind: "ping",
+      medianV4: summary.median_avg_v4,
+      medianV6: summary.median_avg_v6,
+      medianDelta: summary.median_delta_avg,
+      medianLossV4: summary.median_loss_v4,
+      medianLossV6: summary.median_loss_v6,
+    };
+  }
+  if (cmd === "traceroute") {
+    const { summary } = buildTracerouteCompare(v4, v6);
+    return {
+      kind: "traceroute",
+      medianV4: summary.median_v4,
+      medianV6: summary.median_v6,
+      medianDelta: summary.median_delta,
+    };
+  }
+  if (cmd === "mtr") {
+    const { summary } = buildMtrCompare(v4, v6);
+    return {
+      kind: "mtr",
+      medianV4: summary.median_avg_v4,
+      medianV6: summary.median_avg_v6,
+      medianDelta: summary.median_delta_avg,
+      medianLossV4: summary.median_loss_v4,
+      medianLossV6: summary.median_loss_v6,
+    };
+  }
+  if (cmd === "dns") {
+    const { summary } = buildDnsCompare(v4, v6);
+    return {
+      kind: "dns",
+      medianV4: summary.median_v4,
+      medianV6: summary.median_v6,
+      medianDelta: summary.median_delta,
+    };
+  }
+  if (cmd === "http") {
+    const { summary } = buildHttpCompare(v4, v6);
+    return {
+      kind: "http",
+      medianV4: summary.median_v4,
+      medianV6: summary.median_v6,
+      medianDelta: summary.median_delta,
+    };
+  }
+  return null;
+}
+
+function encodeReportPayload(payload) {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.btoa(encodeURIComponent(JSON.stringify(payload)));
+  } catch {
+    return "";
+  }
+}
+
+function csvEscape(value) {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (s.includes('"') || s.includes(",") || s.includes("\n")) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function downloadFile(filename, content, type) {
+  if (typeof window === "undefined") return;
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function decodeReportPayload(raw) {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(decodeURIComponent(window.atob(raw)));
+  } catch {
+    return null;
+  }
+}
+
+function applyUrlSettings(params, setters) {
+  const {
+    setCmd,
+    setTarget,
+    setFrom,
+    setGpTag,
+    setLimit,
+    setRequireV6Capable,
+    setPackets,
+    setTrProto,
+    setTrPort,
+    setDnsQuery,
+    setDnsProto,
+    setDnsPort,
+    setDnsResolver,
+    setDnsTrace,
+    setHttpMethod,
+    setHttpProto,
+    setHttpPath,
+    setHttpQuery,
+    setHttpPort,
+    setHttpResolver,
+    setProbeAsn,
+    setProbeIsp,
+    setProbeLat,
+    setProbeLon,
+    setProbeRadius,
+  } = setters;
+
+  const cmd = params.get("cmd");
+  if (cmd) setCmd(cmd);
+  const target = params.get("target");
+  if (target) setTarget(target);
+  const from = params.get("from");
+  if (from) setFrom(from);
+  const gpTag = params.get("net");
+  if (gpTag) setGpTag(gpTag);
+  const limit = params.get("limit");
+  if (limit) setLimit(limit);
+  const requireV6Capable = params.get("v6only");
+  if (requireV6Capable !== null) setRequireV6Capable(requireV6Capable === "1");
+
+  const packets = params.get("packets");
+  if (packets) setPackets(packets);
+  const trProto = params.get("trproto");
+  if (trProto) setTrProto(trProto);
+  const trPort = params.get("trport");
+  if (trPort) setTrPort(trPort);
+
+  const dnsQuery = params.get("dnsq");
+  if (dnsQuery) setDnsQuery(dnsQuery);
+  const dnsProto = params.get("dnsproto");
+  if (dnsProto) setDnsProto(dnsProto);
+  const dnsPort = params.get("dnsport");
+  if (dnsPort) setDnsPort(dnsPort);
+  const dnsResolver = params.get("dnsresolver");
+  if (dnsResolver) setDnsResolver(dnsResolver);
+  const dnsTrace = params.get("dnstrace");
+  if (dnsTrace !== null) setDnsTrace(dnsTrace === "1");
+
+  const httpMethod = params.get("httpmethod");
+  if (httpMethod) setHttpMethod(httpMethod);
+  const httpProto = params.get("httpproto");
+  if (httpProto) setHttpProto(httpProto);
+  const httpPath = params.get("httppath");
+  if (httpPath) setHttpPath(httpPath);
+  const httpQuery = params.get("httpquery");
+  if (httpQuery) setHttpQuery(httpQuery);
+  const httpPort = params.get("httpport");
+  if (httpPort) setHttpPort(httpPort);
+  const httpResolver = params.get("httpresolver");
+  if (httpResolver) setHttpResolver(httpResolver);
+
+  const asn = params.get("asn");
+  if (asn) setProbeAsn(asn);
+  const isp = params.get("isp");
+  if (isp) setProbeIsp(isp);
+  const lat = params.get("lat");
+  if (lat) setProbeLat(lat);
+  const lon = params.get("lon");
+  if (lon) setProbeLon(lon);
+  const radius = params.get("radius");
+  if (radius) setProbeRadius(radius);
 }
 
 
@@ -118,6 +313,44 @@ function percentile(arr, p) {
 function probeKey(x) {
   const p = x?.probe || {};
   return p.id ?? `${p.city ?? ""}|${p.country ?? ""}|${p.asn ?? ""}|${p.network ?? ""}`;
+}
+
+function probeCoords(p) {
+  if (!p) return null;
+  const lat = Number(p.latitude ?? p.lat);
+  const lon = Number(p.longitude ?? p.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+function buildStaticMapUrl(points) {
+  if (!points.length) return "";
+  const avg = points.reduce(
+    (acc, p) => ({ lat: acc.lat + p.lat, lon: acc.lon + p.lon }),
+    { lat: 0, lon: 0 }
+  );
+  const centerLat = avg.lat / points.length;
+  const centerLon = avg.lon / points.length;
+  const markers = points
+    .map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)},red-pushpin`)
+    .join("|");
+  const params = new URLSearchParams({
+    center: `${centerLat.toFixed(5)},${centerLon.toFixed(5)}`,
+    zoom: "2",
+    size: "800x320",
+    markers,
+  });
+  return `https://staticmap.openstreetmap.de/staticmap.php?${params.toString()}`;
+}
+
+function formatHopPath(result, maxHops = 12) {
+  const hops = Array.isArray(result?.result?.hops) ? result.result.hops : [];
+  const labels = hops
+    .map((h) => h?.resolvedHostname || h?.resolvedAddress || h?.address || h?.hostname || "")
+    .filter(Boolean);
+  if (!labels.length) return "-";
+  const sliced = labels.slice(0, maxHops);
+  return labels.length > maxHops ? `${sliced.join(" → ")} → …` : sliced.join(" → ");
 }
 
 function pickPingStats(x) {
@@ -571,6 +804,18 @@ export default function App() {
   const [httpPort, setHttpPort] = useState(""); // empty => default (80/443)
   const [httpResolver, setHttpResolver] = useState(""); // empty => default resolver on probe
 
+  const [probeAsn, setProbeAsn] = useState("");
+  const [probeIsp, setProbeIsp] = useState("");
+  const [probeLat, setProbeLat] = useState("");
+  const [probeLon, setProbeLon] = useState("");
+  const [probeRadius, setProbeRadius] = useState("");
+
+  const [history, setHistory] = useState(() => loadHistory());
+  const [historyCompareA, setHistoryCompareA] = useState("");
+  const [historyCompareB, setHistoryCompareB] = useState("");
+  const [reportMode, setReportMode] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [shareUrl, setShareUrl] = useState("");
 
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -586,6 +831,61 @@ export default function App() {
   const turnstileWidgetIdRef = useRef(null);
   const turnstilePendingRef = useRef(null);
   const [showTurnstile, setShowTurnstile] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch {}
+  }, [history]);
+
+  useEffect(() => {
+    if (!history.length) return;
+    setHistoryCompareA((prev) => prev || history[0]?.id || "");
+    setHistoryCompareB((prev) => prev || history[1]?.id || "");
+  }, [history]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    applyUrlSettings(params, {
+      setCmd,
+      setTarget,
+      setFrom,
+      setGpTag,
+      setLimit,
+      setRequireV6Capable,
+      setPackets,
+      setTrProto,
+      setTrPort,
+      setDnsQuery,
+      setDnsProto,
+      setDnsPort,
+      setDnsResolver,
+      setDnsTrace,
+      setHttpMethod,
+      setHttpProto,
+      setHttpPath,
+      setHttpQuery,
+      setHttpPort,
+      setHttpResolver,
+      setProbeAsn,
+      setProbeIsp,
+      setProbeLat,
+      setProbeLon,
+      setProbeRadius,
+    });
+
+    const reportRaw = params.get("report");
+    const dataRaw = params.get("data");
+    if (reportRaw === "1" && dataRaw) {
+      const decoded = decodeReportPayload(dataRaw);
+      if (decoded) {
+        setReportMode(true);
+        setReportData(decoded);
+      }
+    }
+  }, []);
 
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
@@ -751,6 +1051,11 @@ export default function App() {
       return;
     }
 
+    if (probeLat.trim() || probeLon.trim() || probeRadius.trim()) {
+      setErr("Geo filters (lat/lon/radius) are not supported by the Globalping API yet. Please clear them.");
+      return;
+    }
+
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -813,10 +1118,15 @@ export default function App() {
         }
       }
 
+      const location = { magic: fromWithTag || "world" };
+      const parsedAsn = Number(probeAsn);
+      if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
+      if (probeIsp.trim()) location.isp = probeIsp.trim();
+
       const base = {
         type: cmd,
         target: effectiveTarget,
-        locations: [{ magic: fromWithTag || "world" }],
+        locations: [location],
         limit: probes,
         inProgressUpdates: true,
       };
@@ -838,6 +1148,45 @@ export default function App() {
 
       setV4(r4);
       setV6(r6);
+
+      const summary = normalizeHistorySummary(cmd, r4, r6);
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ts: Date.now(),
+        cmd,
+        target: t,
+        effectiveTarget,
+        fromRaw: from,
+        from: fromWithTag || "world",
+        gpTag,
+        limit: probes,
+        requireV6Capable: canEnforceV6,
+        options: {
+          packets,
+          trProto,
+          trPort,
+          dnsQuery,
+          dnsProto,
+          dnsPort,
+          dnsResolver,
+          dnsTrace,
+          httpMethod,
+          httpProto: httpEffectiveProto,
+          httpPath: httpEffectivePath,
+          httpQuery: httpEffectiveQuery,
+          httpPort: httpEffectivePort,
+          httpResolver,
+        },
+        filters: {
+          asn: probeAsn,
+          isp: probeIsp,
+          lat: probeLat,
+          lon: probeLon,
+          radius: probeRadius,
+        },
+        summary,
+      };
+      setHistory((prev) => [entry, ...prev].slice(0, HISTORY_LIMIT));
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -866,6 +1215,275 @@ export default function App() {
     setRunning(false);
   }
 
+  function applyHistoryEntry(entry) {
+    if (!entry) return;
+    setCmd(entry.cmd);
+    setTarget(entry.target || "");
+    setFrom(entry.fromRaw || entry.from || "");
+    setGpTag(entry.gpTag || "any");
+    setLimit(entry.limit || 3);
+    setRequireV6Capable(Boolean(entry.requireV6Capable));
+    const opts = entry.options || {};
+    setPackets(opts.packets ?? 3);
+    setTrProto(opts.trProto ?? "ICMP");
+    setTrPort(opts.trPort ?? 80);
+    setDnsQuery(opts.dnsQuery ?? "A");
+    setDnsProto(opts.dnsProto ?? "UDP");
+    setDnsPort(opts.dnsPort ?? 53);
+    setDnsResolver(opts.dnsResolver ?? "");
+    setDnsTrace(Boolean(opts.dnsTrace));
+    setHttpMethod(opts.httpMethod ?? "GET");
+    setHttpProto(opts.httpProto ?? "HTTPS");
+    setHttpPath(opts.httpPath ?? "/");
+    setHttpQuery(opts.httpQuery ?? "");
+    setHttpPort(opts.httpPort ?? "");
+    setHttpResolver(opts.httpResolver ?? "");
+    const filters = entry.filters || {};
+    setProbeAsn(filters.asn ?? "");
+    setProbeIsp(filters.isp ?? "");
+    setProbeLat(filters.lat ?? "");
+    setProbeLon(filters.lon ?? "");
+    setProbeRadius(filters.radius ?? "");
+  }
+
+  function buildShareParams() {
+    const params = new URLSearchParams();
+    params.set("cmd", cmd);
+    params.set("target", target || "");
+    params.set("from", from || "");
+    params.set("net", gpTag || "any");
+    params.set("limit", String(limit || 3));
+    params.set("v6only", requireV6Capable ? "1" : "0");
+    if (probeAsn) params.set("asn", probeAsn);
+    if (probeIsp) params.set("isp", probeIsp);
+    if (probeLat) params.set("lat", probeLat);
+    if (probeLon) params.set("lon", probeLon);
+    if (probeRadius) params.set("radius", probeRadius);
+
+    if (cmd === "ping" || cmd === "mtr") params.set("packets", String(packets || 3));
+    if (cmd === "traceroute" || cmd === "mtr") {
+      params.set("trproto", trProto || "ICMP");
+      if ((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) {
+        params.set("trport", String(trPort || 80));
+      }
+    }
+    if (cmd === "dns") {
+      params.set("dnsq", dnsQuery || "A");
+      params.set("dnsproto", dnsProto || "UDP");
+      params.set("dnsport", String(dnsPort || 53));
+      if (dnsResolver) params.set("dnsresolver", dnsResolver);
+      if (dnsTrace) params.set("dnstrace", "1");
+    }
+    if (cmd === "http") {
+      params.set("httpmethod", httpMethod || "GET");
+      params.set("httpproto", httpProto || "HTTPS");
+      params.set("httppath", httpPath || "/");
+      if (httpQuery) params.set("httpquery", httpQuery);
+      if (httpPort) params.set("httpport", httpPort);
+      if (httpResolver) params.set("httpresolver", httpResolver);
+    }
+    return params;
+  }
+
+  function buildReportPayload() {
+    const summary = normalizeHistorySummary(cmd, v4, v6);
+    if (!summary) return null;
+    return {
+      v: SHARE_VERSION,
+      ts: Date.now(),
+      cmd,
+      target,
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        lat: probeLat,
+        lon: probeLon,
+        radius: probeRadius,
+      },
+      summary,
+    };
+  }
+
+  function buildExportBundle() {
+    if (!v4 || !v6) return null;
+    const summary = normalizeHistorySummary(cmd, v4, v6);
+    const base = {
+      generatedAt: new Date().toISOString(),
+      cmd,
+      target,
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        lat: probeLat,
+        lon: probeLon,
+        radius: probeRadius,
+      },
+      summary,
+    };
+    if (cmd === "ping" && pingCompare) return { ...base, rows: pingCompare.rows };
+    if (cmd === "traceroute" && trCompare) return { ...base, rows: trCompare.rows };
+    if (cmd === "mtr" && mtrCompare) return { ...base, rows: mtrCompare.rows };
+    if (cmd === "dns" && dnsCompare) return { ...base, rows: dnsCompare.rows };
+    if (cmd === "http" && httpCompare) return { ...base, rows: httpCompare.rows };
+    return { ...base, rows: [] };
+  }
+
+  function downloadJson() {
+    const bundle = buildExportBundle();
+    if (!bundle) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-${cmd}-${stamp}.json`;
+    downloadFile(filename, JSON.stringify(bundle, null, 2), "application/json");
+  }
+
+  function downloadCsv() {
+    const bundle = buildExportBundle();
+    if (!bundle) return;
+    const rows = bundle.rows || [];
+    let headers = [];
+    let lines = [];
+
+    if (cmd === "ping") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_avg_ms", "v4_loss_pct", "v6_avg_ms", "v6_loss_pct", "delta_avg_ms", "delta_loss_pct", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4avg,
+        r.v4loss,
+        r.v6avg,
+        r.v6loss,
+        r.deltaAvg,
+        r.deltaLoss,
+        r.winner,
+      ]);
+    } else if (cmd === "traceroute") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_dst_ms", "v6_reached", "v6_hops", "v6_dst_ms", "delta_ms", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4reached ? "yes" : "no",
+        r.v4hops,
+        r.v4dst,
+        r.v6reached ? "yes" : "no",
+        r.v6hops,
+        r.v6dst,
+        r.delta,
+        r.winner,
+      ]);
+    } else if (cmd === "mtr") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_loss_pct", "v4_avg_ms", "v6_reached", "v6_hops", "v6_loss_pct", "v6_avg_ms", "delta_avg_ms", "delta_loss_pct", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4reached ? "yes" : "no",
+        r.v4hops,
+        r.v4loss,
+        r.v4avg,
+        r.v6reached ? "yes" : "no",
+        r.v6hops,
+        r.v6loss,
+        r.v6avg,
+        r.deltaAvg,
+        r.deltaLoss,
+        r.winner,
+      ]);
+    } else if (cmd === "dns") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4ms,
+        r.v6ms,
+        r.delta,
+        r.ratio,
+        r.winner,
+      ]);
+    } else if (cmd === "http") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_status", "v6_status", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4sc,
+        r.v6sc,
+        r.v4ms,
+        r.v6ms,
+        r.delta,
+        r.ratio,
+        r.winner,
+      ]);
+    }
+
+    const csv = [headers.map(csvEscape).join(","), ...lines.map((row) => row.map(csvEscape).join(","))].join("\n");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-${cmd}-${stamp}.csv`;
+    downloadFile(filename, csv, "text/csv");
+  }
+
+  function updateShareLink() {
+    if (typeof window === "undefined") return;
+    const params = buildShareParams();
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    setShareUrl(url.toString());
+    return url.toString();
+  }
+
+  function enterReportMode() {
+    if (typeof window === "undefined") return;
+    const payload = buildReportPayload();
+    if (!payload) return;
+    const encoded = encodeReportPayload(payload);
+    const url = new URL(window.location.href);
+    url.searchParams.set("report", "1");
+    url.searchParams.set("data", encoded);
+    window.history.replaceState({}, "", url.toString());
+    setReportMode(true);
+    setReportData(payload);
+    setShareUrl(url.toString());
+  }
+
+  function copyToClipboard(value) {
+    if (typeof navigator === "undefined") return;
+    if (!value) return;
+    try {
+      navigator.clipboard?.writeText(value);
+    } catch {}
+  }
+
+  function exitReportMode() {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("report");
+    url.searchParams.delete("data");
+    window.history.replaceState({}, "", url.toString());
+    setReportMode(false);
+    setReportData(null);
+    updateShareLink();
+  }
+
 
   const showPingTable = cmd === "ping" && v4 && v6;
   const showTracerouteTable = cmd === "traceroute" && v4 && v6;
@@ -873,6 +1491,82 @@ export default function App() {
 
   const showDnsTable = cmd === "dns" && v4 && v6;
   const showHttpTable = cmd === "http" && v4 && v6;
+
+  const historyEntryA = useMemo(() => history.find((h) => h.id === historyCompareA) || null, [history, historyCompareA]);
+  const historyEntryB = useMemo(() => history.find((h) => h.id === historyCompareB) || null, [history, historyCompareB]);
+  const historyCompareMismatch =
+    historyEntryA && historyEntryB && historyEntryA.cmd !== historyEntryB.cmd ? "Select two runs with the same command to compare." : "";
+  const historyCompareMetrics = useMemo(() => {
+    if (!historyEntryA || !historyEntryB) return [];
+    if (!historyEntryA.summary || !historyEntryB.summary) return [];
+    if (historyEntryA.summary.kind !== historyEntryB.summary.kind) return [];
+    const a = historyEntryA.summary;
+    const b = historyEntryB.summary;
+    const metrics = [
+      { label: "median v4", format: ms, a: a.medianV4, b: b.medianV4 },
+      { label: "median v6", format: ms, a: a.medianV6, b: b.medianV6 },
+      { label: "median Δ v6-v4", format: ms, a: a.medianDelta, b: b.medianDelta },
+    ];
+    if (a.kind === "ping" || a.kind === "mtr") {
+      metrics.push(
+        { label: "median loss v4", format: pct, a: a.medianLossV4, b: b.medianLossV4 },
+        { label: "median loss v6", format: pct, a: a.medianLossV6, b: b.medianLossV6 }
+      );
+    }
+    return metrics;
+  }, [historyEntryA, historyEntryB]);
+
+  const probePoints = useMemo(() => {
+    const results = v4?.results || v6?.results || [];
+    const seen = new Set();
+    const points = [];
+    results.forEach((x) => {
+      const p = x?.probe || {};
+      const coords = probeCoords(p);
+      if (!coords) return;
+      const key = `${coords.lat},${coords.lon}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      points.push({ ...coords, label: `${p.city || ""} ${p.country || ""}`.trim() });
+    });
+    return points;
+  }, [v4, v6]);
+
+  const probeMapUrl = useMemo(() => buildStaticMapUrl(probePoints.slice(0, 40)), [probePoints]);
+
+  const traceroutePaths = useMemo(() => {
+    if (!showTracerouteTable || !v4 || !v6) return [];
+    const a = v4?.results ?? [];
+    const b = v6?.results ?? [];
+    const bMap = new Map(b.map((x) => [probeKey(x), x]));
+    return a.map((x, i) => {
+      const y = bMap.get(probeKey(x)) ?? b[i];
+      const p = x?.probe || y?.probe || {};
+      return {
+        key: probeKey(x) || String(i),
+        probe: p,
+        v4path: formatHopPath(x),
+        v6path: formatHopPath(y),
+      };
+    });
+  }, [showTracerouteTable, v4, v6]);
+
+  const mtrPaths = useMemo(() => {
+    if (!showMtrTable || !v4 || !v6) return [];
+    const a = v4?.results ?? [];
+    const b = v6?.results ?? [];
+    const bMap = new Map(b.map((x) => [probeKey(x), x]));
+    return a.map((x, i) => {
+      const y = bMap.get(probeKey(x)) ?? b[i];
+      const p = x?.probe || y?.probe || {};
+      return {
+        key: probeKey(x) || String(i),
+        probe: p,
+        v4path: formatHopPath(x),
+        v6path: formatHopPath(y),
+      };
+    });
+  }, [showMtrTable, v4, v6]);
 
   const pingCompare = useMemo(() => {
     if (!showPingTable) return null;
@@ -934,8 +1628,6 @@ export default function App() {
   </span>
 </div>
 <div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
-  Experimental beta: features may change and results may vary{" "}
- {" · "}
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
     Feedback welcome
   </a>
@@ -963,6 +1655,8 @@ export default function App() {
 </div>
 
 
+      {!reportMode && (
+      <>
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -1002,6 +1696,65 @@ export default function App() {
           Probes <Help text="Number of probes to run (1–10). More probes improve coverage but take longer." />{" "}
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
+
+        {advanced && (
+          <>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              ASN <Help text="Filter probes by ASN (e.g. 12345)." />{" "}
+              <input
+                value={probeAsn}
+                onChange={(e) => setProbeAsn(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 12345"
+                style={{ padding: 6, width: 110 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              ISP <Help text="Filter probes by ISP name (substring match, e.g. Comcast)." />{" "}
+              <input
+                value={probeIsp}
+                onChange={(e) => setProbeIsp(e.target.value)}
+                disabled={running}
+                placeholder="ISP name"
+                style={{ padding: 6, width: 140 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Lat <Help text="Latitude for geo filter (not supported by Globalping yet)." />{" "}
+              <input
+                value={probeLat}
+                onChange={(e) => setProbeLat(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 45.46"
+                style={{ padding: 6, width: 100 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Lon <Help text="Longitude for geo filter (not supported by Globalping yet)." />{" "}
+              <input
+                value={probeLon}
+                onChange={(e) => setProbeLon(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 9.19"
+                style={{ padding: 6, width: 100 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Radius km <Help text="Radius in km around the lat/lon (not supported by Globalping yet)." />{" "}
+              <input
+                value={probeRadius}
+                onChange={(e) => setProbeRadius(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 50"
+                style={{ padding: 6, width: 90 }}
+              />
+            </label>
+          </>
+        )}
 
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1199,6 +1952,38 @@ export default function App() {
             {showRaw ? "Hide raw" : "Raw"}
           </button>
         </Tip>
+        <Tip text="Export the current results as JSON (raw values).">
+          <button onClick={downloadJson} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+            Export JSON
+          </button>
+        </Tip>
+        <Tip text="Export the current results as CSV (per-probe rows).">
+          <button onClick={downloadCsv} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+            Export CSV
+          </button>
+        </Tip>
+        <Tip text="Create a shareable link with the current settings.">
+          <button
+            onClick={() => {
+              const nextUrl = updateShareLink();
+              copyToClipboard(nextUrl);
+            }}
+            disabled={running}
+            style={{ padding: "8px 12px" }}
+          >
+            Share link
+          </button>
+        </Tip>
+        <Tip text="Generate a report link from the latest completed run.">
+          <button onClick={enterReportMode} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+            Report mode
+          </button>
+        </Tip>
+        {shareUrl && (
+          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }}>
+            Link ready: <a href={shareUrl}>{shareUrl}</a>
+          </div>
+        )}
         <div style={{ display: showTurnstile ? "block" : "none", width: "100%" }}>
           <div style={{ marginTop: 6 }}>
             <div ref={turnstileContainerRef} />
@@ -1246,6 +2031,201 @@ export default function App() {
           </Tip>
         )}
       </div>
+      </>
+      )}
+
+      {!reportMode && (
+      <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 700 }}>History (local)</div>
+          <button
+            onClick={() => {
+              setHistory([]);
+              setHistoryCompareA("");
+              setHistoryCompareB("");
+            }}
+            disabled={!history.length}
+            style={{ padding: "6px 10px" }}
+          >
+            Clear
+          </button>
+        </div>
+        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Stored in your browser only.</div>
+
+        {history.length ? (
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {history.map((entry) => (
+              <div key={entry.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <strong>{new Date(entry.ts).toLocaleString()}</strong>
+                  <span style={{ opacity: 0.8 }}>
+                    {entry.cmd} · {entry.target}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+                  From {entry.from} · probes {entry.limit} · net {entry.gpTag}
+                  {entry.filters && (entry.filters.asn || entry.filters.isp || entry.filters.lat || entry.filters.lon || entry.filters.radius) && (
+                    <>
+                      {" · "}filters {entry.filters.asn ? `ASN ${entry.filters.asn}` : ""}
+                      {entry.filters.isp ? `${entry.filters.asn ? ", " : ""}ISP ${entry.filters.isp}` : ""}
+                      {entry.filters.lat && entry.filters.lon
+                        ? `${entry.filters.asn || entry.filters.isp ? ", " : ""}geo ${entry.filters.lat}, ${entry.filters.lon}${entry.filters.radius ? ` ±${entry.filters.radius}km` : ""}`
+                        : ""}
+                    </>
+                  )}
+                </div>
+                {entry.summary && (
+                  <div style={{ fontSize: 13, marginTop: 4 }}>
+                    median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ {ms(entry.summary.medianDelta)}
+                    {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                      <>
+                        {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: 8 }}>
+                  <button onClick={() => applyHistoryEntry(entry)} style={{ padding: "6px 10px" }}>
+                    Load settings
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.8 }}>
+            No history yet. Run a measurement to start tracking your last runs.
+          </div>
+        )}
+
+        <div style={{ borderTop: "1px dashed #e5e7eb", marginTop: 12, paddingTop: 12 }}>
+          <div style={{ fontWeight: 700 }}>Compare runs</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run A
+              <select value={historyCompareA} onChange={(e) => setHistoryCompareA(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run B
+              <select value={historyCompareB} onChange={(e) => setHistoryCompareB(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {historyCompareMismatch && (
+            <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{historyCompareMismatch}</div>
+          )}
+
+          {!historyCompareMismatch && historyEntryA && historyEntryB && historyCompareMetrics.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>Δ = Run B - Run A</div>
+              <div style={{ overflowX: "auto", marginTop: 6 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Metric</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run A</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run B</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyCompareMetrics.map((metric) => (
+                      <tr key={metric.label}>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.label}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.a)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.b)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>
+                          {metric.format(Number.isFinite(metric.a) && Number.isFinite(metric.b) ? metric.b - metric.a : null)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
+      {reportMode && reportData && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #dbeafe", borderRadius: 10, background: "#eff6ff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700 }}>Report</div>
+            <button onClick={exitReportMode} style={{ padding: "6px 10px" }}>
+              Exit report mode
+            </button>
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+            Generated {new Date(reportData.ts).toLocaleString()} · {reportData.cmd} · {reportData.target}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+            From {reportData.from} · probes {reportData.limit} · net {reportData.net} · IPv6-only {reportData.v6only ? "yes" : "no"}
+            {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.lat || reportData.filters.lon || reportData.filters.radius) && (
+              <>
+                {" · "}filters {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
+                {reportData.filters.isp ? `${reportData.filters.asn ? ", " : ""}ISP ${reportData.filters.isp}` : ""}
+                {reportData.filters.lat && reportData.filters.lon
+                  ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}geo ${reportData.filters.lat}, ${reportData.filters.lon}${reportData.filters.radius ? ` ±${reportData.filters.radius}km` : ""}`
+                  : ""}
+              </>
+            )}
+          </div>
+          {reportData.summary && (
+            <div style={{ fontSize: 13, marginTop: 6 }}>
+              median v4 {ms(reportData.summary.medianV4)} · median v6 {ms(reportData.summary.medianV6)} · Δ{" "}
+              {ms(reportData.summary.medianDelta)}
+              {(reportData.summary.kind === "ping" || reportData.summary.kind === "mtr") && (
+                <>
+                  {" · "}loss v4 {pct(reportData.summary.medianLossV4)} · loss v6 {pct(reportData.summary.medianLossV6)}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {probePoints.length > 0 && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Probe map</div>
+          {probeMapUrl ? (
+            <img
+              src={probeMapUrl}
+              alt="Map of probe locations"
+              style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid #e5e7eb" }}
+            />
+          ) : (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>No coordinates available for these probes.</div>
+          )}
+          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
+            {probePoints.slice(0, 30).map((p, idx) => (
+              <a
+                key={`${p.lat}-${p.lon}-${idx}`}
+                href={`https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=6/${p.lat}/${p.lon}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ textDecoration: "underline" }}
+              >
+                {p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {err && (
         <div style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
@@ -1299,7 +2279,7 @@ export default function App() {
         </div>
       )}
 
-{/* Traceroute compare table */}
+      {/* Traceroute compare table */}
       {showTracerouteTable && trCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
@@ -1357,6 +2337,37 @@ export default function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {showTracerouteTable && traceroutePaths.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>Traceroute paths (v4 vs v6)</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  {["#", "probe", "v4 path", "v6 path"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {traceroutePaths.map((row, idx) => (
+                  <tr key={row.key}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
+                    </td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -1425,6 +2436,37 @@ export default function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {showMtrTable && mtrPaths.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>MTR paths (v4 vs v6)</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  {["#", "probe", "v4 path", "v6 path"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {mtrPaths.map((row, idx) => (
+                  <tr key={row.key}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
+                    </td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
