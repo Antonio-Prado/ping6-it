@@ -1173,7 +1173,7 @@ export default function App() {
       const location = { magic: fromWithTag || "world" };
       const parsedAsn = Number(probeAsn);
       if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
-      // NOTE: Globalping API does not support filtering by ISP name.
+      if (probeIsp.trim()) location.isp = probeIsp.trim();
 
       const targets = multiTargetMode ? parsedMultiTargets : [target];
       if (!targets.length) {
@@ -2117,7 +2117,8 @@ export default function App() {
             />
             Multi-target
           </label>
-          <Help text="Run the same measurement against multiple targets (one per line). Results are listed below; click one to load it." />
+          <Help text="Click the “Multi-target” label to enable the multi-line input. Run the same measurement against multiple targets (one per line). Results are listed below; click one to load it." />
+          <span style={{ fontSize: 12, opacity: 0.7 }}>Tip: click “Multi-target” to show the multi-line input.</span>
         </div>
 
         {multiTargetMode ? (
@@ -2288,6 +2289,75 @@ export default function App() {
             )}
           </div>
           <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Click a target to load its full results below.</div>
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {multiRunResults.length ? (
+              multiRunResults.map((entry) => {
+                const isActive = entry.id === multiActiveId;
+                return (
+                  <div
+                    key={entry.id}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 8,
+                      padding: 10,
+                      background: isActive ? "#f8fafc" : "transparent",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <strong>{entry.target}</strong>
+                      <span style={{ opacity: 0.8 }}>{entry.cmd}</span>
+                    </div>
+                    {entry.summary && (
+                      <div style={{ fontSize: 13, marginTop: 4 }}>
+                        median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ{" "}
+                        {ms(entry.summary.medianDelta)}
+                        {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                          <>
+                            {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        onClick={() => {
+                          setV4(entry.v4);
+                          setV6(entry.v6);
+                          setTarget(entry.target);
+                          setShowRaw(false);
+                          setMultiActiveId(entry.id);
+                        }}
+                        style={{ padding: "6px 10px" }}
+                      >
+                        {isActive ? "Viewing" : "View results"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>Waiting for the first result…</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700 }}>Multi-target results</div>
+            {multiRunStatus && (
+              <div style={{ fontSize: 13, opacity: 0.8 }}>
+                Running {multiRunStatus.current}/{multiRunStatus.total} · {multiRunStatus.target}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>
+            {multiRunStatus
+              ? `Progress: ${multiRunResults.length}/${multiRunStatus.total} completed.`
+              : `Completed targets: ${multiRunResults.length}.`}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>Click a target to load its full results below.</div>
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
             {multiRunResults.length ? (
               multiRunResults.map((entry) => {
