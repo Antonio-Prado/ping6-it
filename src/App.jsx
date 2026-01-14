@@ -54,6 +54,7 @@ const TOOLTIP_CSS = `
 
 const HISTORY_STORAGE_KEY = "ping6_history_v1";
 const HISTORY_LIMIT = 10;
+const SHARE_VERSION = 1;
 
 function Tip({ text, children }) {
   return (
@@ -143,6 +144,93 @@ function normalizeHistorySummary(cmd, v4, v6) {
     };
   }
   return null;
+}
+
+function encodeReportPayload(payload) {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.btoa(encodeURIComponent(JSON.stringify(payload)));
+  } catch {
+    return "";
+  }
+}
+
+function decodeReportPayload(raw) {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(decodeURIComponent(window.atob(raw)));
+  } catch {
+    return null;
+  }
+}
+
+function applyUrlSettings(params, setters) {
+  const {
+    setCmd,
+    setTarget,
+    setFrom,
+    setGpTag,
+    setLimit,
+    setRequireV6Capable,
+    setPackets,
+    setTrProto,
+    setTrPort,
+    setDnsQuery,
+    setDnsProto,
+    setDnsPort,
+    setDnsResolver,
+    setDnsTrace,
+    setHttpMethod,
+    setHttpProto,
+    setHttpPath,
+    setHttpQuery,
+    setHttpPort,
+    setHttpResolver,
+  } = setters;
+
+  const cmd = params.get("cmd");
+  if (cmd) setCmd(cmd);
+  const target = params.get("target");
+  if (target) setTarget(target);
+  const from = params.get("from");
+  if (from) setFrom(from);
+  const gpTag = params.get("net");
+  if (gpTag) setGpTag(gpTag);
+  const limit = params.get("limit");
+  if (limit) setLimit(limit);
+  const requireV6Capable = params.get("v6only");
+  if (requireV6Capable !== null) setRequireV6Capable(requireV6Capable === "1");
+
+  const packets = params.get("packets");
+  if (packets) setPackets(packets);
+  const trProto = params.get("trproto");
+  if (trProto) setTrProto(trProto);
+  const trPort = params.get("trport");
+  if (trPort) setTrPort(trPort);
+
+  const dnsQuery = params.get("dnsq");
+  if (dnsQuery) setDnsQuery(dnsQuery);
+  const dnsProto = params.get("dnsproto");
+  if (dnsProto) setDnsProto(dnsProto);
+  const dnsPort = params.get("dnsport");
+  if (dnsPort) setDnsPort(dnsPort);
+  const dnsResolver = params.get("dnsresolver");
+  if (dnsResolver) setDnsResolver(dnsResolver);
+  const dnsTrace = params.get("dnstrace");
+  if (dnsTrace !== null) setDnsTrace(dnsTrace === "1");
+
+  const httpMethod = params.get("httpmethod");
+  if (httpMethod) setHttpMethod(httpMethod);
+  const httpProto = params.get("httpproto");
+  if (httpProto) setHttpProto(httpProto);
+  const httpPath = params.get("httppath");
+  if (httpPath) setHttpPath(httpPath);
+  const httpQuery = params.get("httpquery");
+  if (httpQuery) setHttpQuery(httpQuery);
+  const httpPort = params.get("httpport");
+  if (httpPort) setHttpPort(httpPort);
+  const httpResolver = params.get("httpresolver");
+  if (httpResolver) setHttpResolver(httpResolver);
 }
 
 
@@ -643,6 +731,9 @@ export default function App() {
   const [history, setHistory] = useState(() => loadHistory());
   const [historyCompareA, setHistoryCompareA] = useState("");
   const [historyCompareB, setHistoryCompareB] = useState("");
+  const [reportMode, setReportMode] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [shareUrl, setShareUrl] = useState("");
 
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -671,6 +762,43 @@ export default function App() {
     setHistoryCompareA((prev) => prev || history[0]?.id || "");
     setHistoryCompareB((prev) => prev || history[1]?.id || "");
   }, [history]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    applyUrlSettings(params, {
+      setCmd,
+      setTarget,
+      setFrom,
+      setGpTag,
+      setLimit,
+      setRequireV6Capable,
+      setPackets,
+      setTrProto,
+      setTrPort,
+      setDnsQuery,
+      setDnsProto,
+      setDnsPort,
+      setDnsResolver,
+      setDnsTrace,
+      setHttpMethod,
+      setHttpProto,
+      setHttpPath,
+      setHttpQuery,
+      setHttpPort,
+      setHttpResolver,
+    });
+
+    const reportRaw = params.get("report");
+    const dataRaw = params.get("data");
+    if (reportRaw === "1" && dataRaw) {
+      const decoded = decodeReportPayload(dataRaw);
+      if (decoded) {
+        setReportMode(true);
+        setReportData(decoded);
+      }
+    }
+  }, []);
 
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
@@ -1008,6 +1136,98 @@ export default function App() {
     setHttpResolver(opts.httpResolver ?? "");
   }
 
+  function buildShareParams() {
+    const params = new URLSearchParams();
+    params.set("cmd", cmd);
+    params.set("target", target || "");
+    params.set("from", from || "");
+    params.set("net", gpTag || "any");
+    params.set("limit", String(limit || 3));
+    params.set("v6only", requireV6Capable ? "1" : "0");
+
+    if (cmd === "ping" || cmd === "mtr") params.set("packets", String(packets || 3));
+    if (cmd === "traceroute" || cmd === "mtr") {
+      params.set("trproto", trProto || "ICMP");
+      if ((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) {
+        params.set("trport", String(trPort || 80));
+      }
+    }
+    if (cmd === "dns") {
+      params.set("dnsq", dnsQuery || "A");
+      params.set("dnsproto", dnsProto || "UDP");
+      params.set("dnsport", String(dnsPort || 53));
+      if (dnsResolver) params.set("dnsresolver", dnsResolver);
+      if (dnsTrace) params.set("dnstrace", "1");
+    }
+    if (cmd === "http") {
+      params.set("httpmethod", httpMethod || "GET");
+      params.set("httpproto", httpProto || "HTTPS");
+      params.set("httppath", httpPath || "/");
+      if (httpQuery) params.set("httpquery", httpQuery);
+      if (httpPort) params.set("httpport", httpPort);
+      if (httpResolver) params.set("httpresolver", httpResolver);
+    }
+    return params;
+  }
+
+  function buildReportPayload() {
+    const summary = normalizeHistorySummary(cmd, v4, v6);
+    if (!summary) return null;
+    return {
+      v: SHARE_VERSION,
+      ts: Date.now(),
+      cmd,
+      target,
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      summary,
+    };
+  }
+
+  function updateShareLink() {
+    if (typeof window === "undefined") return;
+    const params = buildShareParams();
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    setShareUrl(url.toString());
+    return url.toString();
+  }
+
+  function enterReportMode() {
+    if (typeof window === "undefined") return;
+    const payload = buildReportPayload();
+    if (!payload) return;
+    const encoded = encodeReportPayload(payload);
+    const url = new URL(window.location.href);
+    url.searchParams.set("report", "1");
+    url.searchParams.set("data", encoded);
+    window.history.replaceState({}, "", url.toString());
+    setReportMode(true);
+    setReportData(payload);
+    setShareUrl(url.toString());
+  }
+
+  function copyToClipboard(value) {
+    if (typeof navigator === "undefined") return;
+    if (!value) return;
+    try {
+      navigator.clipboard?.writeText(value);
+    } catch {}
+  }
+
+  function exitReportMode() {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("report");
+    url.searchParams.delete("data");
+    window.history.replaceState({}, "", url.toString());
+    setReportMode(false);
+    setReportData(null);
+    updateShareLink();
+  }
+
 
   const showPingTable = cmd === "ping" && v4 && v6;
   const showTracerouteTable = cmd === "traceroute" && v4 && v6;
@@ -1127,6 +1347,8 @@ export default function App() {
 </div>
 
 
+      {!reportMode && (
+      <>
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -1363,6 +1585,28 @@ export default function App() {
             {showRaw ? "Hide raw" : "Raw"}
           </button>
         </Tip>
+        <Tip text="Create a shareable link with the current settings.">
+          <button
+            onClick={() => {
+              const nextUrl = updateShareLink();
+              copyToClipboard(nextUrl);
+            }}
+            disabled={running}
+            style={{ padding: "8px 12px" }}
+          >
+            Share link
+          </button>
+        </Tip>
+        <Tip text="Generate a report link from the latest completed run.">
+          <button onClick={enterReportMode} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+            Report mode
+          </button>
+        </Tip>
+        {shareUrl && (
+          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }}>
+            Link ready: <a href={shareUrl}>{shareUrl}</a>
+          </div>
+        )}
         <div style={{ display: showTurnstile ? "block" : "none", width: "100%" }}>
           <div style={{ marginTop: 6 }}>
             <div ref={turnstileContainerRef} />
@@ -1410,6 +1654,155 @@ export default function App() {
           </Tip>
         )}
       </div>
+      </>
+      )}
+
+      {!reportMode && (
+      <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 700 }}>History (local)</div>
+          <button
+            onClick={() => {
+              setHistory([]);
+              setHistoryCompareA("");
+              setHistoryCompareB("");
+            }}
+            disabled={!history.length}
+            style={{ padding: "6px 10px" }}
+          >
+            Clear
+          </button>
+        </div>
+        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Stored in your browser only.</div>
+
+        {history.length ? (
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {history.map((entry) => (
+              <div key={entry.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <strong>{new Date(entry.ts).toLocaleString()}</strong>
+                  <span style={{ opacity: 0.8 }}>
+                    {entry.cmd} · {entry.target}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+                  From {entry.from} · probes {entry.limit} · net {entry.gpTag}
+                </div>
+                {entry.summary && (
+                  <div style={{ fontSize: 13, marginTop: 4 }}>
+                    median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ {ms(entry.summary.medianDelta)}
+                    {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                      <>
+                        {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: 8 }}>
+                  <button onClick={() => applyHistoryEntry(entry)} style={{ padding: "6px 10px" }}>
+                    Load settings
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.8 }}>
+            No history yet. Run a measurement to start tracking your last runs.
+          </div>
+        )}
+
+        <div style={{ borderTop: "1px dashed #e5e7eb", marginTop: 12, paddingTop: 12 }}>
+          <div style={{ fontWeight: 700 }}>Compare runs</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run A
+              <select value={historyCompareA} onChange={(e) => setHistoryCompareA(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run B
+              <select value={historyCompareB} onChange={(e) => setHistoryCompareB(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {historyCompareMismatch && (
+            <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{historyCompareMismatch}</div>
+          )}
+
+          {!historyCompareMismatch && historyEntryA && historyEntryB && historyCompareMetrics.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>Δ = Run B - Run A</div>
+              <div style={{ overflowX: "auto", marginTop: 6 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Metric</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run A</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run B</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyCompareMetrics.map((metric) => (
+                      <tr key={metric.label}>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.label}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.a)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.b)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>
+                          {metric.format(Number.isFinite(metric.a) && Number.isFinite(metric.b) ? metric.b - metric.a : null)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
+      {reportMode && reportData && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #dbeafe", borderRadius: 10, background: "#eff6ff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700 }}>Report</div>
+            <button onClick={exitReportMode} style={{ padding: "6px 10px" }}>
+              Exit report mode
+            </button>
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+            Generated {new Date(reportData.ts).toLocaleString()} · {reportData.cmd} · {reportData.target}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+            From {reportData.from} · probes {reportData.limit} · net {reportData.net} · IPv6-only {reportData.v6only ? "yes" : "no"}
+          </div>
+          {reportData.summary && (
+            <div style={{ fontSize: 13, marginTop: 6 }}>
+              median v4 {ms(reportData.summary.medianV4)} · median v6 {ms(reportData.summary.medianV6)} · Δ{" "}
+              {ms(reportData.summary.medianDelta)}
+              {(reportData.summary.kind === "ping" || reportData.summary.kind === "mtr") && (
+                <>
+                  {" · "}loss v4 {pct(reportData.summary.medianLossV4)} · loss v6 {pct(reportData.summary.medianLossV6)}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
