@@ -44,13 +44,12 @@ export const ADVANCED_PRESET_GROUPS = [
       },
       {
         id: "isp-vodafone",
-        label: "Vodafone (eyeball)",
-        description: "Filter probes by Vodafone ASN in Europe.",
+        label: "Vodafone (ASN)",
+        description: "Filter probes by Vodafone ASN with wider coverage.",
         settings: {
-          from: "Europe",
-          gpTag: "eyeball",
+          from: "world",
           asn: 1273,
-          limit: 5,
+          limit: 3,
           requireV6Capable: false,
           clearFilters: true,
           showAdvanced: true,
