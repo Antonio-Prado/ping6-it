@@ -1028,65 +1028,55 @@ export default function App() {
     setV4(null);
     setV6(null);
     setShowRaw(false);
-    setTurnstileStatus("");
-
-    const t = target.trim();
-    if (!t) {
-      setErr("Please enter a target hostname or URL.");
-      return;
-    }
-
-    let effectiveTarget = t;
-
-    // HTTP: we also accept a full URL and split it into host/path/query.
-    let httpParsed = null;
-    let httpEffectiveProto = httpProto;
-    let httpEffectivePath = (httpPath || "/").trim() || "/";
-    let httpEffectiveQuery = (httpQuery || "").trim();
-    let httpEffectivePort = (httpPort || "").trim();
-
-    if (cmd === "http") {
-      httpParsed = parseHttpInput(t);
-      if (!httpParsed?.host) {
-        setErr("For HTTP, enter a valid URL or hostname.");
-        return;
-      }
-
-      effectiveTarget = httpParsed.host;
-
-      if (httpParsed.protocol) {
-        httpEffectiveProto = httpParsed.protocol;
-        // manteniamo il selettore coerente se l'utente ha scritto http:// o https://
-        if (httpProto !== httpParsed.protocol) setHttpProto(httpParsed.protocol);
-      }
-
-      if ((httpEffectivePath === "/" || !httpEffectivePath) && httpParsed.path && httpParsed.path !== "/") {
-        httpEffectivePath = httpParsed.path;
-      }
-      if (!httpEffectiveQuery && httpParsed.query) httpEffectiveQuery = httpParsed.query;
-      if (!httpEffectivePort && Number.isFinite(httpParsed.port) && httpParsed.port > 0) httpEffectivePort = String(httpParsed.port);
-    }
-
-    // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
-    // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
-    if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
-      setErr("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
-      return;
-    }
-
-    if (probeLat.trim() || probeLon.trim() || probeRadius.trim()) {
-      setErr("Geo filters (lat/lon/radius) are not supported by the Globalping API yet. Please clear them.");
-      return;
-    }
-
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    setRunning(true);
     setTurnstileStatus("Preparing measurement...");
+    setRunning(true);
     let turnstileTimedOut = false;
     try {
+      const t = target.trim();
+      if (!t) {
+        throw new Error("Please enter a target hostname or URL.");
+      }
+
+      let effectiveTarget = t;
+
+      // HTTP: we also accept a full URL and split it into host/path/query.
+      let httpParsed = null;
+      let httpEffectiveProto = httpProto;
+      let httpEffectivePath = (httpPath || "/").trim() || "/";
+      let httpEffectiveQuery = (httpQuery || "").trim();
+      let httpEffectivePort = (httpPort || "").trim();
+
+      if (cmd === "http") {
+        httpParsed = parseHttpInput(t);
+        if (!httpParsed?.host) {
+          throw new Error("For HTTP, enter a valid URL or hostname.");
+        }
+
+        effectiveTarget = httpParsed.host;
+
+        if (httpParsed.protocol) {
+          httpEffectiveProto = httpParsed.protocol;
+          // manteniamo il selettore coerente se l'utente ha scritto http:// o https://
+          if (httpProto !== httpParsed.protocol) setHttpProto(httpParsed.protocol);
+        }
+
+        if ((httpEffectivePath === "/" || !httpEffectivePath) && httpParsed.path && httpParsed.path !== "/") {
+          httpEffectivePath = httpParsed.path;
+        }
+        if (!httpEffectiveQuery && httpParsed.query) httpEffectiveQuery = httpParsed.query;
+        if (!httpEffectivePort && Number.isFinite(httpParsed.port) && httpParsed.port > 0) httpEffectivePort = String(httpParsed.port);
+      }
+
+      // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
+      // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
+      if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
+        throw new Error("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
+      }
+
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+
       const probes = Math.max(1, Math.min(10, Number(limit) || 3));
       const fromWithTag = applyGpTag(from, gpTag);
 
@@ -1964,7 +1954,16 @@ export default function App() {
         </Tip>
 
         <Tip text="Start the measurements (IPv4 and IPv6 side by side).">
-          <button type="button" onClick={run} disabled={running} style={{ padding: "8px 12px" }}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              run();
+            }}
+            disabled={running}
+            style={{ padding: "8px 12px" }}
+          >
             Run
           </button>
         </Tip>
