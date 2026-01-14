@@ -1162,7 +1162,7 @@ export default function App() {
       const location = { magic: fromWithTag || "world" };
       const parsedAsn = Number(probeAsn);
       if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
-      if (probeIsp.trim()) location.isp = probeIsp.trim();
+      // NOTE: Globalping API does not support filtering by ISP name.
 
       const base = {
         type: cmd,
@@ -1796,7 +1796,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ISP <Help text="Filter probes by ISP name (substring match, e.g. Comcast)." />{" "}
+              ISP <Help text="Filtro per ISP non supportato dall’API Globalping: usa un ASN quando possibile." />{" "}
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
