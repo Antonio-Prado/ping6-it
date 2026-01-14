@@ -71,6 +71,15 @@ function pct(n) {
   return `${n.toFixed(1)}%`;
 }
 
+function clampInputValue(value, { min, max, fallback, allowEmpty = false }) {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return allowEmpty ? "" : String(fallback);
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return allowEmpty ? "" : String(fallback);
+  const clamped = Math.min(max, Math.max(min, num));
+  return String(clamped);
+}
+
 const TOOLTIP_CSS = `
 .tt{position:relative;display:inline-flex;align-items:center}
 .tt-bubble{position:absolute;left:50%;top:100%;transform:translateX(-50%) translateY(-2px);margin-top:8px;padding:8px 10px;width:max-content;max-width:360px;white-space:normal;font-size:12px;line-height:1.35;border-radius:10px;background:#111827;color:#fff;box-shadow:0 12px 28px rgba(0,0,0,.22);opacity:0;pointer-events:none;z-index:9999;transition:opacity 120ms ease,transform 120ms ease}
@@ -1741,7 +1750,19 @@ export default function App() {
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           Probes <Help text="Number of probes to run (1–10). More probes improve coverage but take longer." />{" "}
-          <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+          <input
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            onBlur={() => setLimit((current) => clampInputValue(current, { min: 1, max: 10, fallback: 3 }))}
+            disabled={running}
+            type="number"
+            min={1}
+            max={10}
+            step={1}
+            inputMode="numeric"
+            placeholder="1-10"
+            style={{ padding: 6, width: 70 }}
+          />
         </label>
 
         {advanced && (
@@ -1798,7 +1819,23 @@ export default function App() {
         {advanced && (cmd === "ping" || cmd === "mtr") && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             {cmd === "mtr" ? "Packets/hop" : "Packets"} <Help text="Packets per probe (ping) or per hop (mtr)." />{" "}
-            <input value={packets} onChange={(e) => setPackets(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
+            <input
+              value={packets}
+              onChange={(e) => setPackets(e.target.value)}
+              onBlur={() =>
+                setPackets((current) =>
+                  clampInputValue(current, { min: 1, max: cmd === "mtr" ? 16 : 10, fallback: 3 })
+                )
+              }
+              disabled={running}
+              type="number"
+              min={1}
+              max={cmd === "mtr" ? 16 : 10}
+              step={1}
+              inputMode="numeric"
+              placeholder={cmd === "mtr" ? "1-16" : "1-10"}
+              style={{ padding: 6, width: 70 }}
+            />
           </label>
         )}
 
@@ -1816,7 +1853,21 @@ export default function App() {
             {advanced && ((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
               <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 Port <Help text="Destination port (used for TCP traceroute or UDP/TCP mtr when applicable)." />{" "}
-                <input value={trPort} onChange={(e) => setTrPort(e.target.value)} disabled={running} style={{ padding: 6, width: 90 }} />
+                <input
+                  value={trPort}
+                  onChange={(e) => setTrPort(e.target.value)}
+                  onBlur={() =>
+                    setTrPort((current) => clampInputValue(current, { min: 1, max: 65535, allowEmpty: true }))
+                  }
+                  disabled={running}
+                  type="number"
+                  min={1}
+                  max={65535}
+                  step={1}
+                  inputMode="numeric"
+                  placeholder="1-65535"
+                  style={{ padding: 6, width: 90 }}
+                />
               </label>
             )}
           </>
@@ -1850,7 +1901,16 @@ export default function App() {
                   <input
                     value={dnsPort}
                     onChange={(e) => setDnsPort(e.target.value)}
+                    onBlur={() =>
+                      setDnsPort((current) => clampInputValue(current, { min: 1, max: 65535, allowEmpty: true }))
+                    }
                     disabled={running}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder="1-65535"
                     style={{ padding: 6, width: 70 }}
                   />
                 </label>
@@ -1922,8 +1982,16 @@ export default function App() {
                   <input
                     value={httpPort}
                     onChange={(e) => setHttpPort(e.target.value)}
+                    onBlur={() =>
+                      setHttpPort((current) => clampInputValue(current, { min: 1, max: 65535, allowEmpty: true }))
+                    }
                     disabled={running}
-                    placeholder="default"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder="1-65535"
                     style={{ padding: 6, width: 90 }}
                   />
                 </label>
