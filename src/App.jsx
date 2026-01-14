@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
@@ -88,6 +88,424 @@ const TOOLTIP_CSS = `
 .tt-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:999px;border:1px solid rgba(17,24,39,.35);color:rgba(17,24,39,.9);font-size:11px;line-height:1;opacity:.75;cursor:help;user-select:none}
 @media (prefers-reduced-motion: reduce){.tt-bubble{transition:none}}
 `;
+
+const LANG_STORAGE_KEY = "ping6_lang_v1";
+const SUPPORTED_LANGS = ["en", "it"];
+const COPY = {
+  en: {
+    langLabel: "Language",
+    langEnglish: "English",
+    langItalian: "Italiano",
+    tagline: "IPv4 vs IPv6, side by side",
+    feedback: "Feedback welcome",
+    docs: "Docs",
+    source: "Source",
+    command: "Command",
+    net: "Net",
+    from: "From",
+    probes: "Probes",
+    asn: "ASN",
+    isp: "ISP",
+    deltaAlert: "Δ alert (ms)",
+    ipv6Only: "IPv6-capable probes only",
+    packets: "Packets",
+    packetsHop: "Packets/hop",
+    proto: "Proto",
+    port: "Port",
+    query: "Query",
+    resolver: "Resolver",
+    trace: "trace",
+    method: "Method",
+    path: "Path",
+    queryString: "Query",
+    target: "Target",
+    multiTarget: "Multi-target",
+    run: "Run",
+    cancel: "Cancel",
+    advanced: "Advanced",
+    basic: "Basic",
+    raw: "Raw",
+    hideRaw: "Hide raw",
+    exportJson: "Export JSON",
+    exportCsv: "Export CSV",
+    shareLink: "Share link",
+    reportMode: "Report mode",
+    linkReady: "Link ready:",
+    multiTargetResults: "Multi-target results",
+    viewResults: "View results",
+    viewing: "Viewing",
+    waitingFirstResult: "Waiting for the first result…",
+    runningWithTarget: ({ current, total, target }) => `Running ${current}/${total} · ${target}`,
+    progress: ({ done, total }) => `Progress: ${done}/${total} completed.`,
+    completedTargets: ({ done }) => `Completed targets: ${done}.`,
+    clickTargetToLoad: "Click a target to load its full results below.",
+    historyTitle: "History (local)",
+    clear: "Clear",
+    historyNote: "Stored in your browser only.",
+    filters: "filters",
+    loadSettings: "Load settings",
+    noHistory: "No history yet. Run a measurement to start tracking your last runs.",
+    compareRuns: "Compare runs",
+    runA: "Run A",
+    runB: "Run B",
+    selectRun: "Select…",
+    compareMismatch: "Select two runs with the same command to compare.",
+    deltaRunLabel: "Δ = Run B - Run A",
+    metric: "Metric",
+    report: "Report",
+    exitReportMode: "Exit report mode",
+    generated: "Generated",
+    ipv6OnlyYes: "yes",
+    ipv6OnlyNo: "no",
+    ipv6OnlyShort: "IPv6-only",
+    deltaAlertNotice: ({ label, delta, threshold }) => `${label} is ${ms(delta)} (threshold ${threshold} ms).`,
+    probeMap: "Probe map",
+    probeMapAlt: "Map of probe locations",
+    noProbeCoordinates: "No coordinates available for these probes.",
+    pingTitle: "Ping RTT (v4 vs v6)",
+    tracerouteTitle: "Traceroute to destination (v4 vs v6)",
+    traceroutePathsTitle: "Traceroute paths (v4 vs v6)",
+    mtrTitle: "MTR to destination (v4 vs v6)",
+    mtrPathsTitle: "MTR paths (v4 vs v6)",
+    dnsTitle: "DNS timings (v4 vs v6)",
+    httpTitle: "HTTP timings (v4 vs v6)",
+    rawV4: "RAW v4",
+    rawV6: "RAW v6",
+    footer: "If it works, thank",
+    footerTail: "If not, blame IPv4!",
+    summaryBoth: "both",
+    all: "All",
+    summaryMedianV4: "median v4",
+    summaryMedianV6: "median v6",
+    summaryMedianAvgV4: "median avg v4",
+    summaryMedianAvgV6: "median avg v6",
+    summaryMedianLossV4: "median loss v4",
+    summaryMedianLossV6: "median loss v6",
+    summaryMedianDelta: "Δ",
+    deltaPingLabel: "Ping median Δ",
+    deltaTracerouteLabel: "Traceroute median Δ",
+    deltaMtrLabel: "MTR median Δ",
+    deltaDnsLabel: "DNS median Δ",
+    deltaHttpLabel: "HTTP median Δ",
+    summaryP95V4: "p95 v4",
+    summaryP95V6: "p95 v6",
+    summaryP95AvgV4: "p95 avg v4",
+    summaryP95AvgV6: "p95 avg v6",
+    summaryDeltaLoss: "Δ",
+    location: "location",
+    network: "network",
+    v4Avg: "v4 avg",
+    v4Loss: "v4 loss",
+    v6Avg: "v6 avg",
+    v6Loss: "v6 loss",
+    deltaV6V4: "Δ v6-v4",
+    winner: "winner",
+    v4Reached: "v4 reached",
+    v4Hops: "v4 hops",
+    v4Dst: "v4 dst",
+    v6Reached: "v6 reached",
+    v6Hops: "v6 hops",
+    v6Dst: "v6 dst",
+    probe: "probe",
+    v4Path: "v4 path",
+    v6Path: "v6 path",
+    v4Total: "v4 total",
+    v6Total: "v6 total",
+    ratio: "ratio",
+    v4Status: "v4 status",
+    v6Status: "v6 status",
+    v4LossShort: "v4 loss",
+    v6LossShort: "v6 loss",
+    deltaAvg: "Δ avg",
+    deltaLoss: "Δ loss",
+    yes: "yes",
+    no: "no",
+    helpCommand: "Measurement type to run. IPv4 and IPv6 are executed on the same probes for a fair comparison.",
+    helpNet: "Probe network profile filter: any, eyeball (access/consumer), or datacenter.",
+    helpFrom: "Where probes are selected (Globalping location string). Presets below can fill this automatically.",
+    helpProbes: "Number of probes to run (1–10). More probes improve coverage but take longer.",
+    helpAsn: "Filter probes by ASN (e.g. 12345).",
+    helpIsp: "ISP name filtering is not supported by the Globalping API: use an ASN when possible.",
+    helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
+    helpIpv6Only:
+      "Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target.",
+    helpPackets: "Packets per probe (ping) or per hop (mtr).",
+    helpProto: "Transport protocol used by traceroute/mtr (ICMP, UDP, TCP).",
+    helpPort: "Destination port (used for TCP traceroute or UDP/TCP mtr when applicable).",
+    helpDnsQuery: "DNS record type to query (A, AAAA, MX, TXT, etc.).",
+    helpDnsProto: "DNS transport protocol: UDP (default) or TCP.",
+    helpDnsPort: "DNS server port (default: 53).",
+    helpDnsResolver:
+      "Override the resolver used by probes (IP or hostname). Leave empty to use the probe default resolver.",
+    helpDnsTrace: "Enable DNS trace (when supported) to see the resolution path and timing details.",
+    helpHttpMethod: "HTTP method used for the request.",
+    helpHttpProto: "HTTP protocol: HTTP, HTTPS, or HTTP2 (HTTPS implies TLS).",
+    helpHttpPath: "Request path (e.g. / or /index.html). If you paste a full URL in Target, path may be extracted automatically.",
+    helpHttpQuery:
+      "Query string without '?', e.g. a=1&b=2. If you paste a full URL in Target, query may be extracted automatically.",
+    helpHttpPort: "Override destination port. Leave empty for defaults (80/443).",
+    helpHttpResolver:
+      "Override the resolver used by probes for the HTTP target (IP or hostname). Leave empty to use the probe default resolver.",
+    helpMultiTarget:
+      "Click the “Multi-target” label to enable the multi-line input. Run the same measurement against multiple targets (one per line). Results are listed below; click one to load it.",
+    tipMultiTarget: "Tip: click “Multi-target” to show the multi-line input.",
+    tipMultiTargetInput:
+      "Enter one target per line. For HTTP you can paste full URLs; for DNS choose the record type above.",
+    tipTargetInput:
+      "Target hostname. For HTTP you can paste a full URL; for DNS choose the record type above. Using a hostname is recommended for a fair IPv4/IPv6 comparison.",
+    tipRun: "Start the measurements (IPv4 and IPv6 side by side).",
+    tipCancel: "Abort the current run.",
+    tipAdvanced: "Toggle advanced options for the selected command.",
+    tipRaw: "Show or hide the raw Globalping output for each probe (IPv4 and IPv6).",
+    tipExportJson: "Export the current results as JSON (raw values).",
+    tipExportCsv: "Export the current results as CSV (per-probe rows).",
+    tipShareLink: "Create a shareable link with the current settings.",
+    tipReportMode: "Generate a report link from the latest completed run.",
+    tipPreset: ({ label }) => `Preset: ${label}. Updates the "From" field.`,
+    tipSubPreset: "Refine probes within the selected macro-region.",
+    placeholderProbes: "1-10",
+    placeholderAsn: "e.g. 12345",
+    placeholderIsp: "ISP name",
+    placeholderDeltaAlert: "e.g. 25",
+    placeholderPort: "1-65535",
+    placeholderResolver: "(empty = default)",
+    placeholderOptional: "(optional)",
+    placeholderMultiDns: "name (e.g. example.com)\nname2.example",
+    placeholderMultiHttp: "https://example.com/\nhttps://example.net/",
+    placeholderMultiDefault: "hostname (e.g. example.com)\nexample.net",
+    placeholderTargetDns: "name (e.g. example.com)",
+    placeholderTargetHttp: "URL or hostname (e.g. https://example.com/)",
+    placeholderTargetDefault: "hostname (e.g. example.com)",
+    statusPreparing: "Preparing measurement...",
+    statusWaitingVerification: ({ stepLabel }) => `Waiting for human verification${stepLabel}...`,
+    errorTargetRequired: "Please enter a target hostname or URL.",
+    errorHttpTarget: "For HTTP, enter a valid URL or hostname.",
+    errorHostnameRequired: "For the IPv4/IPv6 comparison, enter a hostname (not an IP).",
+    errorMultiTargetRequired: "Enter one or more targets (one per line).",
+    errorTurnstileMissing:
+      'Turnstile is not configured. Set "VITE_TURNSTILE_SITEKEY" in Cloudflare Pages env vars.',
+    errorTurnstileUnavailable: "Turnstile script loaded but API is not available.",
+    errorTurnstileMissingContainer: "Turnstile container is missing.",
+    errorTurnstileTokenExpired: "Turnstile token expired. Please press Run again.",
+    errorTurnstileTimeout: "Turnstile timed out. Please press Run again.",
+    errorCancelled: "Cancelled.",
+    errorHumanVerification: "Human verification failed. Please retry.",
+    errorHumanVerificationTimeout: "Human verification timed out. Please retry.",
+    errorRequestFailed: ({ status }) => `Request failed (${status})`,
+    inputLanguage: "Select language",
+  },
+  it: {
+    langLabel: "Lingua",
+    langEnglish: "English",
+    langItalian: "Italiano",
+    tagline: "IPv4 vs IPv6, affiancati",
+    feedback: "Feedback benvenuto",
+    docs: "Docs",
+    source: "Sorgente",
+    command: "Comando",
+    net: "Rete",
+    from: "Da",
+    probes: "Sonde",
+    asn: "ASN",
+    isp: "ISP",
+    deltaAlert: "Allerta Δ (ms)",
+    ipv6Only: "Solo sonde compatibili IPv6",
+    packets: "Pacchetti",
+    packetsHop: "Pacchetti/salto",
+    proto: "Proto",
+    port: "Porta",
+    query: "Query",
+    resolver: "Resolver",
+    trace: "trace",
+    method: "Metodo",
+    path: "Percorso",
+    queryString: "Query",
+    target: "Target",
+    multiTarget: "Multi-target",
+    run: "Avvia",
+    cancel: "Annulla",
+    advanced: "Avanzate",
+    basic: "Base",
+    raw: "Raw",
+    hideRaw: "Nascondi raw",
+    exportJson: "Esporta JSON",
+    exportCsv: "Esporta CSV",
+    shareLink: "Link condivisibile",
+    reportMode: "Modalità report",
+    linkReady: "Link pronto:",
+    multiTargetResults: "Risultati multi-target",
+    viewResults: "Vedi risultati",
+    viewing: "In visione",
+    waitingFirstResult: "In attesa del primo risultato…",
+    runningWithTarget: ({ current, total, target }) => `In esecuzione ${current}/${total} · ${target}`,
+    progress: ({ done, total }) => `Progresso: ${done}/${total} completati.`,
+    completedTargets: ({ done }) => `Target completati: ${done}.`,
+    clickTargetToLoad: "Seleziona un target per caricare i risultati completi sotto.",
+    historyTitle: "Storico (locale)",
+    clear: "Svuota",
+    historyNote: "Salvato solo nel tuo browser.",
+    filters: "filtri",
+    loadSettings: "Carica impostazioni",
+    noHistory: "Nessuno storico. Avvia una misurazione per salvare gli ultimi risultati.",
+    compareRuns: "Confronta misurazioni",
+    runA: "Run A",
+    runB: "Run B",
+    selectRun: "Seleziona…",
+    compareMismatch: "Seleziona due esecuzioni con lo stesso comando per confrontarle.",
+    deltaRunLabel: "Δ = Run B - Run A",
+    metric: "Metrica",
+    report: "Report",
+    exitReportMode: "Esci dalla modalità report",
+    generated: "Generato",
+    ipv6OnlyYes: "sì",
+    ipv6OnlyNo: "no",
+    ipv6OnlyShort: "Solo IPv6",
+    deltaAlertNotice: ({ label, delta, threshold }) => `${label} è ${ms(delta)} (soglia ${threshold} ms).`,
+    probeMap: "Mappa sonde",
+    probeMapAlt: "Mappa delle posizioni delle sonde",
+    noProbeCoordinates: "Nessuna coordinata disponibile per queste sonde.",
+    pingTitle: "Ping RTT (v4 vs v6)",
+    tracerouteTitle: "Traceroute verso la destinazione (v4 vs v6)",
+    traceroutePathsTitle: "Percorsi traceroute (v4 vs v6)",
+    mtrTitle: "MTR verso la destinazione (v4 vs v6)",
+    mtrPathsTitle: "Percorsi MTR (v4 vs v6)",
+    dnsTitle: "Tempi DNS (v4 vs v6)",
+    httpTitle: "Tempi HTTP (v4 vs v6)",
+    rawV4: "RAW v4",
+    rawV6: "RAW v6",
+    footer: "Se funziona, ringrazia",
+    footerTail: "Se no, colpa di IPv4!",
+    summaryBoth: "entrambi",
+    all: "Tutte",
+    summaryMedianV4: "mediana v4",
+    summaryMedianV6: "mediana v6",
+    summaryMedianAvgV4: "mediana avg v4",
+    summaryMedianAvgV6: "mediana avg v6",
+    summaryMedianLossV4: "perdita mediana v4",
+    summaryMedianLossV6: "perdita mediana v6",
+    summaryMedianDelta: "Δ",
+    deltaPingLabel: "Mediana Δ ping",
+    deltaTracerouteLabel: "Mediana Δ traceroute",
+    deltaMtrLabel: "Mediana Δ MTR",
+    deltaDnsLabel: "Mediana Δ DNS",
+    deltaHttpLabel: "Mediana Δ HTTP",
+    summaryP95V4: "p95 v4",
+    summaryP95V6: "p95 v6",
+    summaryP95AvgV4: "p95 avg v4",
+    summaryP95AvgV6: "p95 avg v6",
+    summaryDeltaLoss: "Δ",
+    location: "posizione",
+    network: "rete",
+    v4Avg: "avg v4",
+    v4Loss: "perdita v4",
+    v6Avg: "avg v6",
+    v6Loss: "perdita v6",
+    deltaV6V4: "Δ v6-v4",
+    winner: "vincitore",
+    v4Reached: "v4 raggiunta",
+    v4Hops: "salti v4",
+    v4Dst: "dest v4",
+    v6Reached: "v6 raggiunta",
+    v6Hops: "salti v6",
+    v6Dst: "dest v6",
+    probe: "sonda",
+    v4Path: "percorso v4",
+    v6Path: "percorso v6",
+    v4Total: "totale v4",
+    v6Total: "totale v6",
+    ratio: "rapporto",
+    v4Status: "stato v4",
+    v6Status: "stato v6",
+    v4LossShort: "perdita v4",
+    v6LossShort: "perdita v6",
+    deltaAvg: "Δ avg",
+    deltaLoss: "Δ perdita",
+    yes: "sì",
+    no: "no",
+    helpCommand: "Tipo di misurazione. IPv4 e IPv6 sono eseguiti sulle stesse sonde per un confronto corretto.",
+    helpNet: "Filtro profilo rete sonde: any, eyeball (accesso/consumer) o datacenter.",
+    helpFrom: "Dove vengono selezionate le sonde (stringa località Globalping). I preset qui sotto possono riempirla.",
+    helpProbes: "Numero di sonde (1–10). Più sonde migliorano la copertura ma richiedono più tempo.",
+    helpAsn: "Filtra le sonde per ASN (es. 12345).",
+    helpIsp: "Il filtro ISP non è supportato da Globalping: usa un ASN quando possibile.",
+    helpDeltaAlert: "Mostra un avviso quando la mediana v6-v4 supera questa soglia.",
+    helpIpv6Only:
+      "Seleziona solo sonde compatibili IPv6, poi esegui IPv4 sulle stesse sonde per un confronto corretto. Richiede un hostname.",
+    helpPackets: "Pacchetti per sonda (ping) o per salto (mtr).",
+    helpProto: "Protocollo usato da traceroute/mtr (ICMP, UDP, TCP).",
+    helpPort: "Porta destinazione (usata per traceroute TCP o mtr UDP/TCP).",
+    helpDnsQuery: "Tipo record DNS da interrogare (A, AAAA, MX, TXT, ecc.).",
+    helpDnsProto: "Protocollo DNS: UDP (default) o TCP.",
+    helpDnsPort: "Porta del server DNS (default: 53).",
+    helpDnsResolver:
+      "Sovrascrive il resolver usato dalle sonde (IP o hostname). Lascia vuoto per usare il resolver predefinito.",
+    helpDnsTrace: "Abilita DNS trace (se supportato) per vedere percorso e tempi di risoluzione.",
+    helpHttpMethod: "Metodo HTTP usato per la richiesta.",
+    helpHttpProto: "Protocollo HTTP: HTTP, HTTPS o HTTP2 (HTTPS implica TLS).",
+    helpHttpPath: "Percorso richiesta (es. / o /index.html). Se incolli un URL completo in Target, il percorso può essere estratto.",
+    helpHttpQuery:
+      "Query string senza '?', es. a=1&b=2. Se incolli un URL completo in Target, la query può essere estratta.",
+    helpHttpPort: "Sovrascrivi la porta di destinazione. Lascia vuoto per i default (80/443).",
+    helpHttpResolver:
+      "Sovrascrive il resolver usato dalle sonde per l'HTTP target (IP o hostname). Lascia vuoto per usare il resolver predefinito.",
+    helpMultiTarget:
+      "Clicca “Multi-target” per abilitare l'input multi-linea. Esegui la stessa misurazione su più target (uno per riga). I risultati sono sotto; clicca uno per caricarlo.",
+    tipMultiTarget: "Suggerimento: clicca “Multi-target” per mostrare l'input multi-linea.",
+    tipMultiTargetInput:
+      "Inserisci un target per riga. Per HTTP puoi incollare URL completi; per DNS scegli il record qui sopra.",
+    tipTargetInput:
+      "Hostname target. Per HTTP puoi incollare un URL completo; per DNS scegli il record qui sopra. Usare un hostname è consigliato per un confronto corretto.",
+    tipRun: "Avvia le misurazioni (IPv4 e IPv6 affiancati).",
+    tipCancel: "Interrompi l'esecuzione corrente.",
+    tipAdvanced: "Mostra/nasconde le opzioni avanzate per il comando selezionato.",
+    tipRaw: "Mostra o nasconde l'output raw Globalping per ogni sonda (IPv4 e IPv6).",
+    tipExportJson: "Esporta i risultati correnti come JSON (valori raw).",
+    tipExportCsv: "Esporta i risultati correnti come CSV (righe per sonda).",
+    tipShareLink: "Crea un link condivisibile con le impostazioni correnti.",
+    tipReportMode: "Genera un link report dall'ultima esecuzione completata.",
+    tipPreset: ({ label }) => `Preset: ${label}. Aggiorna il campo "Da".`,
+    tipSubPreset: "Raffina le sonde nella macro-regione selezionata.",
+    placeholderProbes: "1-10",
+    placeholderAsn: "es. 12345",
+    placeholderIsp: "Nome ISP",
+    placeholderDeltaAlert: "es. 25",
+    placeholderPort: "1-65535",
+    placeholderResolver: "(vuoto = default)",
+    placeholderOptional: "(opzionale)",
+    placeholderMultiDns: "nome (es. example.com)\nname2.example",
+    placeholderMultiHttp: "https://example.com/\nhttps://example.net/",
+    placeholderMultiDefault: "hostname (es. example.com)\nexample.net",
+    placeholderTargetDns: "nome (es. example.com)",
+    placeholderTargetHttp: "URL o hostname (es. https://example.com/)",
+    placeholderTargetDefault: "hostname (es. example.com)",
+    statusPreparing: "Preparazione misurazione...",
+    statusWaitingVerification: ({ stepLabel }) => `In attesa della verifica umana${stepLabel}...`,
+    errorTargetRequired: "Inserisci un hostname o URL di destinazione.",
+    errorHttpTarget: "Per HTTP, inserisci un URL o hostname valido.",
+    errorHostnameRequired: "Per il confronto IPv4/IPv6, inserisci un hostname (non un IP).",
+    errorMultiTargetRequired: "Inserisci uno o più target (uno per riga).",
+    errorTurnstileMissing:
+      'Turnstile non configurato. Imposta "VITE_TURNSTILE_SITEKEY" nelle variabili Cloudflare Pages.',
+    errorTurnstileUnavailable: "Script Turnstile caricato ma API non disponibile.",
+    errorTurnstileMissingContainer: "Contenitore Turnstile mancante.",
+    errorTurnstileTokenExpired: "Token Turnstile scaduto. Premi Avvia di nuovo.",
+    errorTurnstileTimeout: "Turnstile in timeout. Premi Avvia di nuovo.",
+    errorCancelled: "Annullato.",
+    errorHumanVerification: "Verifica umana fallita. Riprova.",
+    errorHumanVerificationTimeout: "Verifica umana scaduta. Riprova.",
+    errorRequestFailed: ({ status }) => `Richiesta fallita (${status})`,
+    inputLanguage: "Seleziona lingua",
+  },
+};
+
+function loadLang() {
+  if (typeof window === "undefined") return "en";
+  const stored = window.localStorage.getItem(LANG_STORAGE_KEY);
+  if (stored && SUPPORTED_LANGS.includes(stored)) return stored;
+  const browserLang = window.navigator?.language?.toLowerCase() || "";
+  if (browserLang.startsWith("it")) return "it";
+  return "en";
+}
 
 const HISTORY_STORAGE_KEY = "ping6_history_v1";
 const HISTORY_LIMIT = 10;
@@ -785,6 +1203,7 @@ function buildMtrCompare(v4, v6) {
 
 export default function App() {
   // Globalping UI
+  const [lang, setLang] = useState(() => loadLang());
   const [target, setTarget] = useState("example.com");
   const [multiTargetMode, setMultiTargetMode] = useState(false);
   const [multiTargetInput, setMultiTargetInput] = useState("");
@@ -800,6 +1219,27 @@ export default function App() {
   // Geo presets UI (macro + sub-regions)
   const [macroId, setMacroId] = useState("eu");
   const [subId, setSubId] = useState("eu-w");
+
+  const t = useCallback(
+    (key, vars = {}) => {
+      const entry = COPY[lang]?.[key] ?? COPY.en[key];
+      if (typeof entry === "function") return entry(vars);
+      return entry ?? key;
+    },
+    [lang]
+  );
+
+  const dateLocale = lang === "it" ? "it-IT" : "en-US";
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = lang;
+    }
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(LANG_STORAGE_KEY, lang);
+    } catch {}
+  }, [lang]);
 
   const macroPreset = useMemo(
     () => GEO_PRESETS.find((p) => p.id === macroId) ?? GEO_PRESETS[0],
@@ -934,16 +1374,16 @@ export default function App() {
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
     if (!sitekey) {
-      throw new Error('Turnstile is not configured. Set "VITE_TURNSTILE_SITEKEY" in Cloudflare Pages env vars.');
+      throw new Error(t("errorTurnstileMissing"));
     }
 
     // Ensure the script is loaded.
     await loadTurnstileScript();
-    if (!window.turnstile) throw new Error("Turnstile script loaded but API is not available.");
+    if (!window.turnstile) throw new Error(t("errorTurnstileUnavailable"));
 
     // Ensure we have a container.
     const el = turnstileContainerRef.current;
-    if (!el) throw new Error("Turnstile container is missing.");
+    if (!el) throw new Error(t("errorTurnstileMissingContainer"));
 
     // Ensure we have a rendered widget (render once, then execute per run).
     if (turnstileWidgetIdRef.current === null) {
@@ -973,14 +1413,14 @@ export default function App() {
           if (!pending || pending.done) return;
           pending.done = true;
           pending.cleanup();
-          pending.reject(new Error("Turnstile token expired. Please press Run again."));
+          pending.reject(new Error(t("errorTurnstileTokenExpired")));
         },
         "timeout-callback": () => {
           const pending = turnstilePendingRef.current;
           if (!pending || pending.done) return;
           pending.done = true;
           pending.cleanup();
-          pending.reject(new Error("Turnstile timed out. Please press Run again."));
+          pending.reject(new Error(t("errorTurnstileTimeout")));
         },
       });
     }
@@ -995,7 +1435,7 @@ export default function App() {
         if (!pending || pending.done) return;
         pending.done = true;
         pending.cleanup();
-        reject(new Error("Cancelled."));
+        reject(new Error(t("errorCancelled")));
       };
 
       const cleanup = () => {
@@ -1039,8 +1479,8 @@ export default function App() {
     if (!res.ok) {
       const msg =
         data?.error === "turnstile_failed"
-          ? "Human verification failed. Please retry."
-          : data?.error || `Request failed (${res.status})`;
+          ? t("errorHumanVerification")
+          : data?.error || t("errorRequestFailed", { status: res.status });
       const err = new Error(msg);
       err.details = data;
       throw err;
@@ -1050,12 +1490,12 @@ export default function App() {
   }
 
   function buildMeasurementRequest(rawTarget, { syncHttpFields = true } = {}) {
-    const t = String(rawTarget || "").trim();
-    if (!t) {
-      throw new Error("Please enter a target hostname or URL.");
+    const trimmedTarget = String(rawTarget || "").trim();
+    if (!trimmedTarget) {
+      throw new Error(t("errorTargetRequired"));
     }
 
-    let effectiveTarget = t;
+    let effectiveTarget = trimmedTarget;
 
     // HTTP: we also accept a full URL and split it into host/path/query.
     let httpParsed = null;
@@ -1065,9 +1505,9 @@ export default function App() {
     let httpEffectivePort = (httpPort || "").trim();
 
     if (cmd === "http") {
-      httpParsed = parseHttpInput(t);
+      httpParsed = parseHttpInput(trimmedTarget);
       if (!httpParsed?.host) {
-        throw new Error("For HTTP, enter a valid URL or hostname.");
+        throw new Error(t("errorHttpTarget"));
       }
 
       effectiveTarget = httpParsed.host;
@@ -1088,7 +1528,7 @@ export default function App() {
     // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
     // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
     if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
-      throw new Error("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
+      throw new Error(t("errorHostnameRequired"));
     }
 
     let measurementOptions = {};
@@ -1145,7 +1585,7 @@ export default function App() {
     }
 
     return {
-      t,
+      rawTarget: trimmedTarget,
       effectiveTarget,
       measurementOptions,
       httpEffectiveProto,
@@ -1160,7 +1600,7 @@ export default function App() {
     setV4(null);
     setV6(null);
     setShowRaw(false);
-    setTurnstileStatus("Preparing measurement...");
+    setTurnstileStatus(t("statusPreparing"));
     setRunning(true);
     let turnstileTimedOut = false;
     try {
@@ -1177,7 +1617,7 @@ export default function App() {
 
       const targets = multiTargetMode ? parsedMultiTargets : [target];
       if (!targets.length) {
-        throw new Error(multiTargetMode ? "Enter one or more targets (one per line)." : "Please enter a target hostname or URL.");
+        throw new Error(multiTargetMode ? t("errorMultiTargetRequired") : t("errorTargetRequired"));
       }
 
       if (multiTargetMode) {
@@ -1192,7 +1632,7 @@ export default function App() {
         }
 
         const {
-          t,
+          rawTarget: normalizedTarget,
           effectiveTarget,
           measurementOptions,
           httpEffectiveProto,
@@ -1201,7 +1641,7 @@ export default function App() {
           httpEffectivePort,
         } = buildMeasurementRequest(rawTarget, { syncHttpFields: !multiTargetMode });
 
-        setTarget(t);
+        setTarget(normalizedTarget);
         setV4(null);
         setV6(null);
 
@@ -1220,7 +1660,7 @@ export default function App() {
         const stepLabel = multiTargetMode ? ` (${i + 1}/${targets.length})` : "";
 
         // Human verification (Turnstile) is mandatory before creating measurements.
-        setTurnstileStatus(`Waiting for human verification${stepLabel}...`);
+        setTurnstileStatus(t("statusWaitingVerification", { stepLabel }));
         const turnstileTimeoutId = setTimeout(() => {
           turnstileTimedOut = true;
           ac.abort();
@@ -1245,7 +1685,7 @@ export default function App() {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           ts: Date.now(),
           cmd,
-          target: t,
+          target: normalizedTarget,
           effectiveTarget,
           fromRaw: from,
           from: fromWithTag || "world",
@@ -1282,7 +1722,7 @@ export default function App() {
             {
               id: entry.id,
               cmd: entry.cmd,
-              target: t,
+              target: normalizedTarget,
               effectiveTarget,
               summary,
               v4: r4,
@@ -1294,8 +1734,8 @@ export default function App() {
       }
     } catch (e) {
       const message = e?.message || String(e);
-      if (message === "Cancelled." && turnstileTimedOut) {
-        setErr("Human verification timed out. Please retry.");
+      if (message === t("errorCancelled") && turnstileTimedOut) {
+        setErr(t("errorHumanVerificationTimeout"));
       } else {
         setErr(message);
       }
@@ -1314,7 +1754,7 @@ export default function App() {
       if (turnstilePendingRef.current && !turnstilePendingRef.current.done) {
         turnstilePendingRef.current.done = true;
         turnstilePendingRef.current.cleanup();
-        turnstilePendingRef.current.reject(new Error("Cancelled."));
+        turnstilePendingRef.current.reject(new Error(t("errorCancelled")));
       }
     } catch {}
     try {
@@ -1602,7 +2042,7 @@ export default function App() {
   const historyEntryA = useMemo(() => history.find((h) => h.id === historyCompareA) || null, [history, historyCompareA]);
   const historyEntryB = useMemo(() => history.find((h) => h.id === historyCompareB) || null, [history, historyCompareB]);
   const historyCompareMismatch =
-    historyEntryA && historyEntryB && historyEntryA.cmd !== historyEntryB.cmd ? "Select two runs with the same command to compare." : "";
+    historyEntryA && historyEntryB && historyEntryA.cmd !== historyEntryB.cmd ? t("compareMismatch") : "";
   const historyCompareMetrics = useMemo(() => {
     if (!historyEntryA || !historyEntryB) return [];
     if (!historyEntryA.summary || !historyEntryB.summary) return [];
@@ -1610,18 +2050,18 @@ export default function App() {
     const a = historyEntryA.summary;
     const b = historyEntryB.summary;
     const metrics = [
-      { label: "median v4", format: ms, a: a.medianV4, b: b.medianV4 },
-      { label: "median v6", format: ms, a: a.medianV6, b: b.medianV6 },
-      { label: "median Δ v6-v4", format: ms, a: a.medianDelta, b: b.medianDelta },
+      { label: t("summaryMedianV4"), format: ms, a: a.medianV4, b: b.medianV4 },
+      { label: t("summaryMedianV6"), format: ms, a: a.medianV6, b: b.medianV6 },
+      { label: t("deltaV6V4"), format: ms, a: a.medianDelta, b: b.medianDelta },
     ];
     if (a.kind === "ping" || a.kind === "mtr") {
       metrics.push(
-        { label: "median loss v4", format: pct, a: a.medianLossV4, b: b.medianLossV4 },
-        { label: "median loss v6", format: pct, a: a.medianLossV6, b: b.medianLossV6 }
+        { label: t("summaryMedianLossV4"), format: pct, a: a.medianLossV4, b: b.medianLossV4 },
+        { label: t("summaryMedianLossV6"), format: pct, a: a.medianLossV6, b: b.medianLossV6 }
       );
     }
     return metrics;
-  }, [historyEntryA, historyEntryB]);
+  }, [historyEntryA, historyEntryB, t]);
 
   const probePoints = useMemo(() => {
     const results = v4?.results || v6?.results || [];
@@ -1709,25 +2149,25 @@ export default function App() {
     let label = "";
     if (pingCompare?.summary) {
       delta = pingCompare.summary.median_delta_avg;
-      label = "Ping median Δ";
+      label = t("deltaPingLabel");
     } else if (trCompare?.summary) {
       delta = trCompare.summary.median_delta;
-      label = "Traceroute median Δ";
+      label = t("deltaTracerouteLabel");
     } else if (mtrCompare?.summary) {
       delta = mtrCompare.summary.median_delta_avg;
-      label = "MTR median Δ";
+      label = t("deltaMtrLabel");
     } else if (dnsCompare?.summary) {
       delta = dnsCompare.summary.median_delta;
-      label = "DNS median Δ";
+      label = t("deltaDnsLabel");
     } else if (httpCompare?.summary) {
       delta = httpCompare.summary.median_delta;
-      label = "HTTP median Δ";
+      label = t("deltaHttpLabel");
     }
     if (!Number.isFinite(delta)) return null;
     const absDelta = Math.abs(delta);
     if (absDelta < deltaThresholdValue) return null;
     return { label, delta };
-  }, [thresholdEnabled, deltaThresholdValue, pingCompare, trCompare, mtrCompare, dnsCompare, httpCompare]);
+  }, [thresholdEnabled, deltaThresholdValue, pingCompare, trCompare, mtrCompare, dnsCompare, httpCompare, t]);
 
   const preStyle = {
     padding: 12,
@@ -1761,34 +2201,48 @@ export default function App() {
   </a>
  {" · "}
   <span style={{ fontSize: 14, opacity: 0.85 }}>
-    IPv4 vs IPv6, side by side
+    {t("tagline")}
   </span>
 </div>
-<div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
+<div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
-    Feedback welcome
+    {t("feedback")}
   </a>
-  {" · "}
+  <span aria-hidden="true">·</span>
   <a
     href="https://github.com/Antonio-Prado/ping6-it#readme"
     target="_blank"
     rel="noopener noreferrer"
     style={{ textDecoration: "underline" }}
   >
-    Docs
+    {t("docs")}
   </a>
-  {" · "}
+  <span aria-hidden="true">·</span>
   <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
-    Source{shortSha ? ` @ ${shortSha}` : ""}
+    {t("source")}{shortSha ? ` @ ${shortSha}` : ""}
   </a>
-  {" · "}
+  <span aria-hidden="true">·</span>
   <a href={agplUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
     AGPL
   </a>
-  {" · "}
+  <span aria-hidden="true">·</span>
   <a href={ccUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
     CC BY-NC
   </a>
+  <span aria-hidden="true">·</span>
+  <label className="sr-only" htmlFor="language-select">
+    {t("langLabel")}
+  </label>
+  <select
+    id="language-select"
+    value={lang}
+    aria-label={t("inputLanguage")}
+    onChange={(e) => setLang(e.target.value)}
+    style={{ padding: 4 }}
+  >
+    <option value="en">{t("langEnglish")}</option>
+    <option value="it">{t("langItalian")}</option>
+  </select>
 </div>
 
 
@@ -1797,7 +2251,7 @@ export default function App() {
       {/* Globalping controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Command <Help text="Measurement type to run. IPv4 and IPv6 are executed on the same probes for a fair comparison." />{" "}
+          {t("command")} <Help text={t("helpCommand")} />{" "}
           <select
             value={cmd}
             onChange={(e) => {
@@ -1816,7 +2270,7 @@ export default function App() {
         </label>
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Net <Help text="Probe network profile filter: any, eyeball (access/consumer), or datacenter." />{" "}
+          {t("net")} <Help text={t("helpNet")} />{" "}
           <select value={gpTag} onChange={(e) => setGpTag(e.target.value)} disabled={running} style={{ padding: 6 }}>
             <option value="any">any</option>
             <option value="eyeball">eyeball</option>
@@ -1825,12 +2279,12 @@ export default function App() {
         </label>
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          From <Help text="Where probes are selected (Globalping location string). Presets below can fill this automatically." />{" "}
+          {t("from")} <Help text={t("helpFrom")} />{" "}
           <input value={from} onChange={(e) => setFrom(e.target.value)} disabled={running} style={{ padding: 6, width: 220 }} />
         </label>
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Probes <Help text="Number of probes to run (1–10). More probes improve coverage but take longer." />{" "}
+          {t("probes")} <Help text={t("helpProbes")} />{" "}
           <input
             value={limit}
             onChange={(e) => setLimit(e.target.value)}
@@ -1841,7 +2295,7 @@ export default function App() {
             max={10}
             step={1}
             inputMode="numeric"
-            placeholder="1-10"
+            placeholder={t("placeholderProbes")}
             style={{ padding: 6, width: 70 }}
           />
         </label>
@@ -1849,34 +2303,34 @@ export default function App() {
         {advanced && (
           <>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ASN <Help text="Filter probes by ASN (e.g. 12345)." />{" "}
+              {t("asn")} <Help text={t("helpAsn")} />{" "}
               <input
                 value={probeAsn}
                 onChange={(e) => setProbeAsn(e.target.value)}
                 disabled={running}
-                placeholder="e.g. 12345"
+                placeholder={t("placeholderAsn")}
                 style={{ padding: 6, width: 110 }}
               />
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ISP <Help text="ISP name filtering is not supported by the Globalping API: use an ASN when possible." />{" "}
+              {t("isp")} <Help text={t("helpIsp")} />{" "}
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
                 disabled={running}
-                placeholder="ISP name"
+                placeholder={t("placeholderIsp")}
                 style={{ padding: 6, width: 140 }}
               />
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Δ alert (ms) <Help text="Show a warning when the median v6-v4 delta exceeds this threshold." />{" "}
+              {t("deltaAlert")} <Help text={t("helpDeltaAlert")} />{" "}
               <input
                 value={deltaThreshold}
                 onChange={(e) => setDeltaThreshold(e.target.value)}
                 disabled={running}
-                placeholder="e.g. 25"
+                placeholder={t("placeholderDeltaAlert")}
                 style={{ padding: 6, width: 100 }}
               />
             </label>
@@ -1891,15 +2345,15 @@ export default function App() {
               onChange={(e) => setRequireV6Capable(e.target.checked)}
               disabled={running || !canRequireV6Capable}
             />
-            IPv6-capable probes only
+            {t("ipv6Only")}
           </label>
-          <Help text="Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target." />
+          <Help text={t("helpIpv6Only")} />
         </div>
 
 
         {advanced && (cmd === "ping" || cmd === "mtr") && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {cmd === "mtr" ? "Packets/hop" : "Packets"} <Help text="Packets per probe (ping) or per hop (mtr)." />{" "}
+            {cmd === "mtr" ? t("packetsHop") : t("packets")} <Help text={t("helpPackets")} />{" "}
             <input
               value={packets}
               onChange={(e) => setPackets(e.target.value)}
@@ -1914,7 +2368,7 @@ export default function App() {
               max={cmd === "mtr" ? 16 : 10}
               step={1}
               inputMode="numeric"
-              placeholder={cmd === "mtr" ? "1-16" : "1-10"}
+              placeholder={cmd === "mtr" ? "1-16" : t("placeholderProbes")}
               style={{ padding: 6, width: 70 }}
             />
           </label>
@@ -1923,7 +2377,7 @@ export default function App() {
         {(cmd === "traceroute" || cmd === "mtr") && (
           <>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Proto <Help text="Transport protocol used by traceroute/mtr (ICMP, UDP, TCP)." />{" "}
+              {t("proto")} <Help text={t("helpProto")} />{" "}
               <select value={trProto} onChange={(e) => setTrProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 <option value="ICMP">ICMP</option>
                 <option value="UDP">UDP</option>
@@ -1933,7 +2387,7 @@ export default function App() {
 
             {advanced && ((cmd === "traceroute" && trProto === "TCP") || (cmd === "mtr" && trProto !== "ICMP")) && (
               <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                Port <Help text="Destination port (used for TCP traceroute or UDP/TCP mtr when applicable)." />{" "}
+                {t("port")} <Help text={t("helpPort")} />{" "}
                 <input
                   value={trPort}
                   onChange={(e) => setTrPort(e.target.value)}
@@ -1946,7 +2400,7 @@ export default function App() {
                   max={65535}
                   step={1}
                   inputMode="numeric"
-                  placeholder="1-65535"
+                  placeholder={t("placeholderPort")}
                   style={{ padding: 6, width: 90 }}
                 />
               </label>
@@ -1957,7 +2411,7 @@ export default function App() {
         {cmd === "dns" && (
           <>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Query <Help text="DNS record type to query (A, AAAA, MX, TXT, etc.)." />{" "}
+              {t("query")} <Help text={t("helpDnsQuery")} />{" "}
               <select value={dnsQuery} onChange={(e) => setDnsQuery(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 {["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV", "CAA", "ANY"].map((q) => (
                   <option key={q} value={q}>
@@ -1970,7 +2424,7 @@ export default function App() {
             {advanced && (
               <>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Proto <Help text="DNS transport protocol: UDP (default) or TCP." />{" "}
+                  {t("proto")} <Help text={t("helpDnsProto")} />{" "}
                   <select value={dnsProto} onChange={(e) => setDnsProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
                     <option value="UDP">UDP</option>
                     <option value="TCP">TCP</option>
@@ -1978,7 +2432,7 @@ export default function App() {
                 </label>
 
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Port <Help text="DNS server port (default: 53)." />{" "}
+                  {t("port")} <Help text={t("helpDnsPort")} />{" "}
                   <input
                     value={dnsPort}
                     onChange={(e) => setDnsPort(e.target.value)}
@@ -1991,18 +2445,18 @@ export default function App() {
                     max={65535}
                     step={1}
                     inputMode="numeric"
-                    placeholder="1-65535"
+                    placeholder={t("placeholderPort")}
                     style={{ padding: 6, width: 70 }}
                   />
                 </label>
 
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Resolver <Help text="Override the resolver used by probes (IP or hostname). Leave empty to use the probe default resolver." />{" "}
+                  {t("resolver")} <Help text={t("helpDnsResolver")} />{" "}
                   <input
                     value={dnsResolver}
                     onChange={(e) => setDnsResolver(e.target.value)}
                     disabled={running}
-                    placeholder="(empty = default)"
+                    placeholder={t("placeholderResolver")}
                     style={{ padding: 6, width: 220 }}
                   />
                 </label>
@@ -2010,9 +2464,9 @@ export default function App() {
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input type="checkbox" checked={dnsTrace} onChange={(e) => setDnsTrace(e.target.checked)} disabled={running} />
-                    trace
+                    {t("trace")}
                   </label>
-                  <Help text="Enable DNS trace (when supported) to see the resolution path and timing details." />
+                  <Help text={t("helpDnsTrace")} />
                 </div>
               </>
             )}
@@ -2021,7 +2475,7 @@ export default function App() {
         {cmd === "http" && (
           <>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Method <Help text="HTTP method used for the request." />{" "}
+              {t("method")} <Help text={t("helpHttpMethod")} />{" "}
               <select value={httpMethod} onChange={(e) => setHttpMethod(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 {["GET", "HEAD", "OPTIONS"].map((m) => (
                   <option key={m} value={m}>
@@ -2032,7 +2486,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Proto <Help text="HTTP protocol: HTTP, HTTPS, or HTTP2 (HTTPS implies TLS)." />{" "}
+              {t("proto")} <Help text={t("helpHttpProto")} />{" "}
               <select value={httpProto} onChange={(e) => setHttpProto(e.target.value)} disabled={running} style={{ padding: 6 }}>
                 <option value="HTTP">HTTP</option>
                 <option value="HTTPS">HTTPS</option>
@@ -2043,23 +2497,23 @@ export default function App() {
             {advanced && (
               <>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Path <Help text="Request path (e.g. / or /index.html). If you paste a full URL in Target, path may be extracted automatically." />{" "}
+                  {t("path")} <Help text={t("helpHttpPath")} />{" "}
                   <input value={httpPath} onChange={(e) => setHttpPath(e.target.value)} disabled={running} style={{ padding: 6, width: 180 }} />
                 </label>
 
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Query <Help text="Query string without '?', e.g. a=1&b=2. If you paste a full URL in Target, query may be extracted automatically." />{" "}
+                  {t("queryString")} <Help text={t("helpHttpQuery")} />{" "}
                   <input
                     value={httpQuery}
                     onChange={(e) => setHttpQuery(e.target.value)}
                     disabled={running}
-                    placeholder="(optional)"
+                    placeholder={t("placeholderOptional")}
                     style={{ padding: 6, width: 160 }}
                   />
                 </label>
 
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Port <Help text="Override destination port. Leave empty for defaults (80/443)." />{" "}
+                  {t("port")} <Help text={t("helpHttpPort")} />{" "}
                   <input
                     value={httpPort}
                     onChange={(e) => setHttpPort(e.target.value)}
@@ -2072,18 +2526,18 @@ export default function App() {
                     max={65535}
                     step={1}
                     inputMode="numeric"
-                    placeholder="1-65535"
+                    placeholder={t("placeholderPort")}
                     style={{ padding: 6, width: 90 }}
                   />
                 </label>
 
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  Resolver <Help text="Override the resolver used by probes for the HTTP target (IP or hostname). Leave empty to use the probe default resolver." />{" "}
+                  {t("resolver")} <Help text={t("helpHttpResolver")} />{" "}
                   <input
                     value={httpResolver}
                     onChange={(e) => setHttpResolver(e.target.value)}
                     disabled={running}
-                    placeholder="(empty = default)"
+                    placeholder={t("placeholderResolver")}
                     style={{ padding: 6, width: 220 }}
                   />
                 </label>
@@ -2115,23 +2569,24 @@ export default function App() {
               }}
               disabled={running}
             />
-            Multi-target
+            {t("multiTarget")}
           </label>
-          <Help text="Click the “Multi-target” label to enable the multi-line input. Run the same measurement against multiple targets (one per line). Results are listed below; click one to load it." />
-          <span style={{ fontSize: 12, opacity: 0.7 }}>Tip: click “Multi-target” to show the multi-line input.</span>
+          <Help text={t("helpMultiTarget")} />
+          <span style={{ fontSize: 12, opacity: 0.7 }}>{t("tipMultiTarget")}</span>
         </div>
 
         {multiTargetMode ? (
-          <Tip text="Enter one target per line. For HTTP you can paste full URLs; for DNS choose the record type above.">
+          <Tip text={t("tipMultiTargetInput")}>
             <textarea
               value={multiTargetInput}
               onChange={(e) => setMultiTargetInput(e.target.value)}
+              aria-label={t("multiTarget")}
               placeholder={
                 cmd === "dns"
-                  ? "name (e.g. example.com)\nname2.example"
+                  ? t("placeholderMultiDns")
                   : cmd === "http"
-                    ? "https://example.com/\nhttps://example.net/"
-                    : "hostname (e.g. example.com)\nexample.net"
+                    ? t("placeholderMultiHttp")
+                    : t("placeholderMultiDefault")
               }
               rows={3}
               style={{ padding: 8, minWidth: 260, resize: "vertical" }}
@@ -2139,18 +2594,21 @@ export default function App() {
             />
           </Tip>
         ) : (
-          <Tip text="Target hostname. For HTTP you can paste a full URL; for DNS choose the record type above. Using a hostname is recommended for a fair IPv4/IPv6 comparison.">
+          <Tip text={t("tipTargetInput")}>
             <input
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              placeholder={cmd === "dns" ? "name (e.g. example.com)" : cmd === "http" ? "URL or hostname (e.g. https://example.com/)" : "hostname (e.g. example.com)"}
+              aria-label={t("target")}
+              placeholder={
+                cmd === "dns" ? t("placeholderTargetDns") : cmd === "http" ? t("placeholderTargetHttp") : t("placeholderTargetDefault")
+              }
               style={{ padding: 8, minWidth: 260 }}
               disabled={running}
             />
           </Tip>
         )}
 
-        <Tip text="Start the measurements (IPv4 and IPv6 side by side).">
+        <Tip text={t("tipRun")}>
           <button
             type="button"
             onClick={(e) => {
@@ -2161,39 +2619,39 @@ export default function App() {
             disabled={running}
             style={{ padding: "8px 12px" }}
           >
-            Run
+            {t("run")}
           </button>
         </Tip>
-        <Tip text="Abort the current run.">
+        <Tip text={t("tipCancel")}>
           <button type="button" onClick={cancel} disabled={!running} style={{ padding: "8px 12px" }}>
-            Cancel
+            {t("cancel")}
           </button>
         </Tip>
-        <Tip text="Toggle advanced options for the selected command.">
+        <Tip text={t("tipAdvanced")}>
           <button onClick={() => setAdvanced((s) => !s)} disabled={running} style={{ padding: "8px 12px" }}>
-            {advanced ? "Basic" : "Advanced"}
+            {advanced ? t("basic") : t("advanced")}
           </button>
         </Tip>
-        <Tip text="Show or hide the raw Globalping output for each probe (IPv4 and IPv6).">
+        <Tip text={t("tipRaw")}>
           <button
             onClick={() => setShowRaw((s) => !s)}
             disabled={!v4 || !v6}
             style={{ padding: "8px 12px" }}
           >
-            {showRaw ? "Hide raw" : "Raw"}
+            {showRaw ? t("hideRaw") : t("raw")}
           </button>
         </Tip>
-        <Tip text="Export the current results as JSON (raw values).">
+        <Tip text={t("tipExportJson")}>
           <button onClick={downloadJson} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
-            Export JSON
+            {t("exportJson")}
           </button>
         </Tip>
-        <Tip text="Export the current results as CSV (per-probe rows).">
+        <Tip text={t("tipExportCsv")}>
           <button onClick={downloadCsv} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
-            Export CSV
+            {t("exportCsv")}
           </button>
         </Tip>
-        <Tip text="Create a shareable link with the current settings.">
+        <Tip text={t("tipShareLink")}>
           <button
             onClick={() => {
               const nextUrl = updateShareLink();
@@ -2202,17 +2660,17 @@ export default function App() {
             disabled={running}
             style={{ padding: "8px 12px" }}
           >
-            Share link
+            {t("shareLink")}
           </button>
         </Tip>
-        <Tip text="Generate a report link from the latest completed run.">
+        <Tip text={t("tipReportMode")}>
           <button onClick={enterReportMode} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
-            Report mode
+            {t("reportMode")}
           </button>
         </Tip>
         {shareUrl && (
-          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }}>
-            Link ready: <a href={shareUrl}>{shareUrl}</a>
+          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }} role="status" aria-live="polite">
+            {t("linkReady")} <a href={shareUrl}>{shareUrl}</a>
           </div>
         )}
         {turnstileStatus && (
@@ -2239,7 +2697,7 @@ export default function App() {
       {/* quick presets: macro regions + sub-regions */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         {GEO_PRESETS.map((p) => (
-          <Tip key={p.id} text={`Preset: ${p.label}. Updates the "From" field.`}>
+          <Tip key={p.id} text={t("tipPreset", { label: p.label })}>
             <button
               onClick={() => selectMacro(p.id)}
               disabled={running}
@@ -2258,14 +2716,14 @@ export default function App() {
         ))}
 
         {subPresets.length > 0 && (
-          <Tip text="Refine probes within the selected macro-region.">
+          <Tip text={t("tipSubPreset")}>
             <select
               value={subId}
               onChange={(e) => selectSub(e.target.value)}
               disabled={running}
               style={{ padding: 6 }}
             >
-              <option value="">All {macroPreset.label}</option>
+              <option value="">{t("all")} {macroPreset.label}</option>
               {subPresets.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
@@ -2281,14 +2739,18 @@ export default function App() {
       {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 700 }}>Multi-target results</div>
+            <div style={{ fontWeight: 700 }}>{t("multiTargetResults")}</div>
             {multiRunStatus && (
-              <div style={{ fontSize: 13, opacity: 0.8 }}>
-                Running {multiRunStatus.current}/{multiRunStatus.total} · {multiRunStatus.target}
+              <div style={{ fontSize: 13, opacity: 0.8 }} role="status" aria-live="polite">
+                {t("runningWithTarget", {
+                  current: multiRunStatus.current,
+                  total: multiRunStatus.total,
+                  target: multiRunStatus.target,
+                })}
               </div>
             )}
           </div>
-          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Click a target to load its full results below.</div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>{t("clickTargetToLoad")}</div>
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
             {multiRunResults.length ? (
               multiRunResults.map((entry) => {
@@ -2309,11 +2771,12 @@ export default function App() {
                     </div>
                     {entry.summary && (
                       <div style={{ fontSize: 13, marginTop: 4 }}>
-                        median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ{" "}
-                        {ms(entry.summary.medianDelta)}
+                        {t("summaryMedianV4")} {ms(entry.summary.medianV4)} · {t("summaryMedianV6")} {ms(entry.summary.medianV6)} ·{" "}
+                        {t("summaryMedianDelta")} {ms(entry.summary.medianDelta)}
                         {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
                           <>
-                            {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                            {" · "}
+                            {t("v4LossShort")} {pct(entry.summary.medianLossV4)} · {t("v6LossShort")} {pct(entry.summary.medianLossV6)}
                           </>
                         )}
                       </div>
@@ -2329,14 +2792,14 @@ export default function App() {
                         }}
                         style={{ padding: "6px 10px" }}
                       >
-                        {isActive ? "Viewing" : "View results"}
+                        {isActive ? t("viewing") : t("viewResults")}
                       </button>
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div style={{ fontSize: 13, opacity: 0.7 }}>Waiting for the first result…</div>
+              <div style={{ fontSize: 13, opacity: 0.7 }}>{t("waitingFirstResult")}</div>
             )}
           </div>
         </div>
@@ -2345,19 +2808,23 @@ export default function App() {
       {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 700 }}>Multi-target results</div>
+            <div style={{ fontWeight: 700 }}>{t("multiTargetResults")}</div>
             {multiRunStatus && (
-              <div style={{ fontSize: 13, opacity: 0.8 }}>
-                Running {multiRunStatus.current}/{multiRunStatus.total} · {multiRunStatus.target}
+              <div style={{ fontSize: 13, opacity: 0.8 }} role="status" aria-live="polite">
+                {t("runningWithTarget", {
+                  current: multiRunStatus.current,
+                  total: multiRunStatus.total,
+                  target: multiRunStatus.target,
+                })}
               </div>
             )}
           </div>
           <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>
             {multiRunStatus
-              ? `Progress: ${multiRunResults.length}/${multiRunStatus.total} completed.`
-              : `Completed targets: ${multiRunResults.length}.`}
+              ? t("progress", { done: multiRunResults.length, total: multiRunStatus.total })
+              : t("completedTargets", { done: multiRunResults.length })}
           </div>
-          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>Click a target to load its full results below.</div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>{t("clickTargetToLoad")}</div>
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
             {multiRunResults.length ? (
               multiRunResults.map((entry) => {
@@ -2378,11 +2845,12 @@ export default function App() {
                     </div>
                     {entry.summary && (
                       <div style={{ fontSize: 13, marginTop: 4 }}>
-                        median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ{" "}
-                        {ms(entry.summary.medianDelta)}
+                        {t("summaryMedianV4")} {ms(entry.summary.medianV4)} · {t("summaryMedianV6")} {ms(entry.summary.medianV6)} ·{" "}
+                        {t("summaryMedianDelta")} {ms(entry.summary.medianDelta)}
                         {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
                           <>
-                            {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                            {" · "}
+                            {t("v4LossShort")} {pct(entry.summary.medianLossV4)} · {t("v6LossShort")} {pct(entry.summary.medianLossV6)}
                           </>
                         )}
                       </div>
@@ -2398,14 +2866,14 @@ export default function App() {
                         }}
                         style={{ padding: "6px 10px" }}
                       >
-                        {isActive ? "Viewing" : "View results"}
+                        {isActive ? t("viewing") : t("viewResults")}
                       </button>
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div style={{ fontSize: 13, opacity: 0.7 }}>Waiting for the first result…</div>
+              <div style={{ fontSize: 13, opacity: 0.7 }}>{t("waitingFirstResult")}</div>
             )}
           </div>
         </div>
@@ -2414,7 +2882,7 @@ export default function App() {
       {!reportMode && (
       <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 700 }}>History (local)</div>
+          <div style={{ fontWeight: 700 }}>{t("historyTitle")}</div>
           <button
             onClick={() => {
               setHistory([]);
@@ -2424,26 +2892,26 @@ export default function App() {
             disabled={!history.length}
             style={{ padding: "6px 10px" }}
           >
-            Clear
+            {t("clear")}
           </button>
         </div>
-        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Stored in your browser only.</div>
+        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>{t("historyNote")}</div>
 
         {history.length ? (
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
             {history.map((entry) => (
               <div key={entry.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <strong>{new Date(entry.ts).toLocaleString()}</strong>
+                  <strong>{new Date(entry.ts).toLocaleString(dateLocale)}</strong>
                   <span style={{ opacity: 0.8 }}>
                     {entry.cmd} · {entry.target}
                   </span>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
-                  From {entry.from} · probes {entry.limit} · net {entry.gpTag}
+                  {t("from")} {entry.from} · {t("probes").toLowerCase()} {entry.limit} · {t("net").toLowerCase()} {entry.gpTag}
                   {entry.filters && (entry.filters.asn || entry.filters.isp || entry.filters.deltaThreshold) && (
                     <>
-                      {" · "}filters {entry.filters.asn ? `ASN ${entry.filters.asn}` : ""}
+                      {" · "}{t("filters")} {entry.filters.asn ? `ASN ${entry.filters.asn}` : ""}
                       {entry.filters.isp ? `${entry.filters.asn ? ", " : ""}ISP ${entry.filters.isp}` : ""}
                       {entry.filters.deltaThreshold
                         ? `${entry.filters.asn || entry.filters.isp ? ", " : ""}Δ>${entry.filters.deltaThreshold}ms`
@@ -2453,17 +2921,19 @@ export default function App() {
                 </div>
                 {entry.summary && (
                   <div style={{ fontSize: 13, marginTop: 4 }}>
-                    median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ {ms(entry.summary.medianDelta)}
+                    {t("summaryMedianV4")} {ms(entry.summary.medianV4)} · {t("summaryMedianV6")} {ms(entry.summary.medianV6)} ·{" "}
+                    {t("summaryMedianDelta")} {ms(entry.summary.medianDelta)}
                     {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
                       <>
-                        {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                        {" · "}
+                        {t("v4LossShort")} {pct(entry.summary.medianLossV4)} · {t("v6LossShort")} {pct(entry.summary.medianLossV6)}
                       </>
                     )}
                   </div>
                 )}
                 <div style={{ marginTop: 8 }}>
                   <button onClick={() => applyHistoryEntry(entry)} style={{ padding: "6px 10px" }}>
-                    Load settings
+                    {t("loadSettings")}
                   </button>
                 </div>
               </div>
@@ -2471,31 +2941,31 @@ export default function App() {
           </div>
         ) : (
           <div style={{ marginTop: 10, fontSize: 13, opacity: 0.8 }}>
-            No history yet. Run a measurement to start tracking your last runs.
+            {t("noHistory")}
           </div>
         )}
 
         <div style={{ borderTop: "1px dashed #e5e7eb", marginTop: 12, paddingTop: 12 }}>
-          <div style={{ fontWeight: 700 }}>Compare runs</div>
+          <div style={{ fontWeight: 700 }}>{t("compareRuns")}</div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Run A
+              {t("runA")}
               <select value={historyCompareA} onChange={(e) => setHistoryCompareA(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
-                <option value="">Select…</option>
+                <option value="">{t("selectRun")}</option>
                 {history.map((entry) => (
                   <option key={entry.id} value={entry.id}>
-                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                    {new Date(entry.ts).toLocaleString(dateLocale)} · {entry.cmd} · {entry.target}
                   </option>
                 ))}
               </select>
             </label>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Run B
+              {t("runB")}
               <select value={historyCompareB} onChange={(e) => setHistoryCompareB(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
-                <option value="">Select…</option>
+                <option value="">{t("selectRun")}</option>
                 {history.map((entry) => (
                   <option key={entry.id} value={entry.id}>
-                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                    {new Date(entry.ts).toLocaleString(dateLocale)} · {entry.cmd} · {entry.target}
                   </option>
                 ))}
               </select>
@@ -2508,15 +2978,15 @@ export default function App() {
 
           {!historyCompareMismatch && historyEntryA && historyEntryB && historyCompareMetrics.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 13, opacity: 0.8 }}>Δ = Run B - Run A</div>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>{t("deltaRunLabel")}</div>
               <div style={{ overflowX: "auto", marginTop: 6 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
                     <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Metric</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run A</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run B</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Δ</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("metric")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("runA")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("runB")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("summaryMedianDelta")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2542,19 +3012,20 @@ export default function App() {
       {reportMode && reportData && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #dbeafe", borderRadius: 10, background: "#eff6ff" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 700 }}>Report</div>
+            <div style={{ fontWeight: 700 }}>{t("report")}</div>
             <button onClick={exitReportMode} style={{ padding: "6px 10px" }}>
-              Exit report mode
+              {t("exitReportMode")}
             </button>
           </div>
           <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
-            Generated {new Date(reportData.ts).toLocaleString()} · {reportData.cmd} · {reportData.target}
+            {t("generated")} {new Date(reportData.ts).toLocaleString(dateLocale)} · {reportData.cmd} · {reportData.target}
           </div>
           <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
-            From {reportData.from} · probes {reportData.limit} · net {reportData.net} · IPv6-only {reportData.v6only ? "yes" : "no"}
+            {t("from")} {reportData.from} · {t("probes").toLowerCase()} {reportData.limit} · {t("net").toLowerCase()} {reportData.net} ·{" "}
+            {t("ipv6OnlyShort")} {reportData.v6only ? t("ipv6OnlyYes") : t("ipv6OnlyNo")}
             {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.deltaThreshold) && (
               <>
-                {" · "}filters {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
+                {" · "}{t("filters")} {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
                 {reportData.filters.isp ? `${reportData.filters.asn ? ", " : ""}ISP ${reportData.filters.isp}` : ""}
                 {reportData.filters.deltaThreshold
                   ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}Δ>${reportData.filters.deltaThreshold}ms`
@@ -2564,11 +3035,12 @@ export default function App() {
           </div>
           {reportData.summary && (
             <div style={{ fontSize: 13, marginTop: 6 }}>
-              median v4 {ms(reportData.summary.medianV4)} · median v6 {ms(reportData.summary.medianV6)} · Δ{" "}
-              {ms(reportData.summary.medianDelta)}
+              {t("summaryMedianV4")} {ms(reportData.summary.medianV4)} · {t("summaryMedianV6")} {ms(reportData.summary.medianV6)} ·{" "}
+              {t("summaryMedianDelta")} {ms(reportData.summary.medianDelta)}
               {(reportData.summary.kind === "ping" || reportData.summary.kind === "mtr") && (
                 <>
-                  {" · "}loss v4 {pct(reportData.summary.medianLossV4)} · loss v6 {pct(reportData.summary.medianLossV6)}
+                  {" · "}
+                  {t("v4LossShort")} {pct(reportData.summary.medianLossV4)} · {t("v6LossShort")} {pct(reportData.summary.medianLossV6)}
                 </>
               )}
             </div>
@@ -2577,22 +3049,22 @@ export default function App() {
       )}
 
       {deltaAlert && (
-        <div style={{ background: "#fef3c7", color: "#111", border: "1px solid #f59e0b", padding: 12, marginBottom: 12 }}>
-          {deltaAlert.label} is {ms(deltaAlert.delta)} (threshold {deltaThresholdValue} ms).
+        <div style={{ background: "#fef3c7", color: "#111", border: "1px solid #f59e0b", padding: 12, marginBottom: 12 }} role="alert">
+          {t("deltaAlertNotice", { label: deltaAlert.label, delta: deltaAlert.delta, threshold: deltaThresholdValue })}
         </div>
       )}
 
       {probePoints.length > 0 && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Probe map</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("probeMap")}</div>
           {probeMapUrl ? (
             <img
               src={probeMapUrl}
-              alt="Map of probe locations"
+              alt={t("probeMapAlt")}
               style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid #e5e7eb" }}
             />
           ) : (
-            <div style={{ fontSize: 13, opacity: 0.8 }}>No coordinates available for these probes.</div>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>{t("noProbeCoordinates")}</div>
           )}
           <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
             {probePoints.slice(0, 30).map((p, idx) => (
@@ -2614,20 +3086,33 @@ export default function App() {
       {showPingTable && pingCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>Ping RTT (v4 vs v6)</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("pingTitle")}</h3>
             <div style={{ opacity: 0.85 }}>
-              both: {pingCompare.summary.both}/{pingCompare.summary.n} · median avg v4 {ms(pingCompare.summary.median_avg_v4)} · median avg v6{" "}
-              {ms(pingCompare.summary.median_avg_v6)} · Δ {ms(pingCompare.summary.median_delta_avg)}
+              {t("summaryBoth")}: {pingCompare.summary.both}/{pingCompare.summary.n} · {t("summaryMedianAvgV4")}{" "}
+              {ms(pingCompare.summary.median_avg_v4)} · {t("summaryMedianAvgV6")} {ms(pingCompare.summary.median_avg_v6)} ·{" "}
+              {t("summaryMedianDelta")} {ms(pingCompare.summary.median_delta_avg)}
               <br />
-              p95 avg v4 {ms(pingCompare.summary.p95_avg_v4)} · p95 avg v6 {ms(pingCompare.summary.p95_avg_v6)} · median loss v4{" "}
-              {pct(pingCompare.summary.median_loss_v4)} · median loss v6 {pct(pingCompare.summary.median_loss_v6)}
+              {t("summaryP95AvgV4")} {ms(pingCompare.summary.p95_avg_v4)} · {t("summaryP95AvgV6")} {ms(pingCompare.summary.p95_avg_v6)} ·{" "}
+              {t("summaryMedianLossV4")} {pct(pingCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")}{" "}
+              {pct(pingCompare.summary.median_loss_v6)}
             </div>
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["#", "location", "ASN", "network", "v4 avg", "v4 loss", "v6 avg", "v6 loss", "Δ v6-v4", "winner"].map((h) => (
+                {[
+                  "#",
+                  t("location"),
+                  "ASN",
+                  t("network"),
+                  t("v4Avg"),
+                  t("v4Loss"),
+                  t("v6Avg"),
+                  t("v6Loss"),
+                  t("deltaV6V4"),
+                  t("winner"),
+                ].map((h) => (
                   <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                     {h}
                   </th>
@@ -2660,12 +3145,12 @@ export default function App() {
       {showTracerouteTable && trCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>Traceroute to destination (v4 vs v6)</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("tracerouteTitle")}</h3>
             <div style={{ opacity: 0.85 }}>
-              both: {trCompare.summary.both}/{trCompare.summary.n} · median v4 {ms(trCompare.summary.median_v4)} · median v6 {ms(trCompare.summary.median_v6)} · Δ{" "}
-              {ms(trCompare.summary.median_delta)}
+              {t("summaryBoth")}: {trCompare.summary.both}/{trCompare.summary.n} · {t("summaryMedianV4")} {ms(trCompare.summary.median_v4)} ·{" "}
+              {t("summaryMedianV6")} {ms(trCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(trCompare.summary.median_delta)}
               <br />
-              p95 v4 {ms(trCompare.summary.p95_v4)} · p95 v6 {ms(trCompare.summary.p95_v6)}
+              {t("summaryP95V4")} {ms(trCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(trCompare.summary.p95_v6)}
             </div>
           </div>
 
@@ -2674,17 +3159,17 @@ export default function App() {
               <tr>
                 {[
                   "#",
-                  "location",
+                  t("location"),
                   "ASN",
-                  "network",
-                  "v4 reached",
-                  "v4 hops",
-                  "v4 dst",
-                  "v6 reached",
-                  "v6 hops",
-                  "v6 dst",
-                  "Δ v6-v4",
-                  "winner",
+                  t("network"),
+                  t("v4Reached"),
+                  t("v4Hops"),
+                  t("v4Dst"),
+                  t("v6Reached"),
+                  t("v6Hops"),
+                  t("v6Dst"),
+                  t("deltaV6V4"),
+                  t("winner"),
                 ].map((h) => (
                   <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                     {h}
@@ -2700,11 +3185,11 @@ export default function App() {
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4dst)}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6dst)}</td>
 
@@ -2719,12 +3204,12 @@ export default function App() {
 
       {showTracerouteTable && traceroutePaths.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: "0 0 6px 0" }}>Traceroute paths (v4 vs v6)</h3>
+          <h3 style={{ margin: "0 0 6px 0" }}>{t("traceroutePathsTitle")}</h3>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["#", "probe", "v4 path", "v6 path"].map((h) => (
+                  {["#", t("probe"), t("v4Path"), t("v6Path")].map((h) => (
                     <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                       {h}
                     </th>
@@ -2752,13 +3237,14 @@ export default function App() {
       {showMtrTable && mtrCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>MTR to destination (v4 vs v6)</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrTitle")}</h3>
             <div style={{ opacity: 0.85 }}>
-              both: {mtrCompare.summary.both}/{mtrCompare.summary.n} · median avg v4 {ms(mtrCompare.summary.median_avg_v4)} · median avg v6{" "}
-              {ms(mtrCompare.summary.median_avg_v6)} · Δ {ms(mtrCompare.summary.median_delta_avg)}
+              {t("summaryBoth")}: {mtrCompare.summary.both}/{mtrCompare.summary.n} · {t("summaryMedianAvgV4")}{" "}
+              {ms(mtrCompare.summary.median_avg_v4)} · {t("summaryMedianAvgV6")} {ms(mtrCompare.summary.median_avg_v6)} ·{" "}
+              {t("summaryMedianDelta")} {ms(mtrCompare.summary.median_delta_avg)}
               <br />
-              median loss v4 {pct(mtrCompare.summary.median_loss_v4)} · median loss v6 {pct(mtrCompare.summary.median_loss_v6)} · Δ{" "}
-              {pct(mtrCompare.summary.median_delta_loss)}
+              {t("summaryMedianLossV4")} {pct(mtrCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")}{" "}
+              {pct(mtrCompare.summary.median_loss_v6)} · {t("summaryDeltaLoss")} {pct(mtrCompare.summary.median_delta_loss)}
             </div>
           </div>
 
@@ -2767,20 +3253,20 @@ export default function App() {
               <tr>
                 {[
                   "#",
-                  "location",
+                  t("location"),
                   "ASN",
-                  "network",
-                  "v4 reached",
-                  "v4 hops",
-                  "v4 loss",
-                  "v4 avg",
-                  "v6 reached",
-                  "v6 hops",
-                  "v6 loss",
-                  "v6 avg",
-                  "Δ avg",
-                  "Δ loss",
-                  "winner",
+                  t("network"),
+                  t("v4Reached"),
+                  t("v4Hops"),
+                  t("v4Loss"),
+                  t("v4Avg"),
+                  t("v6Reached"),
+                  t("v6Hops"),
+                  t("v6Loss"),
+                  t("v6Avg"),
+                  t("deltaAvg"),
+                  t("deltaLoss"),
+                  t("winner"),
                 ].map((h) => (
                   <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                     {h}
@@ -2796,12 +3282,12 @@ export default function App() {
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v4loss)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4avg)}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? "yes" : "no"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v6loss)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6avg)}</td>
@@ -2818,12 +3304,12 @@ export default function App() {
 
       {showMtrTable && mtrPaths.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: "0 0 6px 0" }}>MTR paths (v4 vs v6)</h3>
+          <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrPathsTitle")}</h3>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["#", "probe", "v4 path", "v6 path"].map((h) => (
+                  {["#", t("probe"), t("v4Path"), t("v6Path")].map((h) => (
                     <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                       {h}
                     </th>
@@ -2851,23 +3337,30 @@ export default function App() {
       {showDnsTable && dnsCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>DNS timings (v4 vs v6)</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("dnsTitle")}</h3>
             <div style={{ opacity: 0.85 }}>
-              both: {dnsCompare.summary.both}/{dnsCompare.summary.n} · median v4 {ms(dnsCompare.summary.median_v4)} ·
-              median v6 {ms(dnsCompare.summary.median_v6)} · Δ {ms(dnsCompare.summary.median_delta)}
+              {t("summaryBoth")}: {dnsCompare.summary.both}/{dnsCompare.summary.n} · {t("summaryMedianV4")} {ms(dnsCompare.summary.median_v4)} ·{" "}
+              {t("summaryMedianV6")} {ms(dnsCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(dnsCompare.summary.median_delta)}
               <br />
-              p95 v4 {ms(dnsCompare.summary.p95_v4)} · p95 v6 {ms(dnsCompare.summary.p95_v6)}
+              {t("summaryP95V4")} {ms(dnsCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(dnsCompare.summary.p95_v6)}
             </div>
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["#", "location", "ASN", "network", "v4 total", "v6 total", "Δ v6-v4", "ratio", "winner"].map((h) => (
-                  <th
-                    key={h}
-                    style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}
-                  >
+                {[
+                  "#",
+                  t("location"),
+                  "ASN",
+                  t("network"),
+                  t("v4Total"),
+                  t("v6Total"),
+                  t("deltaV6V4"),
+                  t("ratio"),
+                  t("winner"),
+                ].map((h) => (
+                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                     {h}
                   </th>
                 ))}
@@ -2900,19 +3393,31 @@ export default function App() {
       {showHttpTable && httpCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>HTTP timings (v4 vs v6)</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("httpTitle")}</h3>
             <div style={{ opacity: 0.85 }}>
-              both: {httpCompare.summary.both}/{httpCompare.summary.n} · median v4 {ms(httpCompare.summary.median_v4)} ·
-              median v6 {ms(httpCompare.summary.median_v6)} · Δ {ms(httpCompare.summary.median_delta)}
+              {t("summaryBoth")}: {httpCompare.summary.both}/{httpCompare.summary.n} · {t("summaryMedianV4")} {ms(httpCompare.summary.median_v4)} ·{" "}
+              {t("summaryMedianV6")} {ms(httpCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(httpCompare.summary.median_delta)}
               <br />
-              p95 v4 {ms(httpCompare.summary.p95_v4)} · p95 v6 {ms(httpCompare.summary.p95_v6)}
+              {t("summaryP95V4")} {ms(httpCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(httpCompare.summary.p95_v6)}
             </div>
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {["#", "location", "ASN", "network", "v4 status", "v6 status", "v4 total", "v6 total", "Δ v6-v4", "ratio", "winner"].map((h) => (
+                {[
+                  "#",
+                  t("location"),
+                  "ASN",
+                  t("network"),
+                  t("v4Status"),
+                  t("v6Status"),
+                  t("v4Total"),
+                  t("v6Total"),
+                  t("deltaV6V4"),
+                  t("ratio"),
+                  t("winner"),
+                ].map((h) => (
                   <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
                     {h}
                   </th>
@@ -2945,14 +3450,14 @@ export default function App() {
       {showRaw && v4 && v6 && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12, marginBottom: 18 }}>
           <div style={{ minWidth: 0 }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>RAW v4</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("rawV4")}</h3>
             <pre style={preStyle}>
               {v4.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
             </pre>
           </div>
 
           <div style={{ minWidth: 0 }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>RAW v6</h3>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("rawV6")}</h3>
             <pre style={preStyle}>
               {v6.results?.map((x, idx) => `${probeHeader(x, idx)}\n${x.result?.rawOutput ?? ""}\n`).join("\n")}
             </pre>
@@ -2970,8 +3475,11 @@ export default function App() {
           opacity: 0.8,
         }}
       >
-	If it works, thank{" "}
-        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noreferrer">The Internet Floopaloo</a>. If not, blame IPv4!
+        {t("footer")}{" "}
+        <a href="https://www.linkedin.com/in/antoniopradoit/" target="_blank" rel="noreferrer">
+          The Internet Floopaloo
+        </a>
+        . {t("footerTail")}
       </footer>
     </div>
   );
