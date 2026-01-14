@@ -43,19 +43,6 @@ export const ADVANCED_PRESET_GROUPS = [
         },
       },
       {
-        id: "isp-vodafone",
-        label: "Vodafone (ASN)",
-        description: "Filter probes by Vodafone ASN with wider coverage.",
-        settings: {
-          from: "world",
-          asn: 1273,
-          limit: 3,
-          requireV6Capable: false,
-          clearFilters: true,
-          showAdvanced: true,
-        },
-      },
-      {
         id: "isp-telekom",
         label: "Deutsche Telekom (eyeball)",
         description: "Filter probes by Deutsche Telekom ASN in Europe.",
