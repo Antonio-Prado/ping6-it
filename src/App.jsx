@@ -814,21 +814,6 @@ export default function App() {
     if (s?.magic) setFrom(s.magic);
   }
 
-  function applyAdvancedPreset(settings) {
-    if (!settings) return;
-    if (settings.clearFilters) {
-      setProbeAsn("");
-      setProbeIsp("");
-    }
-    if (settings.from !== undefined) setFrom(settings.from);
-    if (settings.gpTag !== undefined) setGpTag(settings.gpTag);
-    if (settings.limit !== undefined) setLimit(String(settings.limit));
-    if (settings.asn !== undefined) setProbeAsn(String(settings.asn));
-    if (settings.isp !== undefined) setProbeIsp(settings.isp);
-    if (settings.requireV6Capable !== undefined) setRequireV6Capable(settings.requireV6Capable);
-    if (settings.deltaThreshold !== undefined) setDeltaThreshold(String(settings.deltaThreshold));
-    if (settings.showAdvanced) setAdvanced(true);
-  }
 
   // ping/mtr
   const [packets, setPackets] = useState(3);
