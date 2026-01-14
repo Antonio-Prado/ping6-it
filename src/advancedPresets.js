@@ -70,11 +70,10 @@ export const ADVANCED_PRESET_GROUPS = [
       },
       {
         id: "isp-cloudflare",
-        label: "Cloudflare (datacenter)",
-        description: "Filter probes by Cloudflare ASN (datacenter).",
+        label: "Cloudflare (ASN)",
+        description: "Filter probes by Cloudflare ASN (all networks).",
         settings: {
           from: "world",
-          gpTag: "datacenter",
           asn: 13335,
           limit: 5,
           requireV6Capable: false,
@@ -84,11 +83,10 @@ export const ADVANCED_PRESET_GROUPS = [
       },
       {
         id: "isp-google",
-        label: "Google (datacenter)",
-        description: "Filter probes by Google ASN (datacenter).",
+        label: "Google (ASN)",
+        description: "Filter probes by Google ASN (all networks).",
         settings: {
           from: "world",
-          gpTag: "datacenter",
           asn: 15169,
           limit: 5,
           requireV6Capable: false,
