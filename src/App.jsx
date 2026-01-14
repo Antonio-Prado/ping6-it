@@ -215,6 +215,13 @@ function downloadFile(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
+function parseMultiTargets(raw) {
+  return String(raw || "")
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function decodeReportPayload(raw) {
   if (typeof window === "undefined") return null;
   try {
@@ -780,6 +787,11 @@ function buildMtrCompare(v4, v6) {
 export default function App() {
   // Globalping UI
   const [target, setTarget] = useState("example.com");
+  const [multiTargetMode, setMultiTargetMode] = useState(false);
+  const [multiTargetInput, setMultiTargetInput] = useState("");
+  const [multiRunResults, setMultiRunResults] = useState([]);
+  const [multiRunStatus, setMultiRunStatus] = useState(null);
+  const [multiActiveId, setMultiActiveId] = useState(null);
   const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns | http
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
@@ -795,7 +807,10 @@ export default function App() {
     [macroId]
   );
   const subPresets = macroPreset?.sub ?? [];
-  const canRequireV6Capable = !isIpLiteral((target || "").trim());
+  const parsedMultiTargets = useMemo(() => parseMultiTargets(multiTargetInput), [multiTargetInput]);
+  const canRequireV6Capable = multiTargetMode
+    ? parsedMultiTargets.length > 0 && parsedMultiTargets.every((item) => !isIpLiteral(item))
+    : !isIpLiteral((target || "").trim());
 
   function selectMacro(id) {
     const p = GEO_PRESETS.find((x) => x.id === id) ?? GEO_PRESETS[0];
@@ -1049,6 +1064,113 @@ export default function App() {
 
     return data;
   }
+
+  function buildMeasurementRequest(rawTarget, { syncHttpFields = true } = {}) {
+    const t = String(rawTarget || "").trim();
+    if (!t) {
+      throw new Error("Please enter a target hostname or URL.");
+    }
+
+    let effectiveTarget = t;
+
+    // HTTP: we also accept a full URL and split it into host/path/query.
+    let httpParsed = null;
+    let httpEffectiveProto = httpProto;
+    let httpEffectivePath = (httpPath || "/").trim() || "/";
+    let httpEffectiveQuery = (httpQuery || "").trim();
+    let httpEffectivePort = (httpPort || "").trim();
+
+    if (cmd === "http") {
+      httpParsed = parseHttpInput(t);
+      if (!httpParsed?.host) {
+        throw new Error("For HTTP, enter a valid URL or hostname.");
+      }
+
+      effectiveTarget = httpParsed.host;
+
+      if (httpParsed.protocol) {
+        httpEffectiveProto = httpParsed.protocol;
+        // manteniamo il selettore coerente se l'utente ha scritto http:// o https://
+        if (syncHttpFields && httpProto !== httpParsed.protocol) setHttpProto(httpParsed.protocol);
+      }
+
+      if ((httpEffectivePath === "/" || !httpEffectivePath) && httpParsed.path && httpParsed.path !== "/") {
+        httpEffectivePath = httpParsed.path;
+      }
+      if (!httpEffectiveQuery && httpParsed.query) httpEffectiveQuery = httpParsed.query;
+      if (!httpEffectivePort && Number.isFinite(httpParsed.port) && httpParsed.port > 0) httpEffectivePort = String(httpParsed.port);
+    }
+
+    // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
+    // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
+    if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
+      throw new Error("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
+    }
+
+    let measurementOptions = {};
+
+    if (cmd === "ping") {
+      measurementOptions = { packets: Math.max(1, Math.min(10, Number(packets) || 3)) };
+    } else if (cmd === "traceroute") {
+      measurementOptions = { protocol: trProto };
+      if (trProto === "TCP") {
+        measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
+      }
+    } else if (cmd === "mtr") {
+      measurementOptions = {
+        packets: Math.max(1, Math.min(16, Number(packets) || 3)),
+        protocol: trProto,
+      };
+      if (trProto !== "ICMP") {
+        measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
+      }
+    } else if (cmd === "dns") {
+      measurementOptions = {
+        query: { type: (dnsQuery || "A").toUpperCase() },
+        protocol: (dnsProto || "UDP").toUpperCase(),
+        port: Math.max(1, Math.min(65535, Number(dnsPort) || 53)),
+        trace: Boolean(dnsTrace),
+      };
+      const r = (dnsResolver || "").trim();
+      if (r) measurementOptions.resolver = r;
+    } else if (cmd === "http") {
+      const method = (httpMethod || "GET").toUpperCase();
+      const proto = (httpEffectiveProto || "HTTPS").toUpperCase();
+
+      let path = (httpEffectivePath || "/").trim() || "/";
+      if (!path.startsWith("/")) path = `/${path}`;
+
+      let q = (httpEffectiveQuery || "").trim();
+      if (q.startsWith("?")) q = q.slice(1);
+
+      measurementOptions = {
+        request: { method, path },
+        protocol: proto,
+      };
+
+      if (q) measurementOptions.request.query = q;
+
+      const r = (httpResolver || "").trim();
+      if (r) measurementOptions.resolver = r;
+
+      const p = (httpEffectivePort || "").trim();
+      if (p) {
+        const port = Math.max(1, Math.min(65535, Number(p) || 0));
+        if (port) measurementOptions.port = port;
+      }
+    }
+
+    return {
+      t,
+      effectiveTarget,
+      measurementOptions,
+      httpEffectiveProto,
+      httpEffectivePath,
+      httpEffectiveQuery,
+      httpEffectivePort,
+    };
+  }
+
   async function run() {
     setErr("");
     setV4(null);
@@ -1058,181 +1180,134 @@ export default function App() {
     setRunning(true);
     let turnstileTimedOut = false;
     try {
-      const t = target.trim();
-      if (!t) {
-        throw new Error("Please enter a target hostname or URL.");
-      }
-
-      let effectiveTarget = t;
-
-      // HTTP: we also accept a full URL and split it into host/path/query.
-      let httpParsed = null;
-      let httpEffectiveProto = httpProto;
-      let httpEffectivePath = (httpPath || "/").trim() || "/";
-      let httpEffectiveQuery = (httpQuery || "").trim();
-      let httpEffectivePort = (httpPort || "").trim();
-
-      if (cmd === "http") {
-        httpParsed = parseHttpInput(t);
-        if (!httpParsed?.host) {
-          throw new Error("For HTTP, enter a valid URL or hostname.");
-        }
-
-        effectiveTarget = httpParsed.host;
-
-        if (httpParsed.protocol) {
-          httpEffectiveProto = httpParsed.protocol;
-          // manteniamo il selettore coerente se l'utente ha scritto http:// o https://
-          if (httpProto !== httpParsed.protocol) setHttpProto(httpParsed.protocol);
-        }
-
-        if ((httpEffectivePath === "/" || !httpEffectivePath) && httpParsed.path && httpParsed.path !== "/") {
-          httpEffectivePath = httpParsed.path;
-        }
-        if (!httpEffectiveQuery && httpParsed.query) httpEffectiveQuery = httpParsed.query;
-        if (!httpEffectivePort && Number.isFinite(httpParsed.port) && httpParsed.port > 0) httpEffectivePort = String(httpParsed.port);
-      }
-
-      // For ping/traceroute/mtr/http we want a hostname (not an IP literal) for a fair IPv4/IPv6 comparison.
-      // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
-      if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
-        throw new Error("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
-      }
-
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
 
       const probes = Math.max(1, Math.min(10, Number(limit) || 3));
       const fromWithTag = applyGpTag(from, gpTag);
-
-      let measurementOptions = {};
-
-      if (cmd === "ping") {
-        measurementOptions = { packets: Math.max(1, Math.min(10, Number(packets) || 3)) };
-      } else if (cmd === "traceroute") {
-        measurementOptions = { protocol: trProto };
-        if (trProto === "TCP") {
-          measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
-        }
-      } else if (cmd === "mtr") {
-        measurementOptions = {
-          packets: Math.max(1, Math.min(16, Number(packets) || 3)),
-          protocol: trProto,
-        };
-        if (trProto !== "ICMP") {
-          measurementOptions.port = Math.max(1, Math.min(65535, Number(trPort) || 80));
-        }
-      } else if (cmd === "dns") {
-        measurementOptions = {
-	query: { type: (dnsQuery || "A").toUpperCase() },
-          protocol: (dnsProto || "UDP").toUpperCase(),
-          port: Math.max(1, Math.min(65535, Number(dnsPort) || 53)),
-          trace: Boolean(dnsTrace),
-        };
-        const r = (dnsResolver || "").trim();
-        if (r) measurementOptions.resolver = r;
-      } else if (cmd === "http") {
-        const method = (httpMethod || "GET").toUpperCase();
-        const proto = (httpEffectiveProto || "HTTPS").toUpperCase();
-
-        let path = (httpEffectivePath || "/").trim() || "/";
-        if (!path.startsWith("/")) path = `/${path}`;
-
-        let q = (httpEffectiveQuery || "").trim();
-        if (q.startsWith("?")) q = q.slice(1);
-
-        measurementOptions = {
-          request: { method, path },
-          protocol: proto,
-        };
-
-        if (q) measurementOptions.request.query = q;
-
-        const r = (httpResolver || "").trim();
-        if (r) measurementOptions.resolver = r;
-
-        const p = (httpEffectivePort || "").trim();
-        if (p) {
-          const port = Math.max(1, Math.min(65535, Number(p) || 0));
-          if (port) measurementOptions.port = port;
-        }
-      }
-
       const location = { magic: fromWithTag || "world" };
       const parsedAsn = Number(probeAsn);
       if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
       if (probeIsp.trim()) location.isp = probeIsp.trim();
 
-      const base = {
-        type: cmd,
-        target: effectiveTarget,
-        locations: [location],
-        limit: probes,
-        inProgressUpdates: true,
-      };
+      const targets = multiTargetMode ? parsedMultiTargets : [target];
+      if (!targets.length) {
+        throw new Error(multiTargetMode ? "Enter one or more targets (one per line)." : "Please enter a target hostname or URL.");
+      }
 
-      const canEnforceV6 = requireV6Capable && !isIpLiteral(effectiveTarget);
+      if (multiTargetMode) {
+        setMultiRunResults([]);
+        setMultiActiveId(null);
+      }
 
-      const flow = canEnforceV6 ? "v6first" : "v4first";
+      for (let i = 0; i < targets.length; i += 1) {
+        const rawTarget = targets[i];
+        if (multiTargetMode) {
+          setMultiRunStatus({ current: i + 1, total: targets.length, target: rawTarget });
+        }
 
-      // Human verification (Turnstile) is mandatory before creating measurements.
-      setTurnstileStatus("Waiting for human verification...");
-      const turnstileTimeoutId = setTimeout(() => {
-        turnstileTimedOut = true;
-        ac.abort();
-      }, TURNSTILE_EXEC_TIMEOUT_MS);
-      const turnstileToken = await getTurnstileToken(ac.signal);
-      clearTimeout(turnstileTimeoutId);
-      setTurnstileStatus("");
+        const {
+          t,
+          effectiveTarget,
+          measurementOptions,
+          httpEffectiveProto,
+          httpEffectivePath,
+          httpEffectiveQuery,
+          httpEffectivePort,
+        } = buildMeasurementRequest(rawTarget, { syncHttpFields: !multiTargetMode });
 
-      // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
-      const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
+        setTarget(t);
+        setV4(null);
+        setV6(null);
 
-      const [r4, r6] = await Promise.all([
-        waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
-        waitForMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal }),
-      ]);
+        const base = {
+          type: cmd,
+          target: effectiveTarget,
+          locations: [location],
+          limit: probes,
+          inProgressUpdates: true,
+        };
 
-      setV4(r4);
-      setV6(r6);
+        const canEnforceV6 = requireV6Capable && !isIpLiteral(effectiveTarget);
 
-      const summary = normalizeHistorySummary(cmd, r4, r6);
-      const entry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        ts: Date.now(),
-        cmd,
-        target: t,
-        effectiveTarget,
-        fromRaw: from,
-        from: fromWithTag || "world",
-        gpTag,
-        limit: probes,
-        requireV6Capable: canEnforceV6,
-        options: {
-          packets,
-          trProto,
-          trPort,
-          dnsQuery,
-          dnsProto,
-          dnsPort,
-          dnsResolver,
-          dnsTrace,
-          httpMethod,
-          httpProto: httpEffectiveProto,
-          httpPath: httpEffectivePath,
-          httpQuery: httpEffectiveQuery,
-          httpPort: httpEffectivePort,
-          httpResolver,
-        },
-        filters: {
-          asn: probeAsn,
-          isp: probeIsp,
-          deltaThreshold,
-        },
-        summary,
-      };
-      setHistory((prev) => [entry, ...prev].slice(0, HISTORY_LIMIT));
+        const flow = canEnforceV6 ? "v6first" : "v4first";
+
+        const stepLabel = multiTargetMode ? ` (${i + 1}/${targets.length})` : "";
+
+        // Human verification (Turnstile) is mandatory before creating measurements.
+        setTurnstileStatus(`Waiting for human verification${stepLabel}...`);
+        const turnstileTimeoutId = setTimeout(() => {
+          turnstileTimedOut = true;
+          ac.abort();
+        }, TURNSTILE_EXEC_TIMEOUT_MS);
+        const turnstileToken = await getTurnstileToken(ac.signal);
+        clearTimeout(turnstileTimeoutId);
+        setTurnstileStatus("");
+
+        // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
+        const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
+
+        const [r4, r6] = await Promise.all([
+          waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
+          waitForMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal }),
+        ]);
+
+        setV4(r4);
+        setV6(r6);
+
+        const summary = normalizeHistorySummary(cmd, r4, r6);
+        const entry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          ts: Date.now(),
+          cmd,
+          target: t,
+          effectiveTarget,
+          fromRaw: from,
+          from: fromWithTag || "world",
+          gpTag,
+          limit: probes,
+          requireV6Capable: canEnforceV6,
+          options: {
+            packets,
+            trProto,
+            trPort,
+            dnsQuery,
+            dnsProto,
+            dnsPort,
+            dnsResolver,
+            dnsTrace,
+            httpMethod,
+            httpProto: httpEffectiveProto,
+            httpPath: httpEffectivePath,
+            httpQuery: httpEffectiveQuery,
+            httpPort: httpEffectivePort,
+            httpResolver,
+          },
+          filters: {
+            asn: probeAsn,
+            isp: probeIsp,
+            deltaThreshold,
+          },
+          summary,
+        };
+        setHistory((prev) => [entry, ...prev].slice(0, HISTORY_LIMIT));
+        if (multiTargetMode) {
+          setMultiRunResults((prev) => [
+            ...prev,
+            {
+              id: entry.id,
+              cmd: entry.cmd,
+              target: t,
+              effectiveTarget,
+              summary,
+              v4: r4,
+              v6: r6,
+            },
+          ]);
+          setMultiActiveId(entry.id);
+        }
+      }
     } catch (e) {
       const message = e?.message || String(e);
       if (message === "Cancelled." && turnstileTimedOut) {
@@ -1243,6 +1318,7 @@ export default function App() {
     } finally {
       setRunning(false);
       setTurnstileStatus("");
+      setMultiRunStatus(null);
     }
   }
 
@@ -1264,12 +1340,14 @@ export default function App() {
     } catch {}
     setShowTurnstile(false);
     setTurnstileStatus("");
+    setMultiRunStatus(null);
 
     setRunning(false);
   }
 
   function applyHistoryEntry(entry) {
     if (!entry) return;
+    setMultiTargetMode(false);
     setCmd(entry.cmd);
     setTarget(entry.target || "");
     setFrom(entry.fromRaw || entry.from || "");
@@ -2028,15 +2106,63 @@ export default function App() {
           </>
         )}
 
-        <Tip text="Target hostname. For HTTP you can paste a full URL; for DNS choose the record type above. Using a hostname is recommended for a fair IPv4/IPv6 comparison.">
-        <input
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          placeholder={cmd === "dns" ? "name (e.g. example.com)" : cmd === "http" ? "URL or hostname (e.g. https://example.com/)" : "hostname (e.g. example.com)"}
-          style={{ padding: 8, minWidth: 260 }}
-          disabled={running}
-        />
-        </Tip>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={multiTargetMode}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setMultiTargetMode(next);
+                if (next && !multiTargetInput.trim()) {
+                  setMultiTargetInput(target.trim());
+                }
+                if (!next) {
+                  const firstTarget = parseMultiTargets(multiTargetInput)[0];
+                  if (firstTarget) setTarget(firstTarget);
+                }
+                if (!next) {
+                  setMultiRunResults([]);
+                  setMultiActiveId(null);
+                  setMultiRunStatus(null);
+                }
+              }}
+              disabled={running}
+            />
+            Multi-target
+          </label>
+          <Help text="Click the “Multi-target” label to enable the multi-line input. Run the same measurement against multiple targets (one per line). Results are listed below; click one to load it." />
+          <span style={{ fontSize: 12, opacity: 0.7 }}>Tip: click “Multi-target” to show the multi-line input.</span>
+        </div>
+
+        {multiTargetMode ? (
+          <Tip text="Enter one target per line. For HTTP you can paste full URLs; for DNS choose the record type above.">
+            <textarea
+              value={multiTargetInput}
+              onChange={(e) => setMultiTargetInput(e.target.value)}
+              placeholder={
+                cmd === "dns"
+                  ? "name (e.g. example.com)\nname2.example"
+                  : cmd === "http"
+                    ? "https://example.com/\nhttps://example.net/"
+                    : "hostname (e.g. example.com)\nexample.net"
+              }
+              rows={3}
+              style={{ padding: 8, minWidth: 260, resize: "vertical" }}
+              disabled={running}
+            />
+          </Tip>
+        ) : (
+          <Tip text="Target hostname. For HTTP you can paste a full URL; for DNS choose the record type above. Using a hostname is recommended for a fair IPv4/IPv6 comparison.">
+            <input
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder={cmd === "dns" ? "name (e.g. example.com)" : cmd === "http" ? "URL or hostname (e.g. https://example.com/)" : "hostname (e.g. example.com)"}
+              style={{ padding: 8, minWidth: 260 }}
+              disabled={running}
+            />
+          </Tip>
+        )}
 
         <Tip text="Start the measurements (IPv4 and IPv6 side by side).">
           <button
@@ -2190,6 +2316,75 @@ export default function App() {
         ))}
       </div>
       </>
+      )}
+
+      {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700 }}>Multi-target results</div>
+            {multiRunStatus && (
+              <div style={{ fontSize: 13, opacity: 0.8 }}>
+                Running {multiRunStatus.current}/{multiRunStatus.total} · {multiRunStatus.target}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>
+            {multiRunStatus
+              ? `Progress: ${multiRunResults.length}/${multiRunStatus.total} completed.`
+              : `Completed targets: ${multiRunResults.length}.`}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>Click a target to load its full results below.</div>
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {multiRunResults.length ? (
+              multiRunResults.map((entry) => {
+                const isActive = entry.id === multiActiveId;
+                return (
+                  <div
+                    key={entry.id}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 8,
+                      padding: 10,
+                      background: isActive ? "#f8fafc" : "transparent",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <strong>{entry.target}</strong>
+                      <span style={{ opacity: 0.8 }}>{entry.cmd}</span>
+                    </div>
+                    {entry.summary && (
+                      <div style={{ fontSize: 13, marginTop: 4 }}>
+                        median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ{" "}
+                        {ms(entry.summary.medianDelta)}
+                        {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                          <>
+                            {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        onClick={() => {
+                          setV4(entry.v4);
+                          setV6(entry.v6);
+                          setTarget(entry.target);
+                          setShowRaw(false);
+                          setMultiActiveId(entry.id);
+                        }}
+                        style={{ padding: "6px 10px" }}
+                      >
+                        {isActive ? "Viewing" : "View results"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>Waiting for the first result…</div>
+            )}
+          </div>
+        </div>
       )}
 
       {!reportMode && (
