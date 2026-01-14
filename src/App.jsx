@@ -1796,7 +1796,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ISP <Help text="Filtro per ISP non supportato dall’API Globalping: usa un ASN quando possibile." />{" "}
+              ISP <Help text="ISP name filtering is not supported by the Globalping API: use an ASN when possible." />{" "}
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
@@ -2169,7 +2169,7 @@ export default function App() {
             <div style={{ fontWeight: 700, fontSize: 13 }}>{group.label}</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {group.presets.map((preset) => (
-                <Tip key={preset.id} text={preset.description || `Preset avanzato: ${preset.label}.`}>
+                <Tip key={preset.id} text={preset.description || `Advanced preset: ${preset.label}.`}>
                   <button
                     onClick={() => applyAdvancedPreset(preset.settings)}
                     disabled={running}
@@ -2188,6 +2188,10 @@ export default function App() {
             </div>
           </div>
         ))}
+        <div style={{ fontSize: 12, opacity: 0.75 }}>
+          Note: some advanced presets disable “IPv6-capable only” to improve coverage. The v4/v6 comparison stays active,
+          but it still requires IPv6-capable probes; otherwise Globalping can return “no probes found”.
+        </div>
       </div>
       </>
       )}
