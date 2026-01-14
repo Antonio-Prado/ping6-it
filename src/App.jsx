@@ -906,6 +906,59 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch {}
+  }, [history]);
+
+  useEffect(() => {
+    if (!history.length) return;
+    setHistoryCompareA((prev) => prev || history[0]?.id || "");
+    setHistoryCompareB((prev) => prev || history[1]?.id || "");
+  }, [history]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    applyUrlSettings(params, {
+      setCmd,
+      setTarget,
+      setFrom,
+      setGpTag,
+      setLimit,
+      setRequireV6Capable,
+      setPackets,
+      setTrProto,
+      setTrPort,
+      setDnsQuery,
+      setDnsProto,
+      setDnsPort,
+      setDnsResolver,
+      setDnsTrace,
+      setHttpMethod,
+      setHttpProto,
+      setHttpPath,
+      setHttpQuery,
+      setHttpPort,
+      setHttpResolver,
+      setProbeAsn,
+      setProbeIsp,
+      setDeltaThreshold,
+    });
+
+    const reportRaw = params.get("report");
+    const dataRaw = params.get("data");
+    if (reportRaw === "1" && dataRaw) {
+      const decoded = decodeReportPayload(dataRaw);
+      if (decoded) {
+        setReportMode(true);
+        setReportData(decoded);
+      }
+    }
+  }, []);
+
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
     if (!sitekey) {
@@ -1068,6 +1121,11 @@ export default function App() {
     // For DNS the input may also be an IP literal (e.g. PTR), so we don't block it.
     if (cmd !== "dns" && isIpLiteral(effectiveTarget)) {
       setErr("For the IPv4/IPv6 comparison, enter a hostname (not an IP).");
+      return;
+    }
+
+    if (probeLat.trim() || probeLon.trim() || probeRadius.trim()) {
+      setErr("Geo filters (lat/lon/radius) are not supported by the Globalping API yet. Please clear them.");
       return;
     }
 
