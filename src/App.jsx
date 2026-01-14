@@ -1585,7 +1585,7 @@ export default function App() {
     }
 
     return {
-      t: trimmedTarget,
+      rawTarget: trimmedTarget,
       effectiveTarget,
       measurementOptions,
       httpEffectiveProto,
@@ -1632,7 +1632,7 @@ export default function App() {
         }
 
         const {
-          t,
+          rawTarget: normalizedTarget,
           effectiveTarget,
           measurementOptions,
           httpEffectiveProto,
@@ -1641,7 +1641,7 @@ export default function App() {
           httpEffectivePort,
         } = buildMeasurementRequest(rawTarget, { syncHttpFields: !multiTargetMode });
 
-        setTarget(t);
+        setTarget(normalizedTarget);
         setV4(null);
         setV6(null);
 
@@ -1685,7 +1685,7 @@ export default function App() {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           ts: Date.now(),
           cmd,
-          target: t,
+          target: normalizedTarget,
           effectiveTarget,
           fromRaw: from,
           from: fromWithTag || "world",
@@ -1722,7 +1722,7 @@ export default function App() {
             {
               id: entry.id,
               cmd: entry.cmd,
-              target: t,
+              target: normalizedTarget,
               effectiveTarget,
               summary,
               v4: r4,
