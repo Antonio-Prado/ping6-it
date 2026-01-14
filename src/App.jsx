@@ -934,8 +934,6 @@ export default function App() {
   </span>
 </div>
 <div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
-  Experimental beta: features may change and results may vary{" "}
- {" · "}
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
     Feedback welcome
   </a>
