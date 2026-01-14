@@ -264,4 +264,35 @@ Install and run:
 ```bash
 npm ci
 npm run dev
+```
 
+Build:
+```bash
+npm run build
+npm run preview
+```
+
+### Cloudflare Pages / Functions configuration
+
+The pair endpoint requires a Turnstile secret configured as an environment variable in Cloudflare:
+
+- `TURNSTILE_SECRET` (Pages environment variable)
+
+The frontend also needs the corresponding Turnstile site key (as configured in the UI code/deployment). Keep the secret server-side only.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+
+## Security
+
+See [SECURITY.md](./SECURITY.md).
+
+## Acknowledgements
+
+ping6.it is built on top of the Globalping measurement platform (API + distributed probes).
+
+## License
+
+- Source code: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [LICENSE](./LICENSE).
+- Documentation and website content: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) — see [LICENSE-DOCS](./LICENSE-DOCS).
