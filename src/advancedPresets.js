@@ -1,12 +1,12 @@
 export const ADVANCED_PRESET_GROUPS = [
   {
     id: "top",
-    label: "Preset avanzati",
+    label: "Advanced presets",
     presets: [
       {
         id: "top-5-regioni",
-        label: "Top 5 regioni",
-        description: "Seleziona 5 probe globali con copertura ampia.",
+        label: "Top 5 regions",
+        description: "Select 5 global probes with broad coverage.",
         settings: {
           from: "world",
           limit: 5,
@@ -15,8 +15,8 @@ export const ADVANCED_PRESET_GROUPS = [
       },
       {
         id: "top-10-regioni",
-        label: "Top 10 regioni",
-        description: "Seleziona 10 probe globali per una copertura più ampia.",
+        label: "Top 10 regions",
+        description: "Select 10 global probes for wider coverage.",
         settings: {
           from: "world",
           limit: 10,
@@ -27,29 +27,16 @@ export const ADVANCED_PRESET_GROUPS = [
   },
   {
     id: "isp",
-    label: "ISP specifici",
+    label: "Specific ISPs",
     presets: [
       {
         id: "isp-comcast",
         label: "Comcast (eyeball)",
-        description: "Filtra le probe Comcast (access/consumer).",
+        description: "Filter probes by Comcast ASN (access/consumer).",
         settings: {
           from: "North America",
           gpTag: "eyeball",
-          isp: "Comcast",
-          limit: 5,
-          clearFilters: true,
-          showAdvanced: true,
-        },
-      },
-      {
-        id: "isp-vodafone",
-        label: "Vodafone (eyeball)",
-        description: "Filtra le probe Vodafone in Europa.",
-        settings: {
-          from: "Europe",
-          gpTag: "eyeball",
-          isp: "Vodafone",
+          asn: 7922,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,
@@ -58,37 +45,11 @@ export const ADVANCED_PRESET_GROUPS = [
       {
         id: "isp-telekom",
         label: "Deutsche Telekom (eyeball)",
-        description: "Filtra le probe Deutsche Telekom in Europa.",
+        description: "Filter probes by Deutsche Telekom ASN in Europe.",
         settings: {
           from: "Europe",
           gpTag: "eyeball",
-          isp: "Deutsche Telekom",
-          limit: 5,
-          clearFilters: true,
-          showAdvanced: true,
-        },
-      },
-      {
-        id: "isp-cloudflare",
-        label: "Cloudflare (datacenter)",
-        description: "Filtra le probe Cloudflare (datacenter).",
-        settings: {
-          from: "world",
-          gpTag: "datacenter",
-          isp: "Cloudflare",
-          limit: 5,
-          clearFilters: true,
-          showAdvanced: true,
-        },
-      },
-      {
-        id: "isp-google",
-        label: "Google (datacenter)",
-        description: "Filtra le probe Google (datacenter).",
-        settings: {
-          from: "world",
-          gpTag: "datacenter",
-          isp: "Google",
+          asn: 3320,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,

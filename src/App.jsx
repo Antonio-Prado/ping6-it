@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
-import { ADVANCED_PRESET_GROUPS } from "./advancedPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -829,21 +828,6 @@ export default function App() {
     if (s?.magic) setFrom(s.magic);
   }
 
-  function applyAdvancedPreset(settings) {
-    if (!settings) return;
-    if (settings.clearFilters) {
-      setProbeAsn("");
-      setProbeIsp("");
-    }
-    if (settings.from !== undefined) setFrom(settings.from);
-    if (settings.gpTag !== undefined) setGpTag(settings.gpTag);
-    if (settings.limit !== undefined) setLimit(String(settings.limit));
-    if (settings.asn !== undefined) setProbeAsn(String(settings.asn));
-    if (settings.isp !== undefined) setProbeIsp(settings.isp);
-    if (settings.requireV6Capable !== undefined) setRequireV6Capable(settings.requireV6Capable);
-    if (settings.deltaThreshold !== undefined) setDeltaThreshold(String(settings.deltaThreshold));
-    if (settings.showAdvanced) setAdvanced(true);
-  }
 
   // ping/mtr
   const [packets, setPackets] = useState(3);
@@ -1189,7 +1173,7 @@ export default function App() {
       const location = { magic: fromWithTag || "world" };
       const parsedAsn = Number(probeAsn);
       if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
-      if (probeIsp.trim()) location.isp = probeIsp.trim();
+      // NOTE: Globalping API does not support filtering by ISP name.
 
       const targets = multiTargetMode ? parsedMultiTargets : [target];
       if (!targets.length) {
@@ -1771,8 +1755,10 @@ export default function App() {
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
       <style>{TOOLTIP_CSS}</style>
 <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
-  <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
-  <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  <a href="https://ping6.it" style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", textDecoration: "none", color: "inherit" }}>
+    <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
+    <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  </a>
  {" · "}
   <span style={{ fontSize: 14, opacity: 0.85 }}>
     IPv4 vs IPv6, side by side
@@ -1874,7 +1860,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ISP <Help text="Filter probes by ISP name (substring match, e.g. Comcast)." />{" "}
+              ISP <Help text="ISP name filtering is not supported by the Globalping API: use an ASN when possible." />{" "}
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
@@ -2287,32 +2273,6 @@ export default function App() {
             </select>
           </Tip>
         )}
-      </div>
-      <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-        {ADVANCED_PRESET_GROUPS.map((group) => (
-          <div key={group.id} style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{group.label}</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {group.presets.map((preset) => (
-                <Tip key={preset.id} text={preset.description || `Preset avanzato: ${preset.label}.`}>
-                  <button
-                    onClick={() => applyAdvancedPreset(preset.settings)}
-                    disabled={running}
-                    style={{
-                      padding: "6px 10px",
-                      border: "1px solid #ddd",
-                      borderRadius: 6,
-                      background: "transparent",
-                      cursor: running ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {preset.label}
-                  </button>
-                </Tip>
-              ))}
-            </div>
-          </div>
-        ))}
       </div>
       </>
       )}
