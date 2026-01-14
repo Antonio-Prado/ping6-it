@@ -32,11 +32,11 @@ export const ADVANCED_PRESET_GROUPS = [
       {
         id: "isp-comcast",
         label: "Comcast (eyeball)",
-        description: "Filtra le probe Comcast (access/consumer).",
+        description: "Filtra le probe Comcast tramite ASN (access/consumer).",
         settings: {
           from: "North America",
           gpTag: "eyeball",
-          isp: "Comcast",
+          asn: 7922,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,
@@ -45,11 +45,11 @@ export const ADVANCED_PRESET_GROUPS = [
       {
         id: "isp-vodafone",
         label: "Vodafone (eyeball)",
-        description: "Filtra le probe Vodafone in Europa.",
+        description: "Filtra le probe Vodafone tramite ASN in Europa.",
         settings: {
           from: "Europe",
           gpTag: "eyeball",
-          isp: "Vodafone",
+          asn: 1273,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,
@@ -58,11 +58,11 @@ export const ADVANCED_PRESET_GROUPS = [
       {
         id: "isp-telekom",
         label: "Deutsche Telekom (eyeball)",
-        description: "Filtra le probe Deutsche Telekom in Europa.",
+        description: "Filtra le probe Deutsche Telekom tramite ASN in Europa.",
         settings: {
           from: "Europe",
           gpTag: "eyeball",
-          isp: "Deutsche Telekom",
+          asn: 3320,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,
@@ -71,11 +71,11 @@ export const ADVANCED_PRESET_GROUPS = [
       {
         id: "isp-cloudflare",
         label: "Cloudflare (datacenter)",
-        description: "Filtra le probe Cloudflare (datacenter).",
+        description: "Filtra le probe Cloudflare tramite ASN (datacenter).",
         settings: {
           from: "world",
           gpTag: "datacenter",
-          isp: "Cloudflare",
+          asn: 13335,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,
@@ -84,11 +84,11 @@ export const ADVANCED_PRESET_GROUPS = [
       {
         id: "isp-google",
         label: "Google (datacenter)",
-        description: "Filtra le probe Google (datacenter).",
+        description: "Filtra le probe Google tramite ASN (datacenter).",
         settings: {
           from: "world",
           gpTag: "datacenter",
-          isp: "Google",
+          asn: 15169,
           limit: 5,
           clearFilters: true,
           showAdvanced: true,
