@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
@@ -52,6 +52,9 @@ const TOOLTIP_CSS = `
 @media (prefers-reduced-motion: reduce){.tt-bubble{transition:none}}
 `;
 
+const HISTORY_STORAGE_KEY = "ping6_history_v1";
+const HISTORY_LIMIT = 10;
+
 function Tip({ text, children }) {
   return (
     <span className="tt">
@@ -74,6 +77,72 @@ function Help({ text }) {
       </span>
     </span>
   );
+}
+
+function loadHistory() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeHistorySummary(cmd, v4, v6) {
+  if (!v4 || !v6) return null;
+  if (cmd === "ping") {
+    const { summary } = buildPingCompare(v4, v6);
+    return {
+      kind: "ping",
+      medianV4: summary.median_avg_v4,
+      medianV6: summary.median_avg_v6,
+      medianDelta: summary.median_delta_avg,
+      medianLossV4: summary.median_loss_v4,
+      medianLossV6: summary.median_loss_v6,
+    };
+  }
+  if (cmd === "traceroute") {
+    const { summary } = buildTracerouteCompare(v4, v6);
+    return {
+      kind: "traceroute",
+      medianV4: summary.median_v4,
+      medianV6: summary.median_v6,
+      medianDelta: summary.median_delta,
+    };
+  }
+  if (cmd === "mtr") {
+    const { summary } = buildMtrCompare(v4, v6);
+    return {
+      kind: "mtr",
+      medianV4: summary.median_avg_v4,
+      medianV6: summary.median_avg_v6,
+      medianDelta: summary.median_delta_avg,
+      medianLossV4: summary.median_loss_v4,
+      medianLossV6: summary.median_loss_v6,
+    };
+  }
+  if (cmd === "dns") {
+    const { summary } = buildDnsCompare(v4, v6);
+    return {
+      kind: "dns",
+      medianV4: summary.median_v4,
+      medianV6: summary.median_v6,
+      medianDelta: summary.median_delta,
+    };
+  }
+  if (cmd === "http") {
+    const { summary } = buildHttpCompare(v4, v6);
+    return {
+      kind: "http",
+      medianV4: summary.median_v4,
+      medianV6: summary.median_v6,
+      medianDelta: summary.median_delta,
+    };
+  }
+  return null;
 }
 
 
@@ -571,6 +640,9 @@ export default function App() {
   const [httpPort, setHttpPort] = useState(""); // empty => default (80/443)
   const [httpResolver, setHttpResolver] = useState(""); // empty => default resolver on probe
 
+  const [history, setHistory] = useState(() => loadHistory());
+  const [historyCompareA, setHistoryCompareA] = useState("");
+  const [historyCompareB, setHistoryCompareB] = useState("");
 
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
@@ -586,6 +658,19 @@ export default function App() {
   const turnstileWidgetIdRef = useRef(null);
   const turnstilePendingRef = useRef(null);
   const [showTurnstile, setShowTurnstile] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch {}
+  }, [history]);
+
+  useEffect(() => {
+    if (!history.length) return;
+    setHistoryCompareA((prev) => prev || history[0]?.id || "");
+    setHistoryCompareB((prev) => prev || history[1]?.id || "");
+  }, [history]);
 
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
@@ -838,6 +923,38 @@ export default function App() {
 
       setV4(r4);
       setV6(r6);
+
+      const summary = normalizeHistorySummary(cmd, r4, r6);
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ts: Date.now(),
+        cmd,
+        target: t,
+        effectiveTarget,
+        fromRaw: from,
+        from: fromWithTag || "world",
+        gpTag,
+        limit: probes,
+        requireV6Capable: canEnforceV6,
+        options: {
+          packets,
+          trProto,
+          trPort,
+          dnsQuery,
+          dnsProto,
+          dnsPort,
+          dnsResolver,
+          dnsTrace,
+          httpMethod,
+          httpProto: httpEffectiveProto,
+          httpPath: httpEffectivePath,
+          httpQuery: httpEffectiveQuery,
+          httpPort: httpEffectivePort,
+          httpResolver,
+        },
+        summary,
+      };
+      setHistory((prev) => [entry, ...prev].slice(0, HISTORY_LIMIT));
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -866,6 +983,31 @@ export default function App() {
     setRunning(false);
   }
 
+  function applyHistoryEntry(entry) {
+    if (!entry) return;
+    setCmd(entry.cmd);
+    setTarget(entry.target || "");
+    setFrom(entry.fromRaw || entry.from || "");
+    setGpTag(entry.gpTag || "any");
+    setLimit(entry.limit || 3);
+    setRequireV6Capable(Boolean(entry.requireV6Capable));
+    const opts = entry.options || {};
+    setPackets(opts.packets ?? 3);
+    setTrProto(opts.trProto ?? "ICMP");
+    setTrPort(opts.trPort ?? 80);
+    setDnsQuery(opts.dnsQuery ?? "A");
+    setDnsProto(opts.dnsProto ?? "UDP");
+    setDnsPort(opts.dnsPort ?? 53);
+    setDnsResolver(opts.dnsResolver ?? "");
+    setDnsTrace(Boolean(opts.dnsTrace));
+    setHttpMethod(opts.httpMethod ?? "GET");
+    setHttpProto(opts.httpProto ?? "HTTPS");
+    setHttpPath(opts.httpPath ?? "/");
+    setHttpQuery(opts.httpQuery ?? "");
+    setHttpPort(opts.httpPort ?? "");
+    setHttpResolver(opts.httpResolver ?? "");
+  }
+
 
   const showPingTable = cmd === "ping" && v4 && v6;
   const showTracerouteTable = cmd === "traceroute" && v4 && v6;
@@ -873,6 +1015,30 @@ export default function App() {
 
   const showDnsTable = cmd === "dns" && v4 && v6;
   const showHttpTable = cmd === "http" && v4 && v6;
+
+  const historyEntryA = useMemo(() => history.find((h) => h.id === historyCompareA) || null, [history, historyCompareA]);
+  const historyEntryB = useMemo(() => history.find((h) => h.id === historyCompareB) || null, [history, historyCompareB]);
+  const historyCompareMismatch =
+    historyEntryA && historyEntryB && historyEntryA.cmd !== historyEntryB.cmd ? "Select two runs with the same command to compare." : "";
+  const historyCompareMetrics = useMemo(() => {
+    if (!historyEntryA || !historyEntryB) return [];
+    if (!historyEntryA.summary || !historyEntryB.summary) return [];
+    if (historyEntryA.summary.kind !== historyEntryB.summary.kind) return [];
+    const a = historyEntryA.summary;
+    const b = historyEntryB.summary;
+    const metrics = [
+      { label: "median v4", format: ms, a: a.medianV4, b: b.medianV4 },
+      { label: "median v6", format: ms, a: a.medianV6, b: b.medianV6 },
+      { label: "median Δ v6-v4", format: ms, a: a.medianDelta, b: b.medianDelta },
+    ];
+    if (a.kind === "ping" || a.kind === "mtr") {
+      metrics.push(
+        { label: "median loss v4", format: pct, a: a.medianLossV4, b: b.medianLossV4 },
+        { label: "median loss v6", format: pct, a: a.medianLossV6, b: b.medianLossV6 }
+      );
+    }
+    return metrics;
+  }, [historyEntryA, historyEntryB]);
 
   const pingCompare = useMemo(() => {
     if (!showPingTable) return null;
@@ -934,8 +1100,6 @@ export default function App() {
   </span>
 </div>
 <div style={{ marginTop: 8, marginBottom: 16, fontSize: 14, opacity: 0.85 }}>
-  Experimental beta: features may change and results may vary{" "}
- {" · "}
   <a href="mailto:antonio@prado.it?subject=Ping6%20feedback" style={{ textDecoration: "underline" }}>
     Feedback welcome
   </a>
@@ -1245,6 +1409,123 @@ export default function App() {
           </select>
           </Tip>
         )}
+      </div>
+
+      <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 700 }}>History (local)</div>
+          <button
+            onClick={() => {
+              setHistory([]);
+              setHistoryCompareA("");
+              setHistoryCompareB("");
+            }}
+            disabled={!history.length}
+            style={{ padding: "6px 10px" }}
+          >
+            Clear
+          </button>
+        </div>
+        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Stored in your browser only.</div>
+
+        {history.length ? (
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {history.map((entry) => (
+              <div key={entry.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <strong>{new Date(entry.ts).toLocaleString()}</strong>
+                  <span style={{ opacity: 0.8 }}>
+                    {entry.cmd} · {entry.target}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+                  From {entry.from} · probes {entry.limit} · net {entry.gpTag}
+                </div>
+                {entry.summary && (
+                  <div style={{ fontSize: 13, marginTop: 4 }}>
+                    median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ {ms(entry.summary.medianDelta)}
+                    {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                      <>
+                        {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: 8 }}>
+                  <button onClick={() => applyHistoryEntry(entry)} style={{ padding: "6px 10px" }}>
+                    Load settings
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.8 }}>
+            No history yet. Run a measurement to start tracking your last runs.
+          </div>
+        )}
+
+        <div style={{ borderTop: "1px dashed #e5e7eb", marginTop: 12, paddingTop: 12 }}>
+          <div style={{ fontWeight: 700 }}>Compare runs</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run A
+              <select value={historyCompareA} onChange={(e) => setHistoryCompareA(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run B
+              <select value={historyCompareB} onChange={(e) => setHistoryCompareB(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {historyCompareMismatch && (
+            <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{historyCompareMismatch}</div>
+          )}
+
+          {!historyCompareMismatch && historyEntryA && historyEntryB && historyCompareMetrics.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>Δ = Run B - Run A</div>
+              <div style={{ overflowX: "auto", marginTop: 6 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Metric</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run A</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run B</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyCompareMetrics.map((metric) => (
+                      <tr key={metric.label}>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.label}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.a)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.b)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>
+                          {metric.format(Number.isFinite(metric.a) && Number.isFinite(metric.b) ? metric.b - metric.a : null)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {err && (
