@@ -2249,7 +2249,8 @@ export default function App() {
       {!reportMode && (
       <>
       {/* Globalping controls */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           {t("command")} <Help text={t("helpCommand")} />{" "}
           <select
@@ -2546,7 +2547,9 @@ export default function App() {
           </>
         )}
 
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <input
               type="checkbox"
@@ -2575,6 +2578,7 @@ export default function App() {
           <span style={{ fontSize: 12, opacity: 0.7 }}>{t("tipMultiTarget")}</span>
         </div>
 
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         {multiTargetMode ? (
           <Tip text={t("tipMultiTargetInput")}>
             <textarea
@@ -2589,7 +2593,7 @@ export default function App() {
                     : t("placeholderMultiDefault")
               }
               rows={3}
-              style={{ padding: 8, minWidth: 260, resize: "vertical" }}
+              style={{ padding: 8, minWidth: 260, flex: "1 1 340px", resize: "vertical" }}
               disabled={running}
             />
           </Tip>
@@ -2602,7 +2606,7 @@ export default function App() {
               placeholder={
                 cmd === "dns" ? t("placeholderTargetDns") : cmd === "http" ? t("placeholderTargetHttp") : t("placeholderTargetDefault")
               }
-              style={{ padding: 8, minWidth: 260 }}
+              style={{ padding: 8, minWidth: 260, flex: "1 1 340px" }}
               disabled={running}
             />
           </Tip>
@@ -2627,6 +2631,9 @@ export default function App() {
             {t("cancel")}
           </button>
         </Tip>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <Tip text={t("tipAdvanced")}>
           <button onClick={() => setAdvanced((s) => !s)} disabled={running} style={{ padding: "8px 12px" }}>
             {advanced ? t("basic") : t("advanced")}
@@ -2668,6 +2675,7 @@ export default function App() {
             {t("reportMode")}
           </button>
         </Tip>
+        </div>
         {shareUrl && (
           <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }} role="status" aria-live="polite">
             {t("linkReady")} <a href={shareUrl}>{shareUrl}</a>
@@ -2693,6 +2701,9 @@ export default function App() {
         </div>
 
       </div>
+
+      <div aria-hidden="true" style={{ height: 1, background: "rgba(17,24,39,.12)", width: "100%", margin: "6px 0 12px" }} />
+
 
       {/* quick presets: macro regions + sub-regions */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
