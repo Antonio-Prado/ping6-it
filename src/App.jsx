@@ -210,9 +210,7 @@ function applyUrlSettings(params, setters) {
     setHttpResolver,
     setProbeAsn,
     setProbeIsp,
-    setProbeLat,
-    setProbeLon,
-    setProbeRadius,
+    setDeltaThreshold,
   } = setters;
 
   const cmd = params.get("cmd");
@@ -263,12 +261,8 @@ function applyUrlSettings(params, setters) {
   if (asn) setProbeAsn(asn);
   const isp = params.get("isp");
   if (isp) setProbeIsp(isp);
-  const lat = params.get("lat");
-  if (lat) setProbeLat(lat);
-  const lon = params.get("lon");
-  if (lon) setProbeLon(lon);
-  const radius = params.get("radius");
-  if (radius) setProbeRadius(radius);
+  const threshold = params.get("delta");
+  if (threshold) setDeltaThreshold(threshold);
 }
 
 
@@ -806,9 +800,7 @@ export default function App() {
 
   const [probeAsn, setProbeAsn] = useState("");
   const [probeIsp, setProbeIsp] = useState("");
-  const [probeLat, setProbeLat] = useState("");
-  const [probeLon, setProbeLon] = useState("");
-  const [probeRadius, setProbeRadius] = useState("");
+  const [deltaThreshold, setDeltaThreshold] = useState("");
 
   const [history, setHistory] = useState(() => loadHistory());
   const [historyCompareA, setHistoryCompareA] = useState("");
@@ -871,9 +863,7 @@ export default function App() {
       setHttpResolver,
       setProbeAsn,
       setProbeIsp,
-      setProbeLat,
-      setProbeLon,
-      setProbeRadius,
+      setDeltaThreshold,
     });
 
     const reportRaw = params.get("report");
@@ -1180,9 +1170,7 @@ export default function App() {
         filters: {
           asn: probeAsn,
           isp: probeIsp,
-          lat: probeLat,
-          lon: probeLon,
-          radius: probeRadius,
+          deltaThreshold,
         },
         summary,
       };
@@ -1241,9 +1229,7 @@ export default function App() {
     const filters = entry.filters || {};
     setProbeAsn(filters.asn ?? "");
     setProbeIsp(filters.isp ?? "");
-    setProbeLat(filters.lat ?? "");
-    setProbeLon(filters.lon ?? "");
-    setProbeRadius(filters.radius ?? "");
+    setDeltaThreshold(filters.deltaThreshold ?? "");
   }
 
   function buildShareParams() {
@@ -1256,9 +1242,7 @@ export default function App() {
     params.set("v6only", requireV6Capable ? "1" : "0");
     if (probeAsn) params.set("asn", probeAsn);
     if (probeIsp) params.set("isp", probeIsp);
-    if (probeLat) params.set("lat", probeLat);
-    if (probeLon) params.set("lon", probeLon);
-    if (probeRadius) params.set("radius", probeRadius);
+    if (deltaThreshold) params.set("delta", deltaThreshold);
 
     if (cmd === "ping" || cmd === "mtr") params.set("packets", String(packets || 3));
     if (cmd === "traceroute" || cmd === "mtr") {
@@ -1300,9 +1284,7 @@ export default function App() {
       filters: {
         asn: probeAsn,
         isp: probeIsp,
-        lat: probeLat,
-        lon: probeLon,
-        radius: probeRadius,
+        deltaThreshold,
       },
       summary,
     };
@@ -1322,9 +1304,7 @@ export default function App() {
       filters: {
         asn: probeAsn,
         isp: probeIsp,
-        lat: probeLat,
-        lon: probeLon,
-        radius: probeRadius,
+        deltaThreshold,
       },
       summary,
     };
@@ -1594,6 +1574,34 @@ export default function App() {
     return buildMtrCompare(v4, v6);
   }, [showMtrTable, v4, v6]);
 
+  const deltaThresholdValue = Number(deltaThreshold);
+  const thresholdEnabled = Number.isFinite(deltaThresholdValue) && deltaThresholdValue > 0;
+  const deltaAlert = useMemo(() => {
+    if (!thresholdEnabled) return null;
+    let delta = null;
+    let label = "";
+    if (pingCompare?.summary) {
+      delta = pingCompare.summary.median_delta_avg;
+      label = "Ping median Δ";
+    } else if (trCompare?.summary) {
+      delta = trCompare.summary.median_delta;
+      label = "Traceroute median Δ";
+    } else if (mtrCompare?.summary) {
+      delta = mtrCompare.summary.median_delta_avg;
+      label = "MTR median Δ";
+    } else if (dnsCompare?.summary) {
+      delta = dnsCompare.summary.median_delta;
+      label = "DNS median Δ";
+    } else if (httpCompare?.summary) {
+      delta = httpCompare.summary.median_delta;
+      label = "HTTP median Δ";
+    }
+    if (!Number.isFinite(delta)) return null;
+    const absDelta = Math.abs(delta);
+    if (absDelta < deltaThresholdValue) return null;
+    return { label, delta };
+  }, [thresholdEnabled, deltaThresholdValue, pingCompare, trCompare, mtrCompare, dnsCompare, httpCompare]);
+
   const preStyle = {
     padding: 12,
     background: "#111827",
@@ -1722,35 +1730,13 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Lat <Help text="Latitude for geo filter (not supported by Globalping yet)." />{" "}
+              Δ alert (ms) <Help text="Show a warning when the median v6-v4 delta exceeds this threshold." />{" "}
               <input
-                value={probeLat}
-                onChange={(e) => setProbeLat(e.target.value)}
+                value={deltaThreshold}
+                onChange={(e) => setDeltaThreshold(e.target.value)}
                 disabled={running}
-                placeholder="e.g. 45.46"
+                placeholder="e.g. 25"
                 style={{ padding: 6, width: 100 }}
-              />
-            </label>
-
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Lon <Help text="Longitude for geo filter (not supported by Globalping yet)." />{" "}
-              <input
-                value={probeLon}
-                onChange={(e) => setProbeLon(e.target.value)}
-                disabled={running}
-                placeholder="e.g. 9.19"
-                style={{ padding: 6, width: 100 }}
-              />
-            </label>
-
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Radius km <Help text="Radius in km around the lat/lon (not supported by Globalping yet)." />{" "}
-              <input
-                value={probeRadius}
-                onChange={(e) => setProbeRadius(e.target.value)}
-                disabled={running}
-                placeholder="e.g. 50"
-                style={{ padding: 6, width: 90 }}
               />
             </label>
           </>
@@ -2064,12 +2050,12 @@ export default function App() {
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
                   From {entry.from} · probes {entry.limit} · net {entry.gpTag}
-                  {entry.filters && (entry.filters.asn || entry.filters.isp || entry.filters.lat || entry.filters.lon || entry.filters.radius) && (
+                  {entry.filters && (entry.filters.asn || entry.filters.isp || entry.filters.deltaThreshold) && (
                     <>
                       {" · "}filters {entry.filters.asn ? `ASN ${entry.filters.asn}` : ""}
                       {entry.filters.isp ? `${entry.filters.asn ? ", " : ""}ISP ${entry.filters.isp}` : ""}
-                      {entry.filters.lat && entry.filters.lon
-                        ? `${entry.filters.asn || entry.filters.isp ? ", " : ""}geo ${entry.filters.lat}, ${entry.filters.lon}${entry.filters.radius ? ` ±${entry.filters.radius}km` : ""}`
+                      {entry.filters.deltaThreshold
+                        ? `${entry.filters.asn || entry.filters.isp ? ", " : ""}Δ>${entry.filters.deltaThreshold}ms`
                         : ""}
                     </>
                   )}
@@ -2175,12 +2161,12 @@ export default function App() {
           </div>
           <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
             From {reportData.from} · probes {reportData.limit} · net {reportData.net} · IPv6-only {reportData.v6only ? "yes" : "no"}
-            {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.lat || reportData.filters.lon || reportData.filters.radius) && (
+            {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.deltaThreshold) && (
               <>
                 {" · "}filters {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
                 {reportData.filters.isp ? `${reportData.filters.asn ? ", " : ""}ISP ${reportData.filters.isp}` : ""}
-                {reportData.filters.lat && reportData.filters.lon
-                  ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}geo ${reportData.filters.lat}, ${reportData.filters.lon}${reportData.filters.radius ? ` ±${reportData.filters.radius}km` : ""}`
+                {reportData.filters.deltaThreshold
+                  ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}Δ>${reportData.filters.deltaThreshold}ms`
                   : ""}
               </>
             )}
@@ -2196,6 +2182,12 @@ export default function App() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {deltaAlert && (
+        <div style={{ background: "#fef3c7", color: "#111", border: "1px solid #f59e0b", padding: 12, marginBottom: 12 }}>
+          {deltaAlert.label} is {ms(deltaAlert.delta)} (threshold {deltaThresholdValue} ms).
         </div>
       )}
 
