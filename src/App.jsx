@@ -1678,8 +1678,10 @@ export default function App() {
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
       <style>{TOOLTIP_CSS}</style>
 <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
-  <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
-  <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  <a href="https://ping6.it" style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", textDecoration: "none", color: "inherit" }}>
+    <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
+    <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  </a>
  {" · "}
   <span style={{ fontSize: 14, opacity: 0.85 }}>
     IPv4 vs IPv6, side by side
