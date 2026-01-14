@@ -813,6 +813,7 @@ export default function App() {
     if (s?.magic) setFrom(s.magic);
   }
 
+
   // ping/mtr
   const [packets, setPackets] = useState(3);
 
@@ -1145,7 +1146,7 @@ export default function App() {
       const location = { magic: fromWithTag || "world" };
       const parsedAsn = Number(probeAsn);
       if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
-      if (probeIsp.trim()) location.isp = probeIsp.trim();
+      // NOTE: Globalping API does not support filtering by ISP name.
 
       const base = {
         type: cmd,
@@ -1676,8 +1677,10 @@ export default function App() {
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
       <style>{TOOLTIP_CSS}</style>
 <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
-  <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
-  <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  <a href="https://ping6.it" style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", textDecoration: "none", color: "inherit" }}>
+    <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
+    <span style={{ fontSize: 18, fontWeight: 700 }}>ping6.it</span>
+  </a>
  {" · "}
   <span style={{ fontSize: 14, opacity: 0.85 }}>
     IPv4 vs IPv6, side by side
@@ -1779,7 +1782,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              ISP <Help text="Filter probes by ISP name (substring match, e.g. Comcast)." />{" "}
+              ISP <Help text="ISP name filtering is not supported by the Globalping API: use an ASN when possible." />{" "}
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
@@ -2136,13 +2139,13 @@ export default function App() {
               disabled={running}
               style={{ padding: 6 }}
             >
-            <option value="">All {macroPreset.label}</option>
-            {subPresets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+              <option value="">All {macroPreset.label}</option>
+              {subPresets.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
           </Tip>
         )}
       </div>
