@@ -68,32 +68,6 @@ export const ADVANCED_PRESET_GROUPS = [
           showAdvanced: true,
         },
       },
-      {
-        id: "isp-cloudflare",
-        label: "Cloudflare (ASN)",
-        description: "Filter probes by Cloudflare ASN (all networks).",
-        settings: {
-          from: "world",
-          asn: 13335,
-          limit: 5,
-          requireV6Capable: false,
-          clearFilters: true,
-          showAdvanced: true,
-        },
-      },
-      {
-        id: "isp-google",
-        label: "Google (ASN)",
-        description: "Filter probes by Google ASN (all networks).",
-        settings: {
-          from: "world",
-          asn: 15169,
-          limit: 5,
-          requireV6Capable: false,
-          clearFilters: true,
-          showAdvanced: true,
-        },
-      },
     ],
   },
 ];
