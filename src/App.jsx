@@ -1041,6 +1041,11 @@ export default function App() {
       return;
     }
 
+    if (probeLat.trim() || probeLon.trim() || probeRadius.trim()) {
+      setErr("Geo filters (lat/lon/radius) are not supported by the Globalping API yet. Please clear them.");
+      return;
+    }
+
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
