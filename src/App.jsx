@@ -315,6 +315,44 @@ function probeKey(x) {
   return p.id ?? `${p.city ?? ""}|${p.country ?? ""}|${p.asn ?? ""}|${p.network ?? ""}`;
 }
 
+function probeCoords(p) {
+  if (!p) return null;
+  const lat = Number(p.latitude ?? p.lat);
+  const lon = Number(p.longitude ?? p.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+function buildStaticMapUrl(points) {
+  if (!points.length) return "";
+  const avg = points.reduce(
+    (acc, p) => ({ lat: acc.lat + p.lat, lon: acc.lon + p.lon }),
+    { lat: 0, lon: 0 }
+  );
+  const centerLat = avg.lat / points.length;
+  const centerLon = avg.lon / points.length;
+  const markers = points
+    .map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)},red-pushpin`)
+    .join("|");
+  const params = new URLSearchParams({
+    center: `${centerLat.toFixed(5)},${centerLon.toFixed(5)}`,
+    zoom: "2",
+    size: "800x320",
+    markers,
+  });
+  return `https://staticmap.openstreetmap.de/staticmap.php?${params.toString()}`;
+}
+
+function formatHopPath(result, maxHops = 12) {
+  const hops = Array.isArray(result?.result?.hops) ? result.result.hops : [];
+  const labels = hops
+    .map((h) => h?.resolvedHostname || h?.resolvedAddress || h?.address || h?.hostname || "")
+    .filter(Boolean);
+  if (!labels.length) return "-";
+  const sliced = labels.slice(0, maxHops);
+  return labels.length > maxHops ? `${sliced.join(" → ")} → …` : sliced.join(" → ");
+}
+
 function pickPingStats(x) {
   const r = x?.result;
   if (r?.status && r.status !== "finished") return { avgMs: null, lossPct: null };
@@ -1482,6 +1520,58 @@ export default function App() {
     return metrics;
   }, [historyEntryA, historyEntryB]);
 
+  const probePoints = useMemo(() => {
+    const results = v4?.results || v6?.results || [];
+    const seen = new Set();
+    const points = [];
+    results.forEach((x) => {
+      const p = x?.probe || {};
+      const coords = probeCoords(p);
+      if (!coords) return;
+      const key = `${coords.lat},${coords.lon}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      points.push({ ...coords, label: `${p.city || ""} ${p.country || ""}`.trim() });
+    });
+    return points;
+  }, [v4, v6]);
+
+  const probeMapUrl = useMemo(() => buildStaticMapUrl(probePoints.slice(0, 40)), [probePoints]);
+
+  const traceroutePaths = useMemo(() => {
+    if (!showTracerouteTable || !v4 || !v6) return [];
+    const a = v4?.results ?? [];
+    const b = v6?.results ?? [];
+    const bMap = new Map(b.map((x) => [probeKey(x), x]));
+    return a.map((x, i) => {
+      const y = bMap.get(probeKey(x)) ?? b[i];
+      const p = x?.probe || y?.probe || {};
+      return {
+        key: probeKey(x) || String(i),
+        probe: p,
+        v4path: formatHopPath(x),
+        v6path: formatHopPath(y),
+      };
+    });
+  }, [showTracerouteTable, v4, v6]);
+
+  const mtrPaths = useMemo(() => {
+    if (!showMtrTable || !v4 || !v6) return [];
+    const a = v4?.results ?? [];
+    const b = v6?.results ?? [];
+    const bMap = new Map(b.map((x) => [probeKey(x), x]));
+    return a.map((x, i) => {
+      const y = bMap.get(probeKey(x)) ?? b[i];
+      const p = x?.probe || y?.probe || {};
+      return {
+        key: probeKey(x) || String(i),
+        probe: p,
+        v4path: formatHopPath(x),
+        v6path: formatHopPath(y),
+      };
+    });
+  }, [showMtrTable, v4, v6]);
+
   const pingCompare = useMemo(() => {
     if (!showPingTable) return null;
     return buildPingCompare(v4, v6);
@@ -2113,6 +2203,34 @@ export default function App() {
         </div>
       )}
 
+      {probePoints.length > 0 && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Probe map</div>
+          {probeMapUrl ? (
+            <img
+              src={probeMapUrl}
+              alt="Map of probe locations"
+              style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid #e5e7eb" }}
+            />
+          ) : (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>No coordinates available for these probes.</div>
+          )}
+          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
+            {probePoints.slice(0, 30).map((p, idx) => (
+              <a
+                key={`${p.lat}-${p.lon}-${idx}`}
+                href={`https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=6/${p.lat}/${p.lon}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ textDecoration: "underline" }}
+              >
+                {p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       {err && (
         <div style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
           {err}
@@ -2165,7 +2283,7 @@ export default function App() {
         </div>
       )}
 
-{/* Traceroute compare table */}
+      {/* Traceroute compare table */}
       {showTracerouteTable && trCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
@@ -2223,6 +2341,37 @@ export default function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {showTracerouteTable && traceroutePaths.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>Traceroute paths (v4 vs v6)</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  {["#", "probe", "v4 path", "v6 path"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {traceroutePaths.map((row, idx) => (
+                  <tr key={row.key}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
+                    </td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -2291,6 +2440,37 @@ export default function App() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {showMtrTable && mtrPaths.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>MTR paths (v4 vs v6)</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  {["#", "probe", "v4 path", "v6 path"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {mtrPaths.map((row, idx) => (
+                  <tr key={row.key}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
+                    </td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
