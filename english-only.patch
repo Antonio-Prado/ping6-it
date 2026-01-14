@@ -1,0 +1,304 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index db22b6c..c356f09 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -89,13 +89,8 @@ const TOOLTIP_CSS = `
+ @media (prefers-reduced-motion: reduce){.tt-bubble{transition:none}}
+ `;
+ 
+-const LANG_STORAGE_KEY = "ping6_lang_v1";
+-const SUPPORTED_LANGS = ["en", "it"];
+ const COPY = {
+   en: {
+-    langLabel: "Language",
+-    langEnglish: "English",
+-    langItalian: "Italiano",
+     tagline: "IPv4 vs IPv6, side by side",
+     feedback: "Feedback welcome",
+     docs: "Docs",
+@@ -292,220 +287,9 @@ const COPY = {
+     errorHumanVerification: "Human verification failed. Please retry.",
+     errorHumanVerificationTimeout: "Human verification timed out. Please retry.",
+     errorRequestFailed: ({ status }) => `Request failed (${status})`,
+-    inputLanguage: "Select language",
+-  },
+-  it: {
+-    langLabel: "Lingua",
+-    langEnglish: "English",
+-    langItalian: "Italiano",
+-    tagline: "IPv4 vs IPv6, affiancati",
+-    feedback: "Feedback benvenuto",
+-    docs: "Docs",
+-    source: "Sorgente",
+-    command: "Comando",
+-    net: "Rete",
+-    from: "Da",
+-    probes: "Sonde",
+-    asn: "ASN",
+-    isp: "ISP",
+-    deltaAlert: "Allerta Δ (ms)",
+-    ipv6Only: "Solo sonde compatibili IPv6",
+-    packets: "Pacchetti",
+-    packetsHop: "Pacchetti/salto",
+-    proto: "Proto",
+-    port: "Porta",
+-    query: "Query",
+-    resolver: "Resolver",
+-    trace: "trace",
+-    method: "Metodo",
+-    path: "Percorso",
+-    queryString: "Query",
+-    target: "Target",
+-    multiTarget: "Multi-target",
+-    run: "Avvia",
+-    cancel: "Annulla",
+-    advanced: "Avanzate",
+-    basic: "Base",
+-    raw: "Raw",
+-    hideRaw: "Nascondi raw",
+-    exportJson: "Esporta JSON",
+-    exportCsv: "Esporta CSV",
+-    shareLink: "Link condivisibile",
+-    reportMode: "Modalità report",
+-    linkReady: "Link pronto:",
+-    multiTargetResults: "Risultati multi-target",
+-    viewResults: "Vedi risultati",
+-    viewing: "In visione",
+-    waitingFirstResult: "In attesa del primo risultato…",
+-    runningWithTarget: ({ current, total, target }) => `In esecuzione ${current}/${total} · ${target}`,
+-    progress: ({ done, total }) => `Progresso: ${done}/${total} completati.`,
+-    completedTargets: ({ done }) => `Target completati: ${done}.`,
+-    clickTargetToLoad: "Seleziona un target per caricare i risultati completi sotto.",
+-    historyTitle: "Storico (locale)",
+-    clear: "Svuota",
+-    historyNote: "Salvato solo nel tuo browser.",
+-    filters: "filtri",
+-    loadSettings: "Carica impostazioni",
+-    noHistory: "Nessuno storico. Avvia una misurazione per salvare gli ultimi risultati.",
+-    compareRuns: "Confronta misurazioni",
+-    runA: "Run A",
+-    runB: "Run B",
+-    selectRun: "Seleziona…",
+-    compareMismatch: "Seleziona due esecuzioni con lo stesso comando per confrontarle.",
+-    deltaRunLabel: "Δ = Run B - Run A",
+-    metric: "Metrica",
+-    report: "Report",
+-    exitReportMode: "Esci dalla modalità report",
+-    generated: "Generato",
+-    ipv6OnlyYes: "sì",
+-    ipv6OnlyNo: "no",
+-    ipv6OnlyShort: "Solo IPv6",
+-    deltaAlertNotice: ({ label, delta, threshold }) => `${label} è ${ms(delta)} (soglia ${threshold} ms).`,
+-    probeMap: "Mappa sonde",
+-    probeMapAlt: "Mappa delle posizioni delle sonde",
+-    noProbeCoordinates: "Nessuna coordinata disponibile per queste sonde.",
+-    pingTitle: "Ping RTT (v4 vs v6)",
+-    tracerouteTitle: "Traceroute verso la destinazione (v4 vs v6)",
+-    traceroutePathsTitle: "Percorsi traceroute (v4 vs v6)",
+-    mtrTitle: "MTR verso la destinazione (v4 vs v6)",
+-    mtrPathsTitle: "Percorsi MTR (v4 vs v6)",
+-    dnsTitle: "Tempi DNS (v4 vs v6)",
+-    httpTitle: "Tempi HTTP (v4 vs v6)",
+-    rawV4: "RAW v4",
+-    rawV6: "RAW v6",
+-    footer: "Se funziona, ringrazia",
+-    footerTail: "Se no, colpa di IPv4!",
+-    summaryBoth: "entrambi",
+-    all: "Tutte",
+-    summaryMedianV4: "mediana v4",
+-    summaryMedianV6: "mediana v6",
+-    summaryMedianAvgV4: "mediana avg v4",
+-    summaryMedianAvgV6: "mediana avg v6",
+-    summaryMedianLossV4: "perdita mediana v4",
+-    summaryMedianLossV6: "perdita mediana v6",
+-    summaryMedianDelta: "Δ",
+-    deltaPingLabel: "Mediana Δ ping",
+-    deltaTracerouteLabel: "Mediana Δ traceroute",
+-    deltaMtrLabel: "Mediana Δ MTR",
+-    deltaDnsLabel: "Mediana Δ DNS",
+-    deltaHttpLabel: "Mediana Δ HTTP",
+-    summaryP95V4: "p95 v4",
+-    summaryP95V6: "p95 v6",
+-    summaryP95AvgV4: "p95 avg v4",
+-    summaryP95AvgV6: "p95 avg v6",
+-    summaryDeltaLoss: "Δ",
+-    location: "posizione",
+-    network: "rete",
+-    v4Avg: "avg v4",
+-    v4Loss: "perdita v4",
+-    v6Avg: "avg v6",
+-    v6Loss: "perdita v6",
+-    deltaV6V4: "Δ v6-v4",
+-    winner: "vincitore",
+-    v4Reached: "v4 raggiunta",
+-    v4Hops: "salti v4",
+-    v4Dst: "dest v4",
+-    v6Reached: "v6 raggiunta",
+-    v6Hops: "salti v6",
+-    v6Dst: "dest v6",
+-    probe: "sonda",
+-    v4Path: "percorso v4",
+-    v6Path: "percorso v6",
+-    v4Total: "totale v4",
+-    v6Total: "totale v6",
+-    ratio: "rapporto",
+-    v4Status: "stato v4",
+-    v6Status: "stato v6",
+-    v4LossShort: "perdita v4",
+-    v6LossShort: "perdita v6",
+-    deltaAvg: "Δ avg",
+-    deltaLoss: "Δ perdita",
+-    yes: "sì",
+-    no: "no",
+-    helpCommand: "Tipo di misurazione. IPv4 e IPv6 sono eseguiti sulle stesse sonde per un confronto corretto.",
+-    helpNet: "Filtro profilo rete sonde: any, eyeball (accesso/consumer) o datacenter.",
+-    helpFrom: "Dove vengono selezionate le sonde (stringa località Globalping). I preset qui sotto possono riempirla.",
+-    helpProbes: "Numero di sonde (1–10). Più sonde migliorano la copertura ma richiedono più tempo.",
+-    helpAsn: "Filtra le sonde per ASN (es. 12345).",
+-    helpIsp: "Il filtro ISP non è supportato da Globalping: usa un ASN quando possibile.",
+-    helpDeltaAlert: "Mostra un avviso quando la mediana v6-v4 supera questa soglia.",
+-    helpIpv6Only:
+-      "Seleziona solo sonde compatibili IPv6, poi esegui IPv4 sulle stesse sonde per un confronto corretto. Richiede un hostname.",
+-    helpPackets: "Pacchetti per sonda (ping) o per salto (mtr).",
+-    helpProto: "Protocollo usato da traceroute/mtr (ICMP, UDP, TCP).",
+-    helpPort: "Porta destinazione (usata per traceroute TCP o mtr UDP/TCP).",
+-    helpDnsQuery: "Tipo record DNS da interrogare (A, AAAA, MX, TXT, ecc.).",
+-    helpDnsProto: "Protocollo DNS: UDP (default) o TCP.",
+-    helpDnsPort: "Porta del server DNS (default: 53).",
+-    helpDnsResolver:
+-      "Sovrascrive il resolver usato dalle sonde (IP o hostname). Lascia vuoto per usare il resolver predefinito.",
+-    helpDnsTrace: "Abilita DNS trace (se supportato) per vedere percorso e tempi di risoluzione.",
+-    helpHttpMethod: "Metodo HTTP usato per la richiesta.",
+-    helpHttpProto: "Protocollo HTTP: HTTP, HTTPS o HTTP2 (HTTPS implica TLS).",
+-    helpHttpPath: "Percorso richiesta (es. / o /index.html). Se incolli un URL completo in Target, il percorso può essere estratto.",
+-    helpHttpQuery:
+-      "Query string senza '?', es. a=1&b=2. Se incolli un URL completo in Target, la query può essere estratta.",
+-    helpHttpPort: "Sovrascrivi la porta di destinazione. Lascia vuoto per i default (80/443).",
+-    helpHttpResolver:
+-      "Sovrascrive il resolver usato dalle sonde per l'HTTP target (IP o hostname). Lascia vuoto per usare il resolver predefinito.",
+-    helpMultiTarget:
+-      "Clicca “Multi-target” per abilitare l'input multi-linea. Esegui la stessa misurazione su più target (uno per riga). I risultati sono sotto; clicca uno per caricarlo.",
+-    tipMultiTarget: "Suggerimento: clicca “Multi-target” per mostrare l'input multi-linea.",
+-    tipMultiTargetInput:
+-      "Inserisci un target per riga. Per HTTP puoi incollare URL completi; per DNS scegli il record qui sopra.",
+-    tipTargetInput:
+-      "Hostname target. Per HTTP puoi incollare un URL completo; per DNS scegli il record qui sopra. Usare un hostname è consigliato per un confronto corretto.",
+-    tipRun: "Avvia le misurazioni (IPv4 e IPv6 affiancati).",
+-    tipCancel: "Interrompi l'esecuzione corrente.",
+-    tipAdvanced: "Mostra/nasconde le opzioni avanzate per il comando selezionato.",
+-    tipRaw: "Mostra o nasconde l'output raw Globalping per ogni sonda (IPv4 e IPv6).",
+-    tipExportJson: "Esporta i risultati correnti come JSON (valori raw).",
+-    tipExportCsv: "Esporta i risultati correnti come CSV (righe per sonda).",
+-    tipShareLink: "Crea un link condivisibile con le impostazioni correnti.",
+-    tipReportMode: "Genera un link report dall'ultima esecuzione completata.",
+-    tipPreset: ({ label }) => `Preset: ${label}. Aggiorna il campo "Da".`,
+-    tipSubPreset: "Raffina le sonde nella macro-regione selezionata.",
+-    placeholderProbes: "1-10",
+-    placeholderAsn: "es. 12345",
+-    placeholderIsp: "Nome ISP",
+-    placeholderDeltaAlert: "es. 25",
+-    placeholderPort: "1-65535",
+-    placeholderResolver: "(vuoto = default)",
+-    placeholderOptional: "(opzionale)",
+-    placeholderMultiDns: "nome (es. example.com)\nname2.example",
+-    placeholderMultiHttp: "https://example.com/\nhttps://example.net/",
+-    placeholderMultiDefault: "hostname (es. example.com)\nexample.net",
+-    placeholderTargetDns: "nome (es. example.com)",
+-    placeholderTargetHttp: "URL o hostname (es. https://example.com/)",
+-    placeholderTargetDefault: "hostname (es. example.com)",
+-    statusPreparing: "Preparazione misurazione...",
+-    statusWaitingVerification: ({ stepLabel }) => `In attesa della verifica umana${stepLabel}...`,
+-    errorTargetRequired: "Inserisci un hostname o URL di destinazione.",
+-    errorHttpTarget: "Per HTTP, inserisci un URL o hostname valido.",
+-    errorHostnameRequired: "Per il confronto IPv4/IPv6, inserisci un hostname (non un IP).",
+-    errorMultiTargetRequired: "Inserisci uno o più target (uno per riga).",
+-    errorTurnstileMissing:
+-      'Turnstile non configurato. Imposta "VITE_TURNSTILE_SITEKEY" nelle variabili Cloudflare Pages.',
+-    errorTurnstileUnavailable: "Script Turnstile caricato ma API non disponibile.",
+-    errorTurnstileMissingContainer: "Contenitore Turnstile mancante.",
+-    errorTurnstileTokenExpired: "Token Turnstile scaduto. Premi Avvia di nuovo.",
+-    errorTurnstileTimeout: "Turnstile in timeout. Premi Avvia di nuovo.",
+-    errorCancelled: "Annullato.",
+-    errorHumanVerification: "Verifica umana fallita. Riprova.",
+-    errorHumanVerificationTimeout: "Verifica umana scaduta. Riprova.",
+-    errorRequestFailed: ({ status }) => `Richiesta fallita (${status})`,
+-    inputLanguage: "Seleziona lingua",
+   },
+ };
+ 
+-function loadLang() {
+-  if (typeof window === "undefined") return "en";
+-  const stored = window.localStorage.getItem(LANG_STORAGE_KEY);
+-  if (stored && SUPPORTED_LANGS.includes(stored)) return stored;
+-  const browserLang = window.navigator?.language?.toLowerCase() || "";
+-  if (browserLang.startsWith("it")) return "it";
+-  return "en";
+-}
+ 
+ const HISTORY_STORAGE_KEY = "ping6_history_v1";
+ const HISTORY_LIMIT = 10;
+@@ -1203,7 +987,6 @@ function buildMtrCompare(v4, v6) {
+ 
+ export default function App() {
+   // Globalping UI
+-  const [lang, setLang] = useState(() => loadLang());
+   const [target, setTarget] = useState("example.com");
+   const [multiTargetMode, setMultiTargetMode] = useState(false);
+   const [multiTargetInput, setMultiTargetInput] = useState("");
+@@ -1219,27 +1002,18 @@ export default function App() {
+   // Geo presets UI (macro + sub-regions)
+   const [macroId, setMacroId] = useState("eu");
+   const [subId, setSubId] = useState("eu-w");
++  const t = useCallback((key, vars = {}) => {
++    const entry = COPY.en[key];
++    if (typeof entry === "function") return entry(vars);
++    return entry ?? key;
++  }, []);
+ 
+-  const t = useCallback(
+-    (key, vars = {}) => {
+-      const entry = COPY[lang]?.[key] ?? COPY.en[key];
+-      if (typeof entry === "function") return entry(vars);
+-      return entry ?? key;
+-    },
+-    [lang]
+-  );
+-
+-  const dateLocale = lang === "it" ? "it-IT" : "en-US";
+-
++  const dateLocale = "en-US";
+   useEffect(() => {
+     if (typeof document !== "undefined") {
+-      document.documentElement.lang = lang;
++      document.documentElement.lang = "en";
+     }
+-    if (typeof window === "undefined") return;
+-    try {
+-      window.localStorage.setItem(LANG_STORAGE_KEY, lang);
+-    } catch {}
+-  }, [lang]);
++  }, []);
+ 
+   const macroPreset = useMemo(
+     () => GEO_PRESETS.find((p) => p.id === macroId) ?? GEO_PRESETS[0],
+@@ -2229,20 +2003,6 @@ export default function App() {
+   <a href={ccUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline" }}>
+     CC BY-NC
+   </a>
+-  <span aria-hidden="true">·</span>
+-  <label className="sr-only" htmlFor="language-select">
+-    {t("langLabel")}
+-  </label>
+-  <select
+-    id="language-select"
+-    value={lang}
+-    aria-label={t("inputLanguage")}
+-    onChange={(e) => setLang(e.target.value)}
+-    style={{ padding: 4 }}
+-  >
+-    <option value="en">{t("langEnglish")}</option>
+-    <option value="it">{t("langItalian")}</option>
+-  </select>
+ </div>
+ 
+ 
