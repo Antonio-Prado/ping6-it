@@ -6,21 +6,31 @@
 
 # ping6.it
 
-**ping6.it** is a small web UI that runs the same network measurement over **IPv4 and IPv6** from multiple vantage points (Globalping probes) and presents a side-by-side comparison.
+**ping6.it** is a small web UI that runs the same network measurement over **IPv4 and IPv6** on the **same set of probes** (Globalping) and presents a side-by-side comparison.
 
-It is intended for **quick, reproducible v4 vs v6 troubleshooting**: reachability differences, latency deltas, loss anomalies, and routing/path asymmetries.
+It is intended for **quick, reproducible v4 vs v6 troubleshooting**: reachability gaps, latency deltas, loss anomalies, and routing/path asymmetries.
 
-> Experimental beta: features may change and results may vary.
+> Experimental beta: defaults, UI layout, and comparison logic may evolve.
 
 Live: https://ping6.it  
 Feedback: mailto:antonio@prado.it
 
----
+## Main features
+
+- **Fair v4/v6 comparison** by pinning both runs to the **same probes**
+- **Commands:** `ping`, `traceroute`, `mtr`, `dns`, `http`
+- **Geo selection** (macro region + sub-regions) and **Net** filter (eyeball/datacenter)
+- Probe filters: **limit**, **ASN**, **ISP**, **IPv6-capable probes only**
+- **Multi-target** mode (run the same command over multiple targets)
+- **Exports:** JSON (raw bundle) and CSV (per-probe rows)
+- **Share link** (settings) and **Report mode** (shareable link embedding results)
+- **History (local)** stored in your browser (and run-to-run comparison)
 
 ## Table of contents
 
 - [What ping6.it is for](#what-ping6it-is-for)
-- [How the v4/v6 comparison works](#how-the-v4v6-comparison-works)
+- [How the v4v6 comparison works](#how-the-v4v6-comparison-works)
+  - [Target validation](#target-validation)
 - [Common controls](#common-controls)
 - [Commands](#commands)
   - [ping](#ping)
@@ -29,46 +39,56 @@ Feedback: mailto:antonio@prado.it
   - [dns](#dns)
   - [http](#http)
 - [Interpreting results](#interpreting-results)
+- [API endpoints](#api-endpoints)
 - [Limitations and notes](#limitations-and-notes)
-
----
+- [Development](#development)
+- [Contributing](#contributing)
+- [Security](#security)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
 
 ## What ping6.it is for
 
 Typical use cases:
 
-- Validate whether a hostname behaves differently on **IPv4 vs IPv6** (reachability, latency, loss).
-- Compare **performance** from multiple networks/locations (per-probe deltas + simple summaries).
-- Spot **routing/path differences** that only show up on one IP version (traceroute/MTR).
-- Debug **DNS timing** and **HTTP total time** differences over v4/v6.
+- “IPv6 is slow” → quantify deltas and see where they appear
+- “IPv6 fails but IPv4 works” → validate reachability by region / eyeball vs DC
+- Resolver differences (DNS) and handshake/transfer timing differences (HTTP)
+- Path asymmetry hints (traceroute / mtr), including loss patterns
 
-ping6.it does not run probes itself. Measurements are executed by Globalping probes; ping6.it orchestrates runs and renders results.
-
----
+The goal is not to be a full monitoring suite, but a **fast comparison UI** with reproducible runs.
 
 ## How the v4/v6 comparison works
 
-For each run, ping6.it creates **two measurements** and reuses the **same probes** across IPv4 and IPv6 to keep the comparison fair.
+ping6.it creates **two Globalping measurements** (v4 and v6) and ensures they run on the **same probe set**:
+
+- First run selects probes normally (based on `From`, `Net`, limit, ASN/ISP filters, etc.)
+- Second run is executed on the **exact same probes** by referencing the first measurement id as `locations`
 
 The ordering depends on the **IPv6-capable probes only** toggle:
 
-- **Enabled (default):**  
-  1) run **IPv6 first** (`ipVersion: 6`) to select only probes that can actually execute IPv6  
-  2) run **IPv4** (`ipVersion: 4`) on the **exact same probes** by referencing the IPv6 measurement id
+- **Enabled (default):**
+  1) run **IPv6 first** (`ipVersion: 6`) to select probes that can actually execute IPv6  
+  2) run **IPv4** (`ipVersion: 4`) on the **same probes** by referencing the IPv6 measurement id
 
-- **Disabled:**  
+- **Disabled:**
   1) run **IPv4 first** (`ipVersion: 4`) to select probes  
   2) run **IPv6** (`ipVersion: 6`) on the **same probes** by referencing the IPv4 measurement id
 
 ### Target validation
 
 - For `ping`, `traceroute`, `mtr`, and `http`, the target must be a **hostname** (IP literals are rejected) to keep the comparison meaningful.
-- For `dns`, the input may also be an **IP literal** (e.g., for `PTR`).
-- When the target is an IP literal, **IPv6-capable probes only** is disabled and probe selection falls back to the IPv4-first flow.
-
----
+- For `dns`, the input may also be an **IP literal** (e.g. `PTR`).
+- When the target is an IP literal, **IPv6-capable probes only** is disabled (probe selection cannot be safely pinned via hostname rules).
 
 ## Common controls
+
+### Language
+The UI supports English and Italian. Language is stored locally in your browser.
+
+### Target / Multi-target
+- **Single target:** one hostname (or IP literal for DNS).
+- **Multi-target:** paste multiple targets (one per line). ping6.it will run them sequentially and show a consolidated summary.
 
 ### Command
 Selects the measurement type:
@@ -81,56 +101,36 @@ Selects the measurement type:
 
 Changing the command resets the UI to **Basic** mode.
 
+### From (geo)
+Selects probe location(s). The UI provides macro regions and sub-regions; the resulting string is sent to Globalping.
+
 ### Net
 Filters probes by network type:
-
-- `any` (no filter)
-- `eyeball`
+- `any`
+- `eyeball` (access/consumer)
 - `datacenter`
 
-This filter is applied by appending `+eyeball` or `+datacenter` to the location expression (and it supports comma-separated locations).
-
-### From
-Defines where probes should be selected from. The value is passed to Globalping as a location “magic” expression.
-
-Examples (Globalping-style “magic” strings):
-- `Western Europe`
-- `Africa`
-- `New York`
-- `IT` (country codes may work depending on Globalping’s parsing)
-- `Europe+eyeball` (Net filter is normally appended automatically via the `Net` selector)
-
-#### Location presets (macro + sub-regions)
-The UI includes presets that simply fill the **From** field:
-
-- Macro buttons: `Europe`, `North America`, `South America`, `Africa`, `Asia`, `World`
-- A sub-region dropdown appears for macros that have sub-regions.
-
-**Oceania is offered under Asia** (UI grouping choice) as:
-- Oceania · Australia & NZ
-- Oceania · Melanesia
-- Oceania · Micronesia
-- Oceania · Polynesia
-
-The **From** field remains fully editable and is authoritative.
+Internally this is implemented via Globalping location tags.
 
 ### Probes
-Number of probes requested for the **first** measurement (and thus also used for the second one, since probes are reused).
+Number of probes to select (clamped to a small max to reduce abuse and keep results readable).
 
-- Allowed range: **1–10**
-- Values are clamped to this range.
+### ASN / ISP
+Optional filters that constrain probe selection:
+- **ASN:** numeric ASN (e.g. `12345`)
+- **ISP:** free-text label (as supported by Globalping metadata)
 
 ### IPv6-capable probes only
-When enabled, ping6.it selects probes by running the **IPv6** measurement first, ensuring every probe can actually execute IPv6, and then runs **IPv4** on the **same probes**.
+Ensures probe selection is driven by IPv6 reachability, then reuses the same probes for IPv4.
 
-When disabled, ping6.it selects probes with **IPv4** first and then runs **IPv6** on the same probes (default Globalping behavior).
+### Δ alert (ms)
+Optional threshold used in summaries/reports to highlight large v6-v4 deltas.
 
-Notes:
-- Requires a **hostname** target (the toggle is disabled for IP literals).
-- May reduce probe availability in sparse regions and/or when using the `eyeball` / `datacenter` Net filter.
 ### Run / Cancel
-- **Run** starts the IPv4/IPv6 measurement pair on the same probes.
+- **Run** starts the v4/v6 measurement pair on the same probes.
 - **Cancel** aborts the in-progress run.
+
+> Note: a Cloudflare Turnstile challenge is used to reduce automated abuse. Verification is performed server-side.
 
 ### Basic / Advanced
 Toggles the visibility of additional options. Advanced options depend on the selected command.
@@ -138,180 +138,130 @@ Toggles the visibility of additional options. Advanced options depend on the sel
 ### Raw
 Enabled once both v4 and v6 results are present. Shows the **raw command output** returned by each probe for both IP versions.
 
----
+### Export JSON / Export CSV
+Available once results are present:
+- **JSON**: raw bundle (settings + per-probe raw results)
+- **CSV**: per-probe rows (useful for quick offline inspection)
+
+### Share link / Report mode
+- **Share link**: encodes current settings into URL query parameters.
+- **Report mode**: encodes both settings and results into the URL (shareable, read-only view).
 
 ## Commands
 
 ### ping
 
-**Purpose:** measure RTT and loss.
+Basic:
+- target (hostname)
+- probes, from/net filters
 
-**Target:** hostname only (no IP literal).
+Advanced:
+- **Packets:** packets per probe
 
-**Options (Advanced):**
-- **Packets**: number of ICMP echo requests per probe  
-  Range: **1–10** (clamped)
-
-**Output table:**
-- `v4 avg`, `v6 avg`: average RTT (ms) when meaningful  
-  (avg is not considered if loss is 100% or timings are missing)
-- `v4 loss`, `v6 loss`: loss as reported by the probe
-- `Δ v6-v4`: delta in average RTT (ms)
-- `winner`: `v4`, `v6`, `tie`, or `-` when not comparable
-
----
+Output:
+- per-probe timing and loss
+- summary medians for v4/v6 and Δ
 
 ### traceroute
 
-**Purpose:** trace the path to destination and compare reachability and destination timing.
+Basic:
+- target (hostname)
 
-**Target:** hostname only (no IP literal).
+Advanced:
+- **Proto:** `icmp` / `udp` / `tcp` (depending on Globalping support)
+- **Port:** for UDP/TCP modes when applicable
 
-**Options:**
-- **Proto**: `ICMP`, `UDP`, `TCP`
-- **Port (Advanced)**: shown only when `Proto = TCP`  
-  Range: **1–65535** (clamped)
-
-**Output:**
-A comparison table plus a small summary (median/p95 when available).
-
-Per probe:
-- `v4 reached`, `v6 reached`: whether the destination hop was identified
-- `v4 hops`, `v6 hops`: hop count
-- `v4 dst`, `v6 dst`: destination RTT estimate (ms)
-- `Δ v6-v4`
-- `winner`:
-  - if only one version reaches the destination, that version wins
-  - if both reach, lower destination time wins (or `tie`)
-
----
+Output:
+- reached/last hop, hop count, and timing summaries (v4 vs v6)
 
 ### mtr
 
-**Purpose:** MTR-style measurement comparing hop count, loss and average latency to destination.
+Basic:
+- target (hostname)
 
-**Target:** hostname only (no IP literal).
+Advanced:
+- **Packets/hop:** packets per hop
 
-**Options:**
-- **Proto**: `ICMP`, `UDP`, `TCP`
-- **Packets/hop (Advanced)**: number of packets used per hop  
-  Range: **1–16** (clamped)
-- **Port (Advanced)**: shown when `Proto != ICMP`  
-  Range: **1–65535** (clamped)
-
-**Output:**
-A comparison table plus a small summary (medians for avg/loss and deltas when available).
-
-Per probe:
-- reachability (`v4 reached`, `v6 reached`)
-- hop count (`v4 hops`, `v6 hops`)
-- loss (`v4 loss`, `v6 loss`)
-- average RTT (`v4 avg`, `v6 avg`)
-- `Δ avg`, `Δ loss`
-- `winner`:
-  - reachability first
-  - then (when loss differs meaningfully) lower loss wins
-  - otherwise lower avg RTT wins (or `tie`)
-
----
+Output:
+- loss and latency summaries (v4 vs v6), reached flags
 
 ### dns
 
-**Purpose:** DNS query timing comparison over v4/v6.
+Basic:
+- target (hostname or IP literal for PTR)
 
-**Target:**
-- hostname (typical), or
-- IP literal (useful with `PTR`)
+Advanced:
+- **Query:** record type / query string (as supported by Globalping DNS measurement)
+- **Proto / Port**
+- **Resolver:** optional; empty means probe default resolver
+- **trace:** if enabled, include trace information when supported
 
-**Options:**
-- **Query (Basic):** `A`, `AAAA`, `CNAME`, `MX`, `NS`, `TXT`, `SOA`, `PTR`, `SRV`, `CAA`, `ANY`
-- **Proto (Advanced):** `UDP` or `TCP`
-- **Port (Advanced):** 1–65535 (clamped), default 53
-- **Resolver (Advanced):** optional; empty means probe default resolver
-- **trace (Advanced):** enable trace mode (as supported by the underlying measurement)
-
-**Output:**
-A comparison table plus a summary (median/p95 where available).
-
-Per probe:
-- `v4 total`, `v6 total`: total DNS time (ms) when finished and error-free
-- `Δ v6-v4`
-- `ratio`: `v6_total / v4_total`
-- `winner`: lower total time wins (or `tie` / `-`)
-
----
+Output:
+- totals (ms) and ratio v6/v4 where applicable
 
 ### http
 
-**Purpose:** HTTP timing comparison over v4/v6 (total time + status code).
+Basic:
+- target (hostname, or a full URL which is split into host/path/query)
 
-**Target:**
-- hostname, or
-- a full URL (recommended if you need path/query/port)
-
-If a URL is provided, ping6.it extracts:
-- `host` as the measurement target
-- `path` and `query` as request parameters
-- `protocol` (HTTP/HTTPS) and `port` if present
-
-If the URL scheme is `http://` or `https://`, the UI aligns the selected Proto accordingly.
-
-**Options:**
-- **Method (Basic):** `GET`, `HEAD`, `OPTIONS`
-- **Proto (Basic):** `HTTP`, `HTTPS`, `HTTP2`
-
-**Advanced:**
-- **Path:** request path (default `/`)
-- **Query:** query string (optional; leading `?` is not required)
-- **Port:** optional; empty uses protocol default (80/443).  
-  If set: 1–65535 (clamped)
+Advanced:
+- **Method**
+- **Proto:** `http` / `https`
+- **Path / Query / Port**
 - **Resolver:** optional; empty means probe default resolver
 
-**Output:**
-A comparison table plus a summary (median/p95 where available).
-
-Per probe:
-- `v4 status`, `v6 status`: HTTP status code (when available)
-- `v4 total`, `v6 total`: total request time (ms) when finished and error-free
-- `Δ v6-v4`
-- `ratio`: `v6_total / v4_total`
-- `winner`: lower total time wins (or `tie` / `-`)
-
----
+Output:
+- status codes and total times (ms), ratio v6/v4 where applicable
 
 ## Interpreting results
 
 ### winner
-- `v4` / `v6`: the IP version with the better metric (lower time, or better reachability/loss depending on command)
-- `tie`: both are equal (within the reported value granularity)
-- `-`: not comparable (missing timings, errors, unfinished measurements, or 100% loss where averages would be misleading)
+A compact label indicating which stack “wins” for a given probe/summary:
+
+- `v4` / `v6`: lower time (or better outcome) for that probe
+- `tie`: values equal within reported granularity
+- `v4 only` / `v6 only`: only one stack returned a usable result
 
 ### Δ v6-v4
-- Positive delta means **IPv6 is slower** (higher time).
-- Negative delta means **IPv6 is faster**.
+- Positive: v6 slower than v4
+- Negative: v6 faster than v4
 
 ### ratio (DNS/HTTP)
-- `ratio > 1` means IPv6 is slower.
-- `ratio < 1` means IPv6 is faster.
+For commands where ratio is shown:
+- `ratio = v6_total / v4_total`
+- `> 1`: v6 slower
+- `< 1`: v6 faster
 
----
+## API endpoints
+
+This repo includes Cloudflare Pages Functions used by the UI:
+
+- `POST /api/measurements-pair`  
+  Creates a v4/v6 measurement pair and validates **Cloudflare Turnstile** server-side.
+
+- `POST /api/globalping/measurements`  
+  Proxy/sanitizer for Globalping create requests (defensive validation/clamping).
+
+- `GET /api/globalping/measurements/:id`  
+  Proxy for reading measurement results.
+
+There is also an NLNOG Looking Glass proxy endpoint under `functions/api/nlnog/` (currently not exposed in the UI).
 
 ## Limitations and notes
 
-- **Probe distribution is uneven.** Some regions (and especially some Net filters) may have limited probe availability.
-- **Caching and transient conditions matter.** DNS caching, CDN steering, routing changes, and congestion can change outcomes between runs.
-- **Not all failures are symmetric.** A measurement may succeed on v4 and fail on v6 (or vice versa); this is often the primary signal.
-- **The From field is passed through.** If a location string is too specific or invalid, Globalping may return “no probes found” or validation errors.
+- **Globalping availability varies.** Some geos and filters can return “no probes found”.
+- **IPv6-capable probes only** can reduce availability significantly in sparse regions.
+- **The From field is passed through.** If a location string is invalid, Globalping may return validation errors.
+- **Turnstile is enforced for pair creation.** Automated usage without a valid challenge token will fail.
 - **Experimental beta.** Defaults, UI layout, and comparison logic may evolve.
 
----
+## Development
 
-### Acknowledgements
+Requirements:
+- Node.js (the CI uses Node 20)
 
-ping6.it is built on top of the Globalping measurement platform (API + distributed probes).
-
-## License
-
-- Source code: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see LICENSE.
-- Documentation and website content: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) — see LICENSE-DOCS.
+Install and run:
+```bash
+npm ci
+npm run dev
 
