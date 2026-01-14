@@ -1804,6 +1804,123 @@ export default function App() {
         </div>
       )}
 
+      <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 700 }}>History (local)</div>
+          <button
+            onClick={() => {
+              setHistory([]);
+              setHistoryCompareA("");
+              setHistoryCompareB("");
+            }}
+            disabled={!history.length}
+            style={{ padding: "6px 10px" }}
+          >
+            Clear
+          </button>
+        </div>
+        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Stored in your browser only.</div>
+
+        {history.length ? (
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {history.map((entry) => (
+              <div key={entry.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <strong>{new Date(entry.ts).toLocaleString()}</strong>
+                  <span style={{ opacity: 0.8 }}>
+                    {entry.cmd} · {entry.target}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+                  From {entry.from} · probes {entry.limit} · net {entry.gpTag}
+                </div>
+                {entry.summary && (
+                  <div style={{ fontSize: 13, marginTop: 4 }}>
+                    median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ {ms(entry.summary.medianDelta)}
+                    {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                      <>
+                        {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: 8 }}>
+                  <button onClick={() => applyHistoryEntry(entry)} style={{ padding: "6px 10px" }}>
+                    Load settings
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.8 }}>
+            No history yet. Run a measurement to start tracking your last runs.
+          </div>
+        )}
+
+        <div style={{ borderTop: "1px dashed #e5e7eb", marginTop: 12, paddingTop: 12 }}>
+          <div style={{ fontWeight: 700 }}>Compare runs</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run A
+              <select value={historyCompareA} onChange={(e) => setHistoryCompareA(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Run B
+              <select value={historyCompareB} onChange={(e) => setHistoryCompareB(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
+                <option value="">Select…</option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {historyCompareMismatch && (
+            <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{historyCompareMismatch}</div>
+          )}
+
+          {!historyCompareMismatch && historyEntryA && historyEntryB && historyCompareMetrics.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 13, opacity: 0.8 }}>Δ = Run B - Run A</div>
+              <div style={{ overflowX: "auto", marginTop: 6 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Metric</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run A</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run B</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyCompareMetrics.map((metric) => (
+                      <tr key={metric.label}>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.label}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.a)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.b)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>
+                          {metric.format(Number.isFinite(metric.a) && Number.isFinite(metric.b) ? metric.b - metric.a : null)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {err && (
         <div style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
           {err}
