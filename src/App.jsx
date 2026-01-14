@@ -208,6 +208,11 @@ function applyUrlSettings(params, setters) {
     setHttpQuery,
     setHttpPort,
     setHttpResolver,
+    setProbeAsn,
+    setProbeIsp,
+    setProbeLat,
+    setProbeLon,
+    setProbeRadius,
   } = setters;
 
   const cmd = params.get("cmd");
@@ -253,6 +258,17 @@ function applyUrlSettings(params, setters) {
   if (httpPort) setHttpPort(httpPort);
   const httpResolver = params.get("httpresolver");
   if (httpResolver) setHttpResolver(httpResolver);
+
+  const asn = params.get("asn");
+  if (asn) setProbeAsn(asn);
+  const isp = params.get("isp");
+  if (isp) setProbeIsp(isp);
+  const lat = params.get("lat");
+  if (lat) setProbeLat(lat);
+  const lon = params.get("lon");
+  if (lon) setProbeLon(lon);
+  const radius = params.get("radius");
+  if (radius) setProbeRadius(radius);
 }
 
 
@@ -750,6 +766,12 @@ export default function App() {
   const [httpPort, setHttpPort] = useState(""); // empty => default (80/443)
   const [httpResolver, setHttpResolver] = useState(""); // empty => default resolver on probe
 
+  const [probeAsn, setProbeAsn] = useState("");
+  const [probeIsp, setProbeIsp] = useState("");
+  const [probeLat, setProbeLat] = useState("");
+  const [probeLon, setProbeLon] = useState("");
+  const [probeRadius, setProbeRadius] = useState("");
+
   const [history, setHistory] = useState(() => loadHistory());
   const [historyCompareA, setHistoryCompareA] = useState("");
   const [historyCompareB, setHistoryCompareB] = useState("");
@@ -809,6 +831,11 @@ export default function App() {
       setHttpQuery,
       setHttpPort,
       setHttpResolver,
+      setProbeAsn,
+      setProbeIsp,
+      setProbeLat,
+      setProbeLon,
+      setProbeRadius,
     });
 
     const reportRaw = params.get("report");
@@ -1048,10 +1075,24 @@ export default function App() {
         }
       }
 
+      const location = { magic: fromWithTag || "world" };
+      const parsedAsn = Number(probeAsn);
+      if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
+      if (probeIsp.trim()) location.isp = probeIsp.trim();
+
+      const lat = Number(probeLat);
+      const lon = Number(probeLon);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        location.latitude = lat;
+        location.longitude = lon;
+      }
+      const radius = Number(probeRadius);
+      if (Number.isFinite(radius) && radius > 0) location.radius = radius;
+
       const base = {
         type: cmd,
         target: effectiveTarget,
-        locations: [{ magic: fromWithTag || "world" }],
+        locations: [location],
         limit: probes,
         inProgressUpdates: true,
       };
@@ -1101,6 +1142,13 @@ export default function App() {
           httpQuery: httpEffectiveQuery,
           httpPort: httpEffectivePort,
           httpResolver,
+        },
+        filters: {
+          asn: probeAsn,
+          isp: probeIsp,
+          lat: probeLat,
+          lon: probeLon,
+          radius: probeRadius,
         },
         summary,
       };
@@ -1156,6 +1204,12 @@ export default function App() {
     setHttpQuery(opts.httpQuery ?? "");
     setHttpPort(opts.httpPort ?? "");
     setHttpResolver(opts.httpResolver ?? "");
+    const filters = entry.filters || {};
+    setProbeAsn(filters.asn ?? "");
+    setProbeIsp(filters.isp ?? "");
+    setProbeLat(filters.lat ?? "");
+    setProbeLon(filters.lon ?? "");
+    setProbeRadius(filters.radius ?? "");
   }
 
   function buildShareParams() {
@@ -1166,6 +1220,11 @@ export default function App() {
     params.set("net", gpTag || "any");
     params.set("limit", String(limit || 3));
     params.set("v6only", requireV6Capable ? "1" : "0");
+    if (probeAsn) params.set("asn", probeAsn);
+    if (probeIsp) params.set("isp", probeIsp);
+    if (probeLat) params.set("lat", probeLat);
+    if (probeLon) params.set("lon", probeLon);
+    if (probeRadius) params.set("radius", probeRadius);
 
     if (cmd === "ping" || cmd === "mtr") params.set("packets", String(packets || 3));
     if (cmd === "traceroute" || cmd === "mtr") {
@@ -1204,6 +1263,13 @@ export default function App() {
       net: gpTag,
       limit,
       v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        lat: probeLat,
+        lon: probeLon,
+        radius: probeRadius,
+      },
       summary,
     };
   }
@@ -1219,6 +1285,13 @@ export default function App() {
       net: gpTag,
       limit,
       v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        lat: probeLat,
+        lon: probeLon,
+        radius: probeRadius,
+      },
       summary,
     };
     if (cmd === "ping" && pingCompare) return { ...base, rows: pingCompare.rows };
@@ -1538,6 +1611,65 @@ export default function App() {
           <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={running} style={{ padding: 6, width: 70 }} />
         </label>
 
+        {advanced && (
+          <>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              ASN <Help text="Filter probes by ASN (e.g. 12345)." />{" "}
+              <input
+                value={probeAsn}
+                onChange={(e) => setProbeAsn(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 12345"
+                style={{ padding: 6, width: 110 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              ISP <Help text="Filter probes by ISP name (substring match, e.g. Comcast)." />{" "}
+              <input
+                value={probeIsp}
+                onChange={(e) => setProbeIsp(e.target.value)}
+                disabled={running}
+                placeholder="ISP name"
+                style={{ padding: 6, width: 140 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Lat <Help text="Latitude for geo filter. Requires both lat and lon." />{" "}
+              <input
+                value={probeLat}
+                onChange={(e) => setProbeLat(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 45.46"
+                style={{ padding: 6, width: 100 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Lon <Help text="Longitude for geo filter. Requires both lat and lon." />{" "}
+              <input
+                value={probeLon}
+                onChange={(e) => setProbeLon(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 9.19"
+                style={{ padding: 6, width: 100 }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Radius km <Help text="Radius in km around the lat/lon (optional)." />{" "}
+              <input
+                value={probeRadius}
+                onChange={(e) => setProbeRadius(e.target.value)}
+                disabled={running}
+                placeholder="e.g. 50"
+                style={{ padding: 6, width: 90 }}
+              />
+            </label>
+          </>
+        )}
+
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <input
@@ -1846,6 +1978,15 @@ export default function App() {
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
                   From {entry.from} · probes {entry.limit} · net {entry.gpTag}
+                  {entry.filters && (entry.filters.asn || entry.filters.isp || entry.filters.lat || entry.filters.lon || entry.filters.radius) && (
+                    <>
+                      {" · "}filters {entry.filters.asn ? `ASN ${entry.filters.asn}` : ""}
+                      {entry.filters.isp ? `${entry.filters.asn ? ", " : ""}ISP ${entry.filters.isp}` : ""}
+                      {entry.filters.lat && entry.filters.lon
+                        ? `${entry.filters.asn || entry.filters.isp ? ", " : ""}geo ${entry.filters.lat}, ${entry.filters.lon}${entry.filters.radius ? ` ±${entry.filters.radius}km` : ""}`
+                        : ""}
+                    </>
+                  )}
                 </div>
                 {entry.summary && (
                   <div style={{ fontSize: 13, marginTop: 4 }}>
@@ -1948,6 +2089,15 @@ export default function App() {
           </div>
           <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
             From {reportData.from} · probes {reportData.limit} · net {reportData.net} · IPv6-only {reportData.v6only ? "yes" : "no"}
+            {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.lat || reportData.filters.lon || reportData.filters.radius) && (
+              <>
+                {" · "}filters {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
+                {reportData.filters.isp ? `${reportData.filters.asn ? ", " : ""}ISP ${reportData.filters.isp}` : ""}
+                {reportData.filters.lat && reportData.filters.lon
+                  ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}geo ${reportData.filters.lat}, ${reportData.filters.lon}${reportData.filters.radius ? ` ±${reportData.filters.radius}km` : ""}`
+                  : ""}
+              </>
+            )}
           </div>
           {reportData.summary && (
             <div style={{ fontSize: 13, marginTop: 6 }}>
