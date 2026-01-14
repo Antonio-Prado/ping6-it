@@ -1051,6 +1051,11 @@ export default function App() {
       return;
     }
 
+    if (probeLat.trim() || probeLon.trim() || probeRadius.trim()) {
+      setErr("Geo filters (lat/lon/radius) are not supported by the Globalping API yet. Please clear them.");
+      return;
+    }
+
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -1117,15 +1122,6 @@ export default function App() {
       const parsedAsn = Number(probeAsn);
       if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
       if (probeIsp.trim()) location.isp = probeIsp.trim();
-
-      const lat = Number(probeLat);
-      const lon = Number(probeLon);
-      if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        location.latitude = lat;
-        location.longitude = lon;
-      }
-      const radius = Number(probeRadius);
-      if (Number.isFinite(radius) && radius > 0) location.radius = radius;
 
       const base = {
         type: cmd,
@@ -1726,7 +1722,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Lat <Help text="Latitude for geo filter. Requires both lat and lon." />{" "}
+              Lat <Help text="Latitude for geo filter (not supported by Globalping yet)." />{" "}
               <input
                 value={probeLat}
                 onChange={(e) => setProbeLat(e.target.value)}
@@ -1737,7 +1733,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Lon <Help text="Longitude for geo filter. Requires both lat and lon." />{" "}
+              Lon <Help text="Longitude for geo filter (not supported by Globalping yet)." />{" "}
               <input
                 value={probeLon}
                 onChange={(e) => setProbeLon(e.target.value)}
@@ -1748,7 +1744,7 @@ export default function App() {
             </label>
 
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Radius km <Help text="Radius in km around the lat/lon (optional)." />{" "}
+              Radius km <Help text="Radius in km around the lat/lon (not supported by Globalping yet)." />{" "}
               <input
                 value={probeRadius}
                 onChange={(e) => setProbeRadius(e.target.value)}
