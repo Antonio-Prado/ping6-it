@@ -155,6 +155,28 @@ function encodeReportPayload(payload) {
   }
 }
 
+function csvEscape(value) {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (s.includes('"') || s.includes(",") || s.includes("\n")) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function downloadFile(filename, content, type) {
+  if (typeof window === "undefined") return;
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function decodeReportPayload(raw) {
   if (typeof window === "undefined") return null;
   try {
@@ -1186,6 +1208,133 @@ export default function App() {
     };
   }
 
+  function buildExportBundle() {
+    if (!v4 || !v6) return null;
+    const summary = normalizeHistorySummary(cmd, v4, v6);
+    const base = {
+      generatedAt: new Date().toISOString(),
+      cmd,
+      target,
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      summary,
+    };
+    if (cmd === "ping" && pingCompare) return { ...base, rows: pingCompare.rows };
+    if (cmd === "traceroute" && trCompare) return { ...base, rows: trCompare.rows };
+    if (cmd === "mtr" && mtrCompare) return { ...base, rows: mtrCompare.rows };
+    if (cmd === "dns" && dnsCompare) return { ...base, rows: dnsCompare.rows };
+    if (cmd === "http" && httpCompare) return { ...base, rows: httpCompare.rows };
+    return { ...base, rows: [] };
+  }
+
+  function downloadJson() {
+    const bundle = buildExportBundle();
+    if (!bundle) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-${cmd}-${stamp}.json`;
+    downloadFile(filename, JSON.stringify(bundle, null, 2), "application/json");
+  }
+
+  function downloadCsv() {
+    const bundle = buildExportBundle();
+    if (!bundle) return;
+    const rows = bundle.rows || [];
+    let headers = [];
+    let lines = [];
+
+    if (cmd === "ping") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_avg_ms", "v4_loss_pct", "v6_avg_ms", "v6_loss_pct", "delta_avg_ms", "delta_loss_pct", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4avg,
+        r.v4loss,
+        r.v6avg,
+        r.v6loss,
+        r.deltaAvg,
+        r.deltaLoss,
+        r.winner,
+      ]);
+    } else if (cmd === "traceroute") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_dst_ms", "v6_reached", "v6_hops", "v6_dst_ms", "delta_ms", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4reached ? "yes" : "no",
+        r.v4hops,
+        r.v4dst,
+        r.v6reached ? "yes" : "no",
+        r.v6hops,
+        r.v6dst,
+        r.delta,
+        r.winner,
+      ]);
+    } else if (cmd === "mtr") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_loss_pct", "v4_avg_ms", "v6_reached", "v6_hops", "v6_loss_pct", "v6_avg_ms", "delta_avg_ms", "delta_loss_pct", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4reached ? "yes" : "no",
+        r.v4hops,
+        r.v4loss,
+        r.v4avg,
+        r.v6reached ? "yes" : "no",
+        r.v6hops,
+        r.v6loss,
+        r.v6avg,
+        r.deltaAvg,
+        r.deltaLoss,
+        r.winner,
+      ]);
+    } else if (cmd === "dns") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4ms,
+        r.v6ms,
+        r.delta,
+        r.ratio,
+        r.winner,
+      ]);
+    } else if (cmd === "http") {
+      headers = ["idx", "city", "country", "asn", "network", "v4_status", "v6_status", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner"];
+      lines = rows.map((r) => [
+        r.idx + 1,
+        r.probe?.city ?? "",
+        r.probe?.country ?? "",
+        r.probe?.asn ?? "",
+        r.probe?.network ?? "",
+        r.v4sc,
+        r.v6sc,
+        r.v4ms,
+        r.v6ms,
+        r.delta,
+        r.ratio,
+        r.winner,
+      ]);
+    }
+
+    const csv = [headers.map(csvEscape).join(","), ...lines.map((row) => row.map(csvEscape).join(","))].join("\n");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-${cmd}-${stamp}.csv`;
+    downloadFile(filename, csv, "text/csv");
+  }
+
   function updateShareLink() {
     if (typeof window === "undefined") return;
     const params = buildShareParams();
@@ -1585,6 +1734,16 @@ export default function App() {
             {showRaw ? "Hide raw" : "Raw"}
           </button>
         </Tip>
+        <Tip text="Export the current results as JSON (raw values).">
+          <button onClick={downloadJson} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+            Export JSON
+          </button>
+        </Tip>
+        <Tip text="Export the current results as CSV (per-probe rows).">
+          <button onClick={downloadCsv} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+            Export CSV
+          </button>
+        </Tip>
         <Tip text="Create a shareable link with the current settings.">
           <button
             onClick={() => {
@@ -1803,123 +1962,6 @@ export default function App() {
           )}
         </div>
       )}
-
-      <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 700 }}>History (local)</div>
-          <button
-            onClick={() => {
-              setHistory([]);
-              setHistoryCompareA("");
-              setHistoryCompareB("");
-            }}
-            disabled={!history.length}
-            style={{ padding: "6px 10px" }}
-          >
-            Clear
-          </button>
-        </div>
-        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>Stored in your browser only.</div>
-
-        {history.length ? (
-          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            {history.map((entry) => (
-              <div key={entry.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <strong>{new Date(entry.ts).toLocaleString()}</strong>
-                  <span style={{ opacity: 0.8 }}>
-                    {entry.cmd} · {entry.target}
-                  </span>
-                </div>
-                <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
-                  From {entry.from} · probes {entry.limit} · net {entry.gpTag}
-                </div>
-                {entry.summary && (
-                  <div style={{ fontSize: 13, marginTop: 4 }}>
-                    median v4 {ms(entry.summary.medianV4)} · median v6 {ms(entry.summary.medianV6)} · Δ {ms(entry.summary.medianDelta)}
-                    {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
-                      <>
-                        {" · "}loss v4 {pct(entry.summary.medianLossV4)} · loss v6 {pct(entry.summary.medianLossV6)}
-                      </>
-                    )}
-                  </div>
-                )}
-                <div style={{ marginTop: 8 }}>
-                  <button onClick={() => applyHistoryEntry(entry)} style={{ padding: "6px 10px" }}>
-                    Load settings
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.8 }}>
-            No history yet. Run a measurement to start tracking your last runs.
-          </div>
-        )}
-
-        <div style={{ borderTop: "1px dashed #e5e7eb", marginTop: 12, paddingTop: 12 }}>
-          <div style={{ fontWeight: 700 }}>Compare runs</div>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Run A
-              <select value={historyCompareA} onChange={(e) => setHistoryCompareA(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
-                <option value="">Select…</option>
-                {history.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Run B
-              <select value={historyCompareB} onChange={(e) => setHistoryCompareB(e.target.value)} style={{ padding: 6, minWidth: 220 }}>
-                <option value="">Select…</option>
-                {history.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {new Date(entry.ts).toLocaleString()} · {entry.cmd} · {entry.target}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {historyCompareMismatch && (
-            <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{historyCompareMismatch}</div>
-          )}
-
-          {!historyCompareMismatch && historyEntryA && historyEntryB && historyCompareMetrics.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 13, opacity: 0.8 }}>Δ = Run B - Run A</div>
-              <div style={{ overflowX: "auto", marginTop: 6 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Metric</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run A</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Run B</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>Δ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {historyCompareMetrics.map((metric) => (
-                      <tr key={metric.label}>
-                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.label}</td>
-                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.a)}</td>
-                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{metric.format(metric.b)}</td>
-                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>
-                          {metric.format(Number.isFinite(metric.a) && Number.isFinite(metric.b) ? metric.b - metric.a : null)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
       {err && (
         <div style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, marginBottom: 12, whiteSpace: "pre-wrap" }}>
