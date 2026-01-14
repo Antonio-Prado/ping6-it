@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
+import { ADVANCED_PRESET_GROUPS } from "./advancedPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -2148,6 +2149,36 @@ export default function App() {
             </select>
           </Tip>
         )}
+      </div>
+      <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+        {ADVANCED_PRESET_GROUPS.map((group) => (
+          <div key={group.id} style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{group.label}</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {group.presets.map((preset) => (
+                <Tip key={preset.id} text={preset.description || `Advanced preset: ${preset.label}.`}>
+                  <button
+                    onClick={() => applyAdvancedPreset(preset.settings)}
+                    disabled={running}
+                    style={{
+                      padding: "6px 10px",
+                      border: "1px solid #ddd",
+                      borderRadius: 6,
+                      background: "transparent",
+                      cursor: running ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                </Tip>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div style={{ fontSize: 12, opacity: 0.75 }}>
+          Note: some advanced presets disable “IPv6-capable only” to improve coverage. The v4/v6 comparison stays active,
+          but it still requires IPv6-capable probes; otherwise Globalping can return “no probes found”.
+        </div>
       </div>
       </>
       )}
