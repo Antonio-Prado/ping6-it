@@ -3,16 +3,36 @@ import { waitForMeasurement } from "./lib/globalping";
 import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
+const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
 function loadTurnstileScript() {
   if (typeof window === "undefined") return Promise.reject(new Error("Turnstile can only run in the browser."));
   if (window.turnstile) return Promise.resolve();
   if (__turnstileScriptPromise) return __turnstileScriptPromise;
 
   __turnstileScriptPromise = new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      __turnstileScriptPromise = null;
+      reject(new Error("Turnstile script timed out. Please disable blockers and try again."));
+    }, TURNSTILE_LOAD_TIMEOUT_MS);
     const existing = document.querySelector('script[data-turnstile="1"]');
     if (existing) {
-      existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("Failed to load Turnstile script.")), { once: true });
+      existing.addEventListener(
+        "load",
+        () => {
+          clearTimeout(timeoutId);
+          resolve();
+        },
+        { once: true }
+      );
+      existing.addEventListener(
+        "error",
+        () => {
+          clearTimeout(timeoutId);
+          __turnstileScriptPromise = null;
+          reject(new Error("Failed to load Turnstile script."));
+        },
+        { once: true }
+      );
       return;
     }
 
@@ -20,8 +40,15 @@ function loadTurnstileScript() {
     s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
     s.defer = true;
     s.dataset.turnstile = "1";
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Failed to load Turnstile script."));
+    s.onload = () => {
+      clearTimeout(timeoutId);
+      resolve();
+    };
+    s.onerror = () => {
+      clearTimeout(timeoutId);
+      __turnstileScriptPromise = null;
+      reject(new Error("Failed to load Turnstile script."));
+    };
     document.head.appendChild(s);
   });
 
