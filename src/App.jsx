@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
+import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
@@ -95,6 +96,10 @@ const COPY = {
     feedback: "Feedback welcome",
     docs: "Docs",
     source: "Source",
+    backend: "Backend",
+    backendGlobalping: "Globalping",
+    backendAtlas: "RIPE Atlas (experimental)",
+    atlasApiKey: "Atlas API key",
     command: "Command",
     net: "Net",
     from: "From",
@@ -218,7 +223,9 @@ const COPY = {
     helpCommand: "Measurement type to run. IPv4 and IPv6 are executed on the same probes for a fair comparison.",
     helpNet: "Probe network profile filter: any, eyeball (access/consumer), or datacenter.",
     helpFrom: "Where probes are selected (Globalping location string). Presets below can fill this automatically.",
-    helpProbes: "Number of probes to run (1–10). More probes improve coverage but take longer.",
+    helpProbes: "Number of probes to run (Globalping: 1–10, Atlas: 1–50). More probes improve coverage but take longer.",
+    helpBackend: "Choose the measurement network backend. Globalping is the default. RIPE Atlas can provide many more probes but requires an API key.",
+    helpAtlasKey: "Your RIPE Atlas API key. Stored locally in your browser and never included in share links.",
     helpAsn: "Filter probes by ASN (e.g. 12345).",
     helpIsp: "ISP name filtering is not supported by the Globalping API: use an ASN when possible.",
     helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
@@ -435,6 +442,7 @@ function decodeReportPayload(raw) {
 function applyUrlSettings(params, setters) {
   const {
     setCmd,
+    setBackend,
     setTarget,
     setFrom,
     setGpTag,
@@ -461,6 +469,8 @@ function applyUrlSettings(params, setters) {
 
   const cmd = params.get("cmd");
   if (cmd) setCmd(cmd);
+  const backend = params.get("backend");
+  if (backend && (backend === "globalping" || backend === "atlas")) setBackend(backend);
   const target = params.get("target");
   if (target) setTarget(target);
   const from = params.get("from");
@@ -994,6 +1004,8 @@ export default function App() {
   const [multiRunStatus, setMultiRunStatus] = useState(null);
   const [multiActiveId, setMultiActiveId] = useState(null);
   const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns | http
+  const [backend, setBackend] = useState("globalping"); // globalping | atlas
+  const [atlasApiKey, setAtlasApiKey] = useState("");
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
@@ -1024,6 +1036,29 @@ export default function App() {
   const canRequireV6Capable = multiTargetMode
     ? parsedMultiTargets.length > 0 && parsedMultiTargets.every((item) => !isIpLiteral(item))
     : !isIpLiteral((target || "").trim());
+
+  const maxProbes = backend === "atlas" ? 50 : 10;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const b = String(window.localStorage.getItem("PING6_BACKEND") || "").trim();
+      if (b === "atlas" || b === "globalping") setBackend(b);
+      const k = String(window.localStorage.getItem("PING6_ATLAS_API_KEY") || "").trim();
+      if (k) setAtlasApiKey(k);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("PING6_BACKEND", backend);
+    } catch {}
+  }, [backend]);
+
+  useEffect(() => {
+    setStoredAtlasKey(atlasApiKey);
+  }, [atlasApiKey]);
 
   function selectMacro(id) {
     const p = GEO_PRESETS.find((x) => x.id === id) ?? GEO_PRESETS[0];
@@ -1110,6 +1145,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     applyUrlSettings(params, {
       setCmd,
+      setBackend,
       setTarget,
       setFrom,
       setGpTag,
@@ -1235,9 +1271,14 @@ export default function App() {
   }
 
   async function createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, signal) {
-    const res = await fetch("/api/measurements-pair", {
+    const url = backend === "atlas" ? "/api/atlas/measurements-pair" : "/api/measurements-pair";
+    const headers = { "content-type": "application/json" };
+    if (backend === "atlas" && String(atlasApiKey || "").trim()) {
+      headers["X-Atlas-Key"] = String(atlasApiKey || "").trim();
+    }
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({ turnstileToken, base, measurementOptions, flow }),
       signal,
     });
@@ -1382,7 +1423,7 @@ export default function App() {
       const ac = new AbortController();
       abortRef.current = ac;
 
-      const probes = Math.max(1, Math.min(10, Number(limit) || 3));
+      const probes = Math.max(1, Math.min(maxProbes, Number(limit) || 3));
       const fromWithTag = applyGpTag(from, gpTag);
       const location = { magic: fromWithTag || "world" };
       const parsedAsn = Number(probeAsn);
@@ -1415,6 +1456,18 @@ export default function App() {
           httpEffectivePort,
         } = buildMeasurementRequest(rawTarget, { syncHttpFields: !multiTargetMode });
 
+        if (backend === "atlas") {
+          if (!String(atlasApiKey || "").trim()) {
+            throw new Error("RIPE Atlas API key is required when using the Atlas backend.");
+          }
+          if (!["ping", "traceroute", "dns"].includes(cmd)) {
+            throw new Error("RIPE Atlas backend currently supports ping, traceroute and dns only.");
+          }
+          if (isIpLiteral(effectiveTarget)) {
+            throw new Error("RIPE Atlas backend requires a hostname target (not an IP literal) for IPv4/IPv6 comparison.");
+          }
+        }
+
         setTarget(normalizedTarget);
         setV4(null);
         setV6(null);
@@ -1446,9 +1499,10 @@ export default function App() {
         // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
         const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
 
+        const waitFn = backend === "atlas" ? waitForAtlasMeasurement : waitForMeasurement;
         const [r4, r6] = await Promise.all([
-          waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
-          waitForMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal }),
+          waitFn(m4.id, { onUpdate: setV4, signal: ac.signal }),
+          waitFn(m6.id, { onUpdate: setV6, signal: ac.signal }),
         ]);
 
         setV4(r4);
@@ -1457,6 +1511,7 @@ export default function App() {
         const summary = normalizeHistorySummary(cmd, r4, r6);
         const entry = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          backend,
           ts: Date.now(),
           cmd,
           target: normalizedTarget,
@@ -1546,6 +1601,7 @@ export default function App() {
   function applyHistoryEntry(entry) {
     if (!entry) return;
     setMultiTargetMode(false);
+    setBackend(entry.backend || "globalping");
     setCmd(entry.cmd);
     setTarget(entry.target || "");
     setFrom(entry.fromRaw || entry.from || "");
@@ -1575,6 +1631,7 @@ export default function App() {
 
   function buildShareParams() {
     const params = new URLSearchParams();
+    params.set("backend", backend);
     params.set("cmd", cmd);
     params.set("target", target || "");
     params.set("from", from || "");
@@ -2012,6 +2069,40 @@ export default function App() {
       <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          {t("backend")} <Help text={t("helpBackend")} />{" "}
+          <select
+            value={backend}
+            onChange={(e) => {
+              const next = e.target.value;
+              setBackend(next);
+              if (next === "atlas" && (cmd === "mtr" || cmd === "http")) {
+                setCmd("ping");
+                setAdvanced(false);
+              }
+            }}
+            disabled={running}
+            style={{ padding: 6 }}
+          >
+            <option value="globalping">{t("backendGlobalping")}</option>
+            <option value="atlas">{t("backendAtlas")}</option>
+          </select>
+        </label>
+
+        {backend === "atlas" && (
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {t("atlasApiKey")} <Help text={t("helpAtlasKey")} />{" "}
+            <input
+              value={atlasApiKey}
+              onChange={(e) => setAtlasApiKey(e.target.value)}
+              disabled={running}
+              type="password"
+              placeholder="e.g. 0123456789abcdef..."
+              style={{ padding: 6, width: 220 }}
+            />
+          </label>
+        )}
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           {t("command")} <Help text={t("helpCommand")} />{" "}
           <select
             value={cmd}
@@ -2024,15 +2115,15 @@ export default function App() {
           >
             <option value="ping">ping</option>
             <option value="traceroute">traceroute</option>
-            <option value="mtr">mtr</option>
+            <option value="mtr" disabled={backend === "atlas"}>mtr</option>
             <option value="dns">dns</option>
-            <option value="http">http</option>
+            <option value="http" disabled={backend === "atlas"}>http</option>
           </select>
         </label>
 
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           {t("net")} <Help text={t("helpNet")} />{" "}
-          <select value={gpTag} onChange={(e) => setGpTag(e.target.value)} disabled={running} style={{ padding: 6 }}>
+          <select value={gpTag} onChange={(e) => setGpTag(e.target.value)} disabled={running || backend === "atlas"} style={{ padding: 6 }}>
             <option value="any">any</option>
             <option value="eyeball">eyeball</option>
             <option value="datacenter">datacenter</option>
@@ -2049,11 +2140,11 @@ export default function App() {
           <input
             value={limit}
             onChange={(e) => setLimit(e.target.value)}
-            onBlur={() => setLimit((current) => clampInputValue(current, { min: 1, max: 10, fallback: 3 }))}
+            onBlur={() => setLimit((current) => clampInputValue(current, { min: 1, max: maxProbes, fallback: 3 }))}
             disabled={running}
             type="number"
             min={1}
-            max={10}
+            max={maxProbes}
             step={1}
             inputMode="numeric"
             placeholder={t("placeholderProbes")}
@@ -2079,7 +2170,7 @@ export default function App() {
               <input
                 value={probeIsp}
                 onChange={(e) => setProbeIsp(e.target.value)}
-                disabled={running}
+                disabled={running || backend === "atlas"}
                 placeholder={t("placeholderIsp")}
                 style={{ padding: 6, width: 140 }}
               />

@@ -1,0 +1,912 @@
+diff --git a/functions/api/atlas/measurements-pair.js b/functions/api/atlas/measurements-pair.js
+new file mode 100644
+index 0000000..6d7de34
+--- /dev/null
++++ b/functions/api/atlas/measurements-pair.js
+@@ -0,0 +1,271 @@
++const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
++const ATLAS_BASE = "https://atlas.ripe.net";
++
++const ALLOWED_TYPES = new Set(["ping", "traceroute", "dns"]);
++const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
++
++function json(body, status = 200) {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: {
++      "content-type": "application/json; charset=utf-8",
++      "cache-control": "no-store",
++    },
++  });
++}
++
++function clampInt(x, { min, max, fallback }) {
++  const n = Number(x);
++  if (!Number.isFinite(n)) return fallback;
++  return Math.max(min, Math.min(max, Math.trunc(n)));
++}
++
++async function verifyTurnstile({ token, secret, remoteip, signal }) {
++  const fd = new FormData();
++  fd.append("secret", secret);
++  fd.append("response", token);
++  if (remoteip) fd.append("remoteip", remoteip);
++
++  const verifyRes = await fetch(SITEVERIFY_URL, { method: "POST", body: fd, signal });
++  const verify = await verifyRes.json();
++  return verify;
++}
++
++function extractAtlasKey(request, env) {
++  const headerKey = request.headers.get("X-Atlas-Key") || "";
++  const key = String(headerKey || env.ATLAS_API_KEY || "").trim();
++  return key;
++}
++
++function normalizeMagic(magic) {
++  // Globalping tag helpers append " +network=...". Atlas doesn't understand those.
++  return String(magic || "")
++    .replace(/\s\+network=[^\s]+/g, "")
++    .replace(/\s\+tag=[^\s]+/g, "")
++    .trim();
++}
++
++function parseAtlasProbeRequest(location, requested) {
++  const req = clampInt(requested, { min: 1, max: 50, fallback: 3 });
++
++  const asn = Number(location?.asn);
++  if (Number.isFinite(asn) && asn > 0) {
++    return { probes: [{ requested: req, type: "asn", value: String(asn) }], warnings: [] };
++  }
++
++  const raw = normalizeMagic(location?.magic);
++  const s = raw.trim();
++  const warnings = [];
++
++  const areas = new Set(["WW", "West", "North-Central", "South-Central", "North-East", "South-East"]);
++  const area = Array.from(areas).find((a) => a.toLowerCase() === s.toLowerCase());
++  if (!s || s.toLowerCase() === "world") {
++    return { probes: [{ requested: req, type: "area", value: "WW" }], warnings };
++  }
++  if (area) {
++    return { probes: [{ requested: req, type: "area", value: area }], warnings };
++  }
++
++  const mAsn = s.match(/^(?:asn:|AS)(\d+)$/i);
++  if (mAsn) {
++    return { probes: [{ requested: req, type: "asn", value: String(Number(mAsn[1])) }], warnings };
++  }
++
++  if (/^[A-Za-z]{2}$/.test(s)) {
++    return { probes: [{ requested: req, type: "country", value: s.toUpperCase() }], warnings };
++  }
++
++  if (s.includes("/") && !s.includes(" ")) {
++    // IPv4/IPv6 prefix
++    return { probes: [{ requested: req, type: "prefix", value: s }], warnings };
++  }
++
++  const mProbes = s.match(/^(?:probes:)(.+)$/i);
++  if (mProbes) {
++    const ids = mProbes[1]
++      .split(/[,\s]+/)
++      .map((x) => x.trim())
++      .filter(Boolean)
++      .filter((x) => /^\d+$/.test(x));
++    if (ids.length) {
++      return { probes: [{ requested: ids.length, type: "probes", value: ids.join(",") }], warnings };
++    }
++  }
++
++  // Fallback
++  warnings.push(
++    "Atlas probe selection syntax differs from Globalping. Falling back to area=WW. Examples: WW, IT, AS3269, asn:3356, prefix:2001:db8::/32, probes:123,456."
++  );
++  return { probes: [{ requested: req, type: "area", value: "WW" }], warnings };
++}
++
++function atlasDefinitionFor(cmd, af, target, measurementOptions) {
++  const type = String(cmd);
++  const base = {
++    description: `ping6.it ${type} ${target} (IPv${af})`,
++    af,
++    type,
++    is_oneoff: true,
++  };
++
++  if (type === "ping") {
++    base.target = target;
++    const packets = clampInt(measurementOptions?.packets, { min: 1, max: 16, fallback: 3 });
++    base.packets = packets;
++    return base;
++  }
++
++  if (type === "traceroute") {
++    base.target = target;
++    const proto = String(measurementOptions?.protocol || "ICMP").toUpperCase();
++    base.protocol = proto;
++    if (proto !== "ICMP") {
++      base.port = clampInt(measurementOptions?.port, { min: 1, max: 65535, fallback: 80 });
++    }
++    // Keep default traceroute packet count (3) unless explicitly provided.
++    const packets = clampInt(measurementOptions?.packets, { min: 1, max: 16, fallback: 3 });
++    base.packets = packets;
++    return base;
++  }
++
++  if (type === "dns") {
++    // In Atlas, target is the resolver, and query_argument is the qname.
++    const qType = String(measurementOptions?.query?.type || "A").toUpperCase();
++    const proto = String(measurementOptions?.protocol || "UDP").toUpperCase();
++    const port = clampInt(measurementOptions?.port, { min: 1, max: 65535, fallback: 53 });
++
++    const resolver = String(measurementOptions?.resolver || "").trim() || "one.one.one.one";
++
++    base.target = resolver;
++    base.query_class = "IN";
++    base.query_type = qType;
++    base.query_argument = target;
++    base.protocol = proto;
++    base.port = port;
++
++    return base;
++  }
++
++  throw new Error(`unsupported_type:${type}`);
++}
++
++async function atlasPost(path, payload, apiKey, signal) {
++  const res = await fetch(`${ATLAS_BASE}${path}`, {
++    method: "POST",
++    headers: {
++      "content-type": "application/json",
++      authorization: `Key ${apiKey}`,
++    },
++    body: JSON.stringify(payload),
++    signal,
++  });
++
++  const text = await res.text();
++  let data;
++  try {
++    data = text ? JSON.parse(text) : null;
++  } catch {
++    data = { raw: text };
++  }
++
++  if (!res.ok) {
++    const err = new Error("Atlas upstream error");
++    err.status = res.status;
++    err.data = data;
++    throw err;
++  }
++  return data;
++}
++
++export async function onRequestPost(context) {
++  const { request, env } = context;
++
++  const secret = env.TURNSTILE_SECRET;
++  if (!secret) return json({ error: "TURNSTILE_SECRET not set" }, 500);
++
++  const apiKey = extractAtlasKey(request, env);
++  if (!apiKey) return json({ error: "missing_atlas_api_key" }, 400);
++
++  let body;
++  try {
++    body = await request.json();
++  } catch {
++    return json({ error: "invalid_json" }, 400);
++  }
++
++  const { turnstileToken, base, measurementOptions, flow } = body || {};
++  if (!turnstileToken || !base || !measurementOptions || !flow) {
++    return json({ error: "missing_fields" }, 400);
++  }
++
++  if (!ALLOWED_TYPES.has(base.type)) return json({ error: "unsupported_type" }, 400);
++  if (typeof base.target !== "string" || !base.target.trim()) return json({ error: "invalid_target" }, 400);
++
++  // Atlas needs a v6-first flow to enforce the same probes for v4/v6.
++  // We'll still accept both values for compatibility with the current client.
++  if (flow !== "v4first" && flow !== "v6first") return json({ error: "invalid_flow" }, 400);
++
++  const limit = clampInt(base.limit, { min: 1, max: 50, fallback: 3 });
++
++  const remoteip =
++    request.headers.get("CF-Connecting-IP") ||
++    (request.headers.get("X-Forwarded-For") || "").split(",")[0]?.trim() ||
++    undefined;
++
++  const verify = await verifyTurnstile({ token: turnstileToken, secret, remoteip, signal: request.signal });
++  if (!verify?.success) {
++    return json({ error: "turnstile_failed", codes: verify?.["error-codes"] || [] }, 403);
++  }
++  if (verify.action && verify.action !== "ping6_run") {
++    return json({ error: "turnstile_bad_action", action: verify.action }, 403);
++  }
++  if (verify.hostname && !ALLOWED_HOSTNAMES.has(verify.hostname)) {
++    return json({ error: "turnstile_bad_hostname", hostname: verify.hostname }, 403);
++  }
++
++  const { probes, warnings } = parseAtlasProbeRequest(base.locations?.[0] || {}, limit);
++
++  try {
++    // 1) Create IPv6 measurement
++    const def6 = atlasDefinitionFor(base.type, 6, String(base.target).trim(), measurementOptions);
++    const create6 = await atlasPost(
++      "/api/v2/measurements/",
++      { definitions: [def6], probes },
++      apiKey,
++      request.signal
++    );
++    const msm6 = Array.isArray(create6?.measurements) ? create6.measurements[0] : null;
++    if (!msm6) return json({ error: "atlas_create_failed", details: create6 || {} }, 502);
++
++    // 2) Create IPv4 measurement using the exact same probes as the v6 measurement
++    const def4 = atlasDefinitionFor(base.type, 4, String(base.target).trim(), measurementOptions);
++    const create4 = await atlasPost(
++      "/api/v2/measurements/",
++      {
++        definitions: [def4],
++        probes: [{ requested: limit, type: "msm", value: String(msm6) }],
++      },
++      apiKey,
++      request.signal
++    );
++    const msm4 = Array.isArray(create4?.measurements) ? create4.measurements[0] : null;
++    if (!msm4) return json({ error: "atlas_create_failed", details: create4 || {} }, 502);
++
++    // Mirror the Globalping handler response shape.
++    return json({
++      backend: "atlas",
++      warnings,
++      m4: { id: String(msm4) },
++      m6: { id: String(msm6) },
++    });
++  } catch (e) {
++    return json(
++      {
++        error: "atlas_failed",
++        status: e.status || 500,
++        details: e.data || {},
++      },
++      e.status || 500
++    );
++  }
++}
+diff --git a/functions/api/atlas/measurements/[id].js b/functions/api/atlas/measurements/[id].js
+new file mode 100644
+index 0000000..5e23fe0
+--- /dev/null
++++ b/functions/api/atlas/measurements/[id].js
+@@ -0,0 +1,274 @@
++const ATLAS_BASE = "https://atlas.ripe.net";
++
++function json(body, status = 200) {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: {
++      "content-type": "application/json; charset=utf-8",
++      "cache-control": "no-store",
++    },
++  });
++}
++
++function extractAtlasKey(request, env) {
++  const headerKey = request.headers.get("X-Atlas-Key") || "";
++  const key = String(headerKey || env.ATLAS_API_KEY || "").trim();
++  return key;
++}
++
++async function atlasGetJson(path, apiKey, signal) {
++  const headers = {};
++  if (apiKey) headers.authorization = `Key ${apiKey}`;
++
++  const res = await fetch(`${ATLAS_BASE}${path}`, {
++    method: "GET",
++    headers,
++    signal,
++  });
++
++  const text = await res.text();
++  let data;
++  try {
++    data = text ? JSON.parse(text) : null;
++  } catch {
++    data = { raw: text };
++  }
++
++  if (!res.ok) {
++    const err = new Error("Atlas upstream error");
++    err.status = res.status;
++    err.data = data;
++    throw err;
++  }
++  return data;
++}
++
++function toNumber(x) {
++  const n = Number(x);
++  return Number.isFinite(n) ? n : null;
++}
++
++function normalizeProbe(p) {
++  const id = String(p?.id ?? p?.pk ?? p?.prb_id ?? p?.probe_id ?? "");
++
++  const coords = p?.geometry?.coordinates;
++  const lon = Array.isArray(coords) ? toNumber(coords[0]) : null;
++  const lat = Array.isArray(coords) ? toNumber(coords[1]) : null;
++
++  const asn = toNumber(p?.asn_v4 ?? p?.asn_v6 ?? p?.asn);
++  const network = String(p?.asn_v4_name ?? p?.asn_v6_name ?? p?.network ?? "");
++
++  return {
++    id,
++    city: p?.city || "",
++    country: p?.country_code || p?.country || "",
++    asn: asn || undefined,
++    network: network || undefined,
++    latitude: lat || undefined,
++    longitude: lon || undefined,
++  };
++}
++
++async function fetchProbeMap(ids, apiKey, signal) {
++  const unique = Array.from(new Set(ids.map((x) => String(x)).filter(Boolean)));
++  if (!unique.length) return {};
++
++  // Try a batched query first. If it fails, fall back to per-probe calls.
++  const joined = unique.join(",");
++  try {
++    const data = await atlasGetJson(`/api/v2/probes/?id__in=${encodeURIComponent(joined)}&limit=${unique.length}`, apiKey, signal);
++    const results = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
++    const map = {};
++    for (const p of results) {
++      const np = normalizeProbe(p);
++      if (np.id) map[np.id] = np;
++    }
++    if (Object.keys(map).length) return map;
++  } catch {
++    // ignore
++  }
++
++  const map = {};
++  await Promise.all(
++    unique.map(async (id) => {
++      try {
++        const p = await atlasGetJson(`/api/v2/probes/${encodeURIComponent(id)}/`, apiKey, signal);
++        const np = normalizeProbe(p);
++        if (np.id) map[np.id] = np;
++      } catch {
++        // ignore
++      }
++    })
++  );
++  return map;
++}
++
++function computePingStats(r) {
++  const sent = toNumber(r?.sent) ?? (Array.isArray(r?.result) ? r.result.length : null);
++  const rcvd = toNumber(r?.rcvd) ?? (Array.isArray(r?.result) ? r.result.filter((x) => Number.isFinite(Number(x?.rtt))).length : null);
++
++  let avg = toNumber(r?.avg);
++  if (avg === null && Array.isArray(r?.result)) {
++    const rtts = r.result.map((x) => toNumber(x?.rtt)).filter((x) => x !== null);
++    if (rtts.length) {
++      avg = rtts.reduce((a, b) => a + b, 0) / rtts.length;
++    }
++  }
++
++  let loss = null;
++  if (sent && rcvd !== null) {
++    loss = ((sent - rcvd) / sent) * 100;
++  }
++
++  return { avg: avg ?? undefined, loss: loss ?? undefined };
++}
++
++function normalizePingResult(r, probe) {
++  const stats = computePingStats(r);
++  const status = r?.error ? "failed" : "finished";
++  return {
++    probe,
++    result: {
++      status,
++      stats,
++      atlas: {
++        timestamp: r?.timestamp,
++        from: r?.from,
++      },
++    },
++  };
++}
++
++function normalizeTracerouteResult(r, probe) {
++  const hopsRaw = Array.isArray(r?.result) ? r.result : [];
++  const hops = hopsRaw
++    .map((h) => {
++      const hop = toNumber(h?.hop) ?? undefined;
++      const responses = Array.isArray(h?.result) ? h.result : [];
++      const timings = responses
++        .map((x) => {
++          const rtt = toNumber(x?.rtt);
++          return rtt === null ? null : { rtt };
++        })
++        .filter(Boolean);
++
++      const firstFrom = responses.map((x) => String(x?.from || "").trim()).find(Boolean) || "";
++      if (!firstFrom && !timings.length) return null;
++
++      return {
++        hop,
++        resolvedAddress: firstFrom || undefined,
++        resolvedHostname: undefined,
++        timings,
++      };
++    })
++    .filter(Boolean);
++
++  return {
++    probe,
++    result: {
++      status: r?.error ? "failed" : "finished",
++      resolvedAddress: r?.dst_addr || undefined,
++      resolvedHostname: r?.dst_name || undefined,
++      hops,
++      atlas: {
++        timestamp: r?.timestamp,
++        from: r?.from,
++        paris_id: r?.paris_id,
++      },
++    },
++  };
++}
++
++function normalizeDnsResult(r, probe) {
++  const total = toNumber(r?.rt);
++  return {
++    probe,
++    result: {
++      status: r?.error ? "failed" : "finished",
++      timings: {
++        total: total ?? undefined,
++      },
++      atlas: {
++        timestamp: r?.timestamp,
++        from: r?.from,
++        err: r?.err,
++        resultset: r?.resultset,
++      },
++    },
++  };
++}
++
++function deriveStatus(meta, resultsLen) {
++  const name = String(meta?.status?.name || meta?.status_name || meta?.status || "").toLowerCase();
++  if (name.includes("stopped") || name.includes("finished") || name.includes("completed")) return "finished";
++
++  const now = Math.floor(Date.now() / 1000);
++  const stop = toNumber(meta?.stop_time);
++  if (stop && stop <= now) return "finished";
++
++  if (resultsLen > 0 && meta?.is_oneoff) {
++    const start = toNumber(meta?.start_time);
++    if (start && now - start > 120) return "finished";
++  }
++
++  return "in-progress";
++}
++
++export async function onRequestGet(context) {
++  const { request, env, params } = context;
++  const id = String(params?.id || "").trim();
++  if (!id) return json({ error: "missing_id" }, 400);
++
++  const apiKey = extractAtlasKey(request, env);
++  if (!apiKey && !env.ATLAS_API_KEY) {
++    // Results for private measurements may require auth; fail early with a helpful message.
++    return json({ error: "missing_atlas_api_key" }, 400);
++  }
++
++  const now = Math.floor(Date.now() / 1000);
++  const start = now - 3600;
++
++  try {
++    const meta = await atlasGetJson(`/api/v2/measurements/${encodeURIComponent(id)}/`, apiKey, request.signal);
++    const rawResults = await atlasGetJson(
++      `/api/v2/measurements/${encodeURIComponent(id)}/results/?format=json&start=${start}`,
++      apiKey,
++      request.signal
++    );
++
++    const rows = Array.isArray(rawResults) ? rawResults : [];
++    const prbIds = rows.map((r) => String(r?.prb_id || "")).filter(Boolean);
++    const probeMap = await fetchProbeMap(prbIds, apiKey, request.signal);
++
++    const normalized = rows
++      .map((r) => {
++        const prbId = String(r?.prb_id || "");
++        const probe = probeMap[prbId] || { id: prbId };
++        const type = String(r?.type || meta?.type || "").toLowerCase();
++        if (type === "ping") return normalizePingResult(r, probe);
++        if (type === "traceroute") return normalizeTracerouteResult(r, probe);
++        if (type === "dns") return normalizeDnsResult(r, probe);
++        return null;
++      })
++      .filter(Boolean);
++
++    const status = deriveStatus(meta, normalized.length);
++
++    return json({
++      backend: "atlas",
++      id,
++      status,
++      statusName: meta?.status?.name || meta?.status_name || meta?.status || undefined,
++      type: meta?.type || undefined,
++      af: meta?.af || undefined,
++      results: normalized,
++      atlas: {
++        measurement: meta,
++        results: rows,
++      },
++    });
++  } catch (e) {
++    return json({ error: "atlas_failed", status: e.status || 500, details: e.data || {} }, e.status || 500);
++  }
++}
+diff --git a/src/App.jsx b/src/App.jsx
+index cf12bec..3baa36a 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -1,5 +1,6 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { waitForMeasurement } from "./lib/globalping";
++import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
+ import { GEO_PRESETS } from "./geoPresets";
+ // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
+ let __turnstileScriptPromise = null;
+@@ -95,6 +96,10 @@ const COPY = {
+     feedback: "Feedback welcome",
+     docs: "Docs",
+     source: "Source",
++    backend: "Backend",
++    backendGlobalping: "Globalping",
++    backendAtlas: "RIPE Atlas (experimental)",
++    atlasApiKey: "Atlas API key",
+     command: "Command",
+     net: "Net",
+     from: "From",
+@@ -218,7 +223,9 @@ const COPY = {
+     helpCommand: "Measurement type to run. IPv4 and IPv6 are executed on the same probes for a fair comparison.",
+     helpNet: "Probe network profile filter: any, eyeball (access/consumer), or datacenter.",
+     helpFrom: "Where probes are selected (Globalping location string). Presets below can fill this automatically.",
+-    helpProbes: "Number of probes to run (1–10). More probes improve coverage but take longer.",
++    helpProbes: "Number of probes to run (Globalping: 1–10, Atlas: 1–50). More probes improve coverage but take longer.",
++    helpBackend: "Choose the measurement network backend. Globalping is the default. RIPE Atlas can provide many more probes but requires an API key.",
++    helpAtlasKey: "Your RIPE Atlas API key. Stored locally in your browser and never included in share links.",
+     helpAsn: "Filter probes by ASN (e.g. 12345).",
+     helpIsp: "ISP name filtering is not supported by the Globalping API: use an ASN when possible.",
+     helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
+@@ -435,6 +442,7 @@ function decodeReportPayload(raw) {
+ function applyUrlSettings(params, setters) {
+   const {
+     setCmd,
++    setBackend,
+     setTarget,
+     setFrom,
+     setGpTag,
+@@ -461,6 +469,8 @@ function applyUrlSettings(params, setters) {
+ 
+   const cmd = params.get("cmd");
+   if (cmd) setCmd(cmd);
++  const backend = params.get("backend");
++  if (backend && (backend === "globalping" || backend === "atlas")) setBackend(backend);
+   const target = params.get("target");
+   if (target) setTarget(target);
+   const from = params.get("from");
+@@ -994,6 +1004,8 @@ export default function App() {
+   const [multiRunStatus, setMultiRunStatus] = useState(null);
+   const [multiActiveId, setMultiActiveId] = useState(null);
+   const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns | http
++  const [backend, setBackend] = useState("globalping"); // globalping | atlas
++  const [atlasApiKey, setAtlasApiKey] = useState("");
+   const [from, setFrom] = useState("Western Europe");
+   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
+   const [limit, setLimit] = useState(3);
+@@ -1025,6 +1037,29 @@ export default function App() {
+     ? parsedMultiTargets.length > 0 && parsedMultiTargets.every((item) => !isIpLiteral(item))
+     : !isIpLiteral((target || "").trim());
+ 
++  const maxProbes = backend === "atlas" ? 50 : 10;
++
++  useEffect(() => {
++    if (typeof window === "undefined") return;
++    try {
++      const b = String(window.localStorage.getItem("PING6_BACKEND") || "").trim();
++      if (b === "atlas" || b === "globalping") setBackend(b);
++      const k = String(window.localStorage.getItem("PING6_ATLAS_API_KEY") || "").trim();
++      if (k) setAtlasApiKey(k);
++    } catch {}
++  }, []);
++
++  useEffect(() => {
++    if (typeof window === "undefined") return;
++    try {
++      window.localStorage.setItem("PING6_BACKEND", backend);
++    } catch {}
++  }, [backend]);
++
++  useEffect(() => {
++    setStoredAtlasKey(atlasApiKey);
++  }, [atlasApiKey]);
++
+   function selectMacro(id) {
+     const p = GEO_PRESETS.find((x) => x.id === id) ?? GEO_PRESETS[0];
+     setMacroId(p.id);
+@@ -1110,6 +1145,7 @@ export default function App() {
+     const params = new URLSearchParams(window.location.search);
+     applyUrlSettings(params, {
+       setCmd,
++      setBackend,
+       setTarget,
+       setFrom,
+       setGpTag,
+@@ -1235,9 +1271,14 @@ export default function App() {
+   }
+ 
+   async function createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, signal) {
+-    const res = await fetch("/api/measurements-pair", {
++    const url = backend === "atlas" ? "/api/atlas/measurements-pair" : "/api/measurements-pair";
++    const headers = { "content-type": "application/json" };
++    if (backend === "atlas" && String(atlasApiKey || "").trim()) {
++      headers["X-Atlas-Key"] = String(atlasApiKey || "").trim();
++    }
++    const res = await fetch(url, {
+       method: "POST",
+-      headers: { "content-type": "application/json" },
++      headers,
+       body: JSON.stringify({ turnstileToken, base, measurementOptions, flow }),
+       signal,
+     });
+@@ -1382,7 +1423,7 @@ export default function App() {
+       const ac = new AbortController();
+       abortRef.current = ac;
+ 
+-      const probes = Math.max(1, Math.min(10, Number(limit) || 3));
++      const probes = Math.max(1, Math.min(maxProbes, Number(limit) || 3));
+       const fromWithTag = applyGpTag(from, gpTag);
+       const location = { magic: fromWithTag || "world" };
+       const parsedAsn = Number(probeAsn);
+@@ -1415,6 +1456,18 @@ export default function App() {
+           httpEffectivePort,
+         } = buildMeasurementRequest(rawTarget, { syncHttpFields: !multiTargetMode });
+ 
++        if (backend === "atlas") {
++          if (!String(atlasApiKey || "").trim()) {
++            throw new Error("RIPE Atlas API key is required when using the Atlas backend.");
++          }
++          if (!["ping", "traceroute", "dns"].includes(cmd)) {
++            throw new Error("RIPE Atlas backend currently supports ping, traceroute and dns only.");
++          }
++          if (isIpLiteral(effectiveTarget)) {
++            throw new Error("RIPE Atlas backend requires a hostname target (not an IP literal) for IPv4/IPv6 comparison.");
++          }
++        }
++
+         setTarget(normalizedTarget);
+         setV4(null);
+         setV6(null);
+@@ -1446,9 +1499,10 @@ export default function App() {
+         // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
+         const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
+ 
++        const waitFn = backend === "atlas" ? waitForAtlasMeasurement : waitForMeasurement;
+         const [r4, r6] = await Promise.all([
+-          waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
+-          waitForMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal }),
++          waitFn(m4.id, { onUpdate: setV4, signal: ac.signal }),
++          waitFn(m6.id, { onUpdate: setV6, signal: ac.signal }),
+         ]);
+ 
+         setV4(r4);
+@@ -1457,6 +1511,7 @@ export default function App() {
+         const summary = normalizeHistorySummary(cmd, r4, r6);
+         const entry = {
+           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
++          backend,
+           ts: Date.now(),
+           cmd,
+           target: normalizedTarget,
+@@ -1546,6 +1601,7 @@ export default function App() {
+   function applyHistoryEntry(entry) {
+     if (!entry) return;
+     setMultiTargetMode(false);
++    setBackend(entry.backend || "globalping");
+     setCmd(entry.cmd);
+     setTarget(entry.target || "");
+     setFrom(entry.fromRaw || entry.from || "");
+@@ -1575,6 +1631,7 @@ export default function App() {
+ 
+   function buildShareParams() {
+     const params = new URLSearchParams();
++    params.set("backend", backend);
+     params.set("cmd", cmd);
+     params.set("target", target || "");
+     params.set("from", from || "");
+@@ -2011,6 +2068,40 @@ export default function App() {
+       {/* Globalping controls */}
+       <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
++        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
++          {t("backend")} <Help text={t("helpBackend")} />{" "}
++          <select
++            value={backend}
++            onChange={(e) => {
++              const next = e.target.value;
++              setBackend(next);
++              if (next === "atlas" && (cmd === "mtr" || cmd === "http")) {
++                setCmd("ping");
++                setAdvanced(false);
++              }
++            }}
++            disabled={running}
++            style={{ padding: 6 }}
++          >
++            <option value="globalping">{t("backendGlobalping")}</option>
++            <option value="atlas">{t("backendAtlas")}</option>
++          </select>
++        </label>
++
++        {backend === "atlas" && (
++          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
++            {t("atlasApiKey")} <Help text={t("helpAtlasKey")} />{" "}
++            <input
++              value={atlasApiKey}
++              onChange={(e) => setAtlasApiKey(e.target.value)}
++              disabled={running}
++              type="password"
++              placeholder="e.g. 0123456789abcdef..."
++              style={{ padding: 6, width: 220 }}
++            />
++          </label>
++        )}
++
+         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+           {t("command")} <Help text={t("helpCommand")} />{" "}
+           <select
+@@ -2024,15 +2115,15 @@ export default function App() {
+           >
+             <option value="ping">ping</option>
+             <option value="traceroute">traceroute</option>
+-            <option value="mtr">mtr</option>
++            <option value="mtr" disabled={backend === "atlas"}>mtr</option>
+             <option value="dns">dns</option>
+-            <option value="http">http</option>
++            <option value="http" disabled={backend === "atlas"}>http</option>
+           </select>
+         </label>
+ 
+         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+           {t("net")} <Help text={t("helpNet")} />{" "}
+-          <select value={gpTag} onChange={(e) => setGpTag(e.target.value)} disabled={running} style={{ padding: 6 }}>
++          <select value={gpTag} onChange={(e) => setGpTag(e.target.value)} disabled={running || backend === "atlas"} style={{ padding: 6 }}>
+             <option value="any">any</option>
+             <option value="eyeball">eyeball</option>
+             <option value="datacenter">datacenter</option>
+@@ -2049,11 +2140,11 @@ export default function App() {
+           <input
+             value={limit}
+             onChange={(e) => setLimit(e.target.value)}
+-            onBlur={() => setLimit((current) => clampInputValue(current, { min: 1, max: 10, fallback: 3 }))}
++            onBlur={() => setLimit((current) => clampInputValue(current, { min: 1, max: maxProbes, fallback: 3 }))}
+             disabled={running}
+             type="number"
+             min={1}
+-            max={10}
++            max={maxProbes}
+             step={1}
+             inputMode="numeric"
+             placeholder={t("placeholderProbes")}
+@@ -2079,7 +2170,7 @@ export default function App() {
+               <input
+                 value={probeIsp}
+                 onChange={(e) => setProbeIsp(e.target.value)}
+-                disabled={running}
++                disabled={running || backend === "atlas"}
+                 placeholder={t("placeholderIsp")}
+                 style={{ padding: 6, width: 140 }}
+               />
+diff --git a/src/lib/atlas.js b/src/lib/atlas.js
+new file mode 100644
+index 0000000..4ffd8d4
+--- /dev/null
++++ b/src/lib/atlas.js
+@@ -0,0 +1,87 @@
++const DEFAULT_TIMEOUT_MS = 60000;
++
++function sleep(ms) {
++  return new Promise((resolve) => setTimeout(resolve, ms));
++}
++
++function getStoredAtlasKey() {
++  if (typeof window === "undefined") return "";
++  try {
++    return String(window.localStorage.getItem("PING6_ATLAS_API_KEY") || "").trim();
++  } catch {
++    return "";
++  }
++}
++
++function buildHeaders(extra = {}) {
++  const headers = { ...extra };
++  const key = getStoredAtlasKey();
++  if (key) headers["X-Atlas-Key"] = key;
++  return headers;
++}
++
++export function setStoredAtlasKey(key) {
++  if (typeof window === "undefined") return;
++  try {
++    const clean = String(key || "").trim();
++    if (clean) window.localStorage.setItem("PING6_ATLAS_API_KEY", clean);
++    else window.localStorage.removeItem("PING6_ATLAS_API_KEY");
++  } catch {
++    // ignore
++  }
++}
++
++export async function getAtlasMeasurement(id, { signal } = {}) {
++  const url = `/api/atlas/measurements/${encodeURIComponent(id)}`;
++  const res = await fetch(url, { method: "GET", headers: buildHeaders(), signal });
++  const text = await res.text();
++  let data = null;
++  try {
++    data = text ? JSON.parse(text) : null;
++  } catch {
++    // ignore
++  }
++  if (!res.ok) {
++    const msg =
++      (data && (data.error || data.message)) ||
++      (text && text.slice(0, 300)) ||
++      `Atlas request failed (${res.status})`;
++    throw new Error(String(msg));
++  }
++  return data;
++}
++
++export async function waitForAtlasMeasurement(
++  id,
++  { onUpdate, signal, timeoutMs = DEFAULT_TIMEOUT_MS, pollMs = 1500, settlePolls = 2 } = {}
++) {
++  const start = Date.now();
++  let lastLen = null;
++  let stable = 0;
++
++  for (;;) {
++    if (signal?.aborted) throw new Error("Aborted");
++
++    const m = await getAtlasMeasurement(id, { signal });
++    if (onUpdate) onUpdate(m);
++
++    const status = String(m?.status || "").toLowerCase();
++    const resultsLen = Array.isArray(m?.results) ? m.results.length : 0;
++
++    if (status === "finished") return m;
++
++    if (lastLen !== null && resultsLen === lastLen) stable += 1;
++    else stable = 0;
++    lastLen = resultsLen;
++
++    if (resultsLen > 0 && stable >= settlePolls) {
++      return { ...m, status: "finished", statusReason: "settled" };
++    }
++
++    if (Date.now() - start > timeoutMs) {
++      return { ...m, status: status || "unknown", statusReason: "timeout" };
++    }
++
++    await sleep(pollMs);
++  }
++}
