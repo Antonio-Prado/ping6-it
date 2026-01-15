@@ -213,14 +213,34 @@ function normalizeTracerouteResult(r, probe) {
 }
 
 function normalizeDnsResult(r, probe) {
-  const total =
-    toNumber(r?.rt) ??
-    (() => {
-      const resultset = Array.isArray(r?.resultset) ? r.resultset : [];
-      const rts = resultset.map((x) => toNumber(x?.rt)).filter((x) => x !== null);
-      if (!rts.length) return null;
-      return rts.reduce((sum, val) => sum + val, 0) / rts.length;
-    })();
+  const rts = [];
+  const addRt = (val) => {
+    const n = toNumber(val);
+    if (n !== null) rts.push(n);
+  };
+  const collectFromResultset = (resultset) => {
+    if (!Array.isArray(resultset)) return;
+    for (const entry of resultset) {
+      addRt(entry?.rt);
+      if (Array.isArray(entry?.result)) {
+        for (const sub of entry.result) addRt(sub?.rt);
+      }
+    }
+  };
+
+  addRt(r?.rt);
+  collectFromResultset(r?.resultset);
+
+  const nested = Array.isArray(r?.result) ? r.result : r?.result ? [r.result] : [];
+  for (const entry of nested) {
+    addRt(entry?.rt);
+    collectFromResultset(entry?.resultset);
+    if (Array.isArray(entry?.result)) {
+      for (const sub of entry.result) addRt(sub?.rt);
+    }
+  }
+
+  const total = rts.length ? rts.reduce((sum, val) => sum + val, 0) / rts.length : null;
   return {
     probe,
     result: {
