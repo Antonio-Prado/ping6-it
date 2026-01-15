@@ -48,64 +48,11 @@ function toNumber(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizeProbe(p) {
-  const id = String(p?.id ?? p?.pk ?? p?.prb_id ?? p?.probe_id ?? "");
-
-  const coords = p?.geometry?.coordinates;
-  const lon = Array.isArray(coords) ? toNumber(coords[0]) : null;
-  const lat = Array.isArray(coords) ? toNumber(coords[1]) : null;
-
-  const asn = toNumber(p?.asn_v4 ?? p?.asn_v6 ?? p?.asn);
-  const network = String(p?.asn_v4_name ?? p?.asn_v6_name ?? p?.network ?? "");
-
-  return {
-    id,
-    city: p?.city || "",
-    country: p?.country_code || p?.country || "",
-    asn: asn || undefined,
-    network: network || undefined,
-    latitude: lat || undefined,
-    longitude: lon || undefined,
-  };
-}
-
-async function fetchProbeMap(ids, apiKey, signal) {
-  const unique = Array.from(new Set(ids.map((x) => String(x)).filter(Boolean)));
-  if (!unique.length) return {};
-
-  // Try a batched query first. If it fails, fall back to per-probe calls.
-  const joined = unique.join(",");
-  try {
-    const data = await atlasGetJson(`/api/v2/probes/?id__in=${encodeURIComponent(joined)}&limit=${unique.length}`, apiKey, signal);
-    const results = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
-    const map = {};
-    for (const p of results) {
-      const np = normalizeProbe(p);
-      if (np.id) map[np.id] = np;
-    }
-    if (Object.keys(map).length) return map;
-  } catch {
-    // ignore
-  }
-
-  const map = {};
-  await Promise.all(
-    unique.map(async (id) => {
-      try {
-        const p = await atlasGetJson(`/api/v2/probes/${encodeURIComponent(id)}/`, apiKey, signal);
-        const np = normalizeProbe(p);
-        if (np.id) map[np.id] = np;
-      } catch {
-        // ignore
-      }
-    })
-  );
-  return map;
-}
-
 function computePingStats(r) {
   const sent = toNumber(r?.sent) ?? (Array.isArray(r?.result) ? r.result.length : null);
-  const rcvd = toNumber(r?.rcvd) ?? (Array.isArray(r?.result) ? r.result.filter((x) => Number.isFinite(Number(x?.rtt))).length : null);
+  const rcvd =
+    toNumber(r?.rcvd) ??
+    (Array.isArray(r?.result) ? r.result.filter((x) => Number.isFinite(Number(x?.rtt))).length : null);
 
   let avg = toNumber(r?.avg);
   if (avg === null && Array.isArray(r?.result)) {
@@ -220,11 +167,8 @@ export async function onRequestGet(context) {
   const id = String(params?.id || "").trim();
   if (!id) return json({ error: "missing_id" }, 400);
 
+  // NOTE: results are usually public. We try without auth when no key is provided.
   const apiKey = extractAtlasKey(request, env);
-  if (!apiKey && !env.ATLAS_API_KEY) {
-    // Results for private measurements may require auth; fail early with a helpful message.
-    return json({ error: "missing_atlas_api_key" }, 400);
-  }
 
   const now = Math.floor(Date.now() / 1000);
   const start = now - 3600;
@@ -238,13 +182,11 @@ export async function onRequestGet(context) {
     );
 
     const rows = Array.isArray(rawResults) ? rawResults : [];
-    const prbIds = rows.map((r) => String(r?.prb_id || "")).filter(Boolean);
-    const probeMap = await fetchProbeMap(prbIds, apiKey, request.signal);
 
     const normalized = rows
       .map((r) => {
         const prbId = String(r?.prb_id || "");
-        const probe = probeMap[prbId] || { id: prbId };
+        const probe = { id: prbId };
         const type = String(r?.type || meta?.type || "").toLowerCase();
         if (type === "ping") return normalizePingResult(r, probe);
         if (type === "traceroute") return normalizeTracerouteResult(r, probe);

@@ -13,9 +13,9 @@ function getStoredAtlasKey() {
   }
 }
 
-function buildHeaders(extra = {}) {
+function buildHeaders({ atlasKey } = {}, extra = {}) {
   const headers = { ...extra };
-  const key = getStoredAtlasKey();
+  const key = String(atlasKey || getStoredAtlasKey() || "").trim();
   if (key) headers["X-Atlas-Key"] = key;
   return headers;
 }
@@ -31,9 +31,9 @@ export function setStoredAtlasKey(key) {
   }
 }
 
-export async function getAtlasMeasurement(id, { signal } = {}) {
+export async function getAtlasMeasurement(id, { signal, atlasKey } = {}) {
   const url = `/api/atlas/measurements/${encodeURIComponent(id)}`;
-  const res = await fetch(url, { method: "GET", headers: buildHeaders(), signal });
+  const res = await fetch(url, { method: "GET", headers: buildHeaders({ atlasKey }), signal });
   const text = await res.text();
   let data = null;
   try {
@@ -53,7 +53,7 @@ export async function getAtlasMeasurement(id, { signal } = {}) {
 
 export async function waitForAtlasMeasurement(
   id,
-  { onUpdate, signal, timeoutMs = DEFAULT_TIMEOUT_MS, pollMs = 1500, settlePolls = 2 } = {}
+  { onUpdate, signal, timeoutMs = DEFAULT_TIMEOUT_MS, pollMs = 1500, settlePolls = 2, atlasKey } = {}
 ) {
   const start = Date.now();
   let lastLen = null;
@@ -62,7 +62,7 @@ export async function waitForAtlasMeasurement(
   for (;;) {
     if (signal?.aborted) throw new Error("Aborted");
 
-    const m = await getAtlasMeasurement(id, { signal });
+    const m = await getAtlasMeasurement(id, { signal, atlasKey });
     if (onUpdate) onUpdate(m);
 
     const status = String(m?.status || "").toLowerCase();
