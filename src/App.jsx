@@ -531,10 +531,12 @@ function formatProbeLocation(probe) {
   if (!probe) return "-";
   const city = String(probe.city ?? "").trim();
   const country = String(probe.country ?? probe.country_code ?? "").trim();
+  const id = probe.id !== undefined && probe.id !== null ? String(probe.id).trim() : "";
   if (city && country) return `${city}, ${country}`;
   if (city) return city;
+  if (country && id) return `${country} · Probe ${id}`;
   if (country) return country;
-  if (probe.id !== undefined && probe.id !== null) return `Probe ${probe.id}`;
+  if (id) return `Probe ${id}`;
   return "-";
 }
 
