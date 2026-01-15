@@ -527,6 +527,17 @@ function probeHeader(x, idx) {
   return `--- probe ${idx + 1}: ${p.city || ""} ${p.country || ""} AS${p.asn || ""} ${p.network || ""}`.trim();
 }
 
+function formatProbeLocation(probe) {
+  if (!probe) return "-";
+  const city = String(probe.city ?? "").trim();
+  const country = String(probe.country ?? probe.country_code ?? "").trim();
+  if (city && country) return `${city}, ${country}`;
+  if (city) return city;
+  if (country) return country;
+  if (probe.id !== undefined && probe.id !== null) return `Probe ${probe.id}`;
+  return "-";
+}
+
 function applyGpTag(fromStr, tag) {
   const t = (tag || "").trim();
   if (!t || t === "any") return (fromStr || "").trim();
@@ -2924,7 +2935,7 @@ export default function App() {
                 <tr key={r.key}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                    {r.probe ? `${r.probe.city}, ${r.probe.country}` : "-"}
+                    {formatProbeLocation(r.probe)}
                   </td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
@@ -2981,7 +2992,7 @@ export default function App() {
               {trCompare.rows.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
@@ -3021,7 +3032,7 @@ export default function App() {
                   <tr key={row.key}>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
+                      {formatProbeLocation(row.probe)}
                     </td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
@@ -3078,7 +3089,7 @@ export default function App() {
               {mtrCompare.rows.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
@@ -3121,7 +3132,7 @@ export default function App() {
                   <tr key={row.key}>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
+                      {formatProbeLocation(row.probe)}
                     </td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
@@ -3171,7 +3182,7 @@ export default function App() {
                 <tr key={r.key}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                    {r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}
+                    {formatProbeLocation(r.probe)}
                   </td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
@@ -3228,7 +3239,7 @@ export default function App() {
               {httpCompare.rows.map((r) => (
                 <tr key={r.key}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4sc ?? "-"}</td>
