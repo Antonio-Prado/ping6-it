@@ -78,6 +78,51 @@ function normalizeProbeMeta(p) {
   };
 }
 
+
+const PROBE_META_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+const PROBE_META_CACHE_PREFIX = "https://ping6.it/_cache/atlas/probe-meta/";
+
+function probeMetaCacheKey(pid) {
+  return `${PROBE_META_CACHE_PREFIX}${encodeURIComponent(String(pid))}`;
+}
+
+function getDefaultCache() {
+  try {
+    return typeof caches !== "undefined" && caches.default ? caches.default : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheReadProbeMeta(cache, pid) {
+  if (!cache) return null;
+  try {
+    const req = new Request(probeMetaCacheKey(pid));
+    const res = await cache.match(req);
+    if (!res) return null;
+    const data = await res.json();
+    return data && typeof data === "object" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheWriteProbeMeta(cache, pid, meta) {
+  if (!cache || !meta || typeof meta !== "object") return;
+  try {
+    const req = new Request(probeMetaCacheKey(pid));
+    const res = new Response(JSON.stringify(meta), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": `public, max-age=${PROBE_META_CACHE_TTL_SECONDS}`,
+      },
+    });
+    await cache.put(req, res);
+  } catch {
+    // ignore
+  }
+}
+
 async function fetchProbeMetaMap(probeIds, apiKey, signal) {
   const ids = Array.from(new Set((probeIds || []).map((x) => String(x).trim()).filter(Boolean)));
   if (!ids.length) return new Map();
@@ -87,39 +132,60 @@ async function fetchProbeMetaMap(probeIds, apiKey, signal) {
   const limited = ids.slice(0, MAX);
 
   const fields = "id,country_code,asn_v4,asn_v6,geometry";
+  const cache = getDefaultCache();
 
-  // Attempt a batched lookup first. If the API doesn't support the filter, we'll
-  // still fall back to per-probe lookups for the missing ids.
+  // 1) Try cache first.
   const map = new Map();
+  if (cache) {
+    const cached = await Promise.all(limited.map((pid) => cacheReadProbeMeta(cache, pid)));
+    for (const meta of cached) {
+      if (meta?.id) map.set(String(meta.id), meta);
+    }
+  }
+
+  const remaining = limited.filter((pid) => !map.has(String(pid)));
+  if (!remaining.length) return map;
+
+  // 2) Attempt a batched lookup. If the API doesn't support the filter, we'll
+  // still fall back to per-probe lookups for the missing ids.
   try {
     const qs = new URLSearchParams({
-      id__in: limited.join(","),
-      limit: String(limited.length),
+      id__in: remaining.join(","),
+      limit: String(remaining.length),
       fields,
     });
     const data = await atlasGetJson(`/api/v2/probes/?${qs.toString()}`, apiKey, signal);
     const list = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
     for (const p of list) {
       const meta = normalizeProbeMeta(p);
-      if (meta.id) map.set(String(meta.id), meta);
+      if (meta.id) {
+        map.set(String(meta.id), meta);
+        await cacheWriteProbeMeta(cache, meta.id, meta);
+      }
     }
   } catch {
     // ignore
   }
 
-  // Fill gaps (or fully resolve) via per-probe lookups.
-  const missing = limited.filter((pid) => !map.has(String(pid)));
+  // 3) Fill gaps (or fully resolve) via per-probe lookups.
+  const missing = remaining.filter((pid) => !map.has(String(pid)));
   if (!missing.length) return map;
 
   const settled = await Promise.all(
     missing.map(async (pid) => {
+      // Cache might have been populated by a previous request while we were waiting.
+      const cached = await cacheReadProbeMeta(cache, pid);
+      if (cached?.id) return cached;
+
       try {
         const p = await atlasGetJson(
           `/api/v2/probes/${encodeURIComponent(pid)}/?fields=${encodeURIComponent(fields)}`,
           apiKey,
           signal
         );
-        return normalizeProbeMeta(p);
+        const meta = normalizeProbeMeta(p);
+        if (meta?.id) await cacheWriteProbeMeta(cache, meta.id, meta);
+        return meta;
       } catch {
         return null;
       }
