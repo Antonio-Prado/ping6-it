@@ -2555,6 +2555,37 @@ export default function App() {
             {turnstileStatus}
           </div>
         )}
+
+        {backend === "atlas" && running && (
+          <div
+            style={{
+              fontSize: 12,
+              opacity: 0.85,
+              width: "100%",
+              border: "1px solid rgba(17,24,39,.12)",
+              borderRadius: 10,
+              padding: 10,
+              background: "rgba(17,24,39,.03)",
+            }}
+            role="status"
+            aria-live="polite"
+          >
+            <div style={{ fontWeight: 700, fontSize: 13 }}>RIPE Atlas: measurement in progress…</div>
+            <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+              <div>
+                IPv4: {v4?.statusName || v4?.status || "waiting"} · {(v4?.results || []).length}/
+                {v4?.atlas?.measurement?.probes_scheduled || v4?.atlas?.measurement?.probes_requested || limit}
+              </div>
+              <div>
+                IPv6: {v6?.statusName || v6?.status || "waiting"} · {(v6?.results || []).length}/
+                {v6?.atlas?.measurement?.probes_scheduled || v6?.atlas?.measurement?.probes_requested || limit}
+              </div>
+              <div style={{ opacity: 0.75, marginTop: 2 }}>
+                Results can take a few seconds to appear. They will stream in as probes report back.
+              </div>
+            </div>
+          </div>
+        )}
         {err && (
           <div
             style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, width: "100%", whiteSpace: "pre-wrap" }}
