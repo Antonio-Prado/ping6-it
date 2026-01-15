@@ -1,0 +1,114 @@
+--- a/src/lib/atlas.js
++++ b/src/lib/atlas.js
+@@ -1,4 +1,8 @@
+-const DEFAULT_TIMEOUT_MS = 60000;
++const DEFAULT_TIMEOUT_MS = 180000;
++const DEFAULT_POLL_MIN_MS = 1200;
++const DEFAULT_POLL_MAX_MS = 12000;
++const DEFAULT_STABLE_POLLS = 3;
++const DEFAULT_SETTLE_AFTER_MS = 15000;
+ 
+ function sleep(ms) {
+   return new Promise((resolve) => setTimeout(resolve, ms));
+@@ -53,11 +57,47 @@
+ 
+ export async function waitForAtlasMeasurement(
+   id,
+-  { onUpdate, signal, timeoutMs = DEFAULT_TIMEOUT_MS, pollMs = 1500, settlePolls = 2, atlasKey } = {}
++  {
++    onUpdate,
++    signal,
++    timeoutMs = DEFAULT_TIMEOUT_MS,
++
++    // Backwards compatible:
++    // - pollMs (fixed interval) is still accepted
++    // - settlePolls (number of stable polls before "settled") is still accepted
++    pollMs,
++    settlePolls,
++
++    // Preferred (adaptive polling):
++    pollMinMs = DEFAULT_POLL_MIN_MS,
++    pollMaxMs = DEFAULT_POLL_MAX_MS,
++    stablePolls = DEFAULT_STABLE_POLLS,
++    settleAfterMs = DEFAULT_SETTLE_AFTER_MS,
++
++    atlasKey,
++  } = {}
+ ) {
+   const start = Date.now();
+   let lastLen = null;
+   let stable = 0;
++  let firstResultAt = null;
++
++  // If pollMs is provided, behave like legacy fixed polling (but still with jitter).
++  let currentPollMs = Number.isFinite(Number(pollMs)) ? Math.max(250, Number(pollMs)) : pollMinMs;
++  const effectiveStablePolls = Number.isFinite(Number(settlePolls))
++    ? Math.max(1, Number(settlePolls))
++    : Math.max(1, Number(stablePolls));
++
++  function expectedTotal(measurement) {
++    const n =
++      Number(
++        measurement?.atlas?.measurement?.probes_scheduled ??
++          measurement?.atlas?.measurement?.probes_requested ??
++          measurement?.atlas?.measurement?.probes ??
++          measurement?.atlas?.measurement?.probes_count
++      ) || 0;
++    return Number.isFinite(n) && n > 0 ? n : null;
++  }
+ 
+   for (;;) {
+     if (signal?.aborted) throw new Error("Aborted");
+@@ -67,21 +107,49 @@
+ 
+     const status = String(m?.status || "").toLowerCase();
+     const resultsLen = Array.isArray(m?.results) ? m.results.length : 0;
++    const total = expectedTotal(m);
+ 
+     if (status === "finished") return m;
+ 
++    // If we know how many probes were scheduled, consider the measurement complete
++    // once we have at least that many probe results.
++    if (total && resultsLen >= total) {
++      return { ...m, status: "finished", statusReason: "complete" };
++    }
++
++    if (resultsLen > 0 && !firstResultAt) firstResultAt = Date.now();
++
+     if (lastLen !== null && resultsLen === lastLen) stable += 1;
+     else stable = 0;
+     lastLen = resultsLen;
+ 
+-    if (resultsLen > 0 && stable >= settlePolls) {
+-      return { ...m, status: "finished", statusReason: "settled" };
++    // "Settled" means no new results for a while. Only use it when we don't know
++    // how many probes are expected, to avoid cutting off late-arriving probes.
++    if (!total && resultsLen > 0 && firstResultAt && stable >= effectiveStablePolls) {
++      if (Date.now() - firstResultAt >= settleAfterMs) {
++        return { ...m, status: "finished", statusReason: "settled" };
++      }
+     }
+ 
+     if (Date.now() - start > timeoutMs) {
+       return { ...m, status: status || "unknown", statusReason: "timeout" };
+     }
+ 
+-    await sleep(pollMs);
++    // Adaptive polling:
++    // - If no results yet, back off quickly.
++    // - If results are streaming in, poll more frequently.
++    // - If results stall (but we still expect more), back off slowly.
++    if (!Number.isFinite(Number(pollMs))) {
++      if (resultsLen === 0) {
++        currentPollMs = Math.min(pollMaxMs, Math.round(currentPollMs * 1.6));
++      } else if (stable === 0) {
++        currentPollMs = pollMinMs;
++      } else {
++        currentPollMs = Math.min(pollMaxMs, Math.round(currentPollMs * 1.25));
++      }
++    }
++
++    const jitter = Math.floor(Math.random() * 250);
++    await sleep(currentPollMs + jitter);
+   }
+ }
