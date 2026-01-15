@@ -1498,11 +1498,17 @@ export default function App() {
         // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
         const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
 
-        const waitFn = backend === "atlas" ? waitForAtlasMeasurement : waitForMeasurement;
-        const [r4, r6] = await Promise.all([
-          waitFn(m4.id, { onUpdate: setV4, signal: ac.signal }),
-          waitFn(m6.id, { onUpdate: setV6, signal: ac.signal }),
-        ]);
+        const [r4, r6] = await Promise.all(
+          backend === "atlas"
+            ? [
+                waitForAtlasMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal, atlasKey: atlasApiKey }),
+                waitForAtlasMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal, atlasKey: atlasApiKey }),
+              ]
+            : [
+                waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
+                waitForMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal }),
+              ]
+        );
 
         setV4(r4);
         setV6(r6);
