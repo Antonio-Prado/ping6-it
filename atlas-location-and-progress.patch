@@ -1,0 +1,276 @@
+diff --git a/functions/api/atlas/measurements/[id].js b/functions/api/atlas/measurements/[id].js
+index 54a75a3..2a60bb3 100644
+--- a/functions/api/atlas/measurements/[id].js
++++ b/functions/api/atlas/measurements/[id].js
+@@ -43,6 +43,60 @@ async function atlasGetJson(path, apiKey, signal) {
+   return data;
+ }
+ 
++function normalizeProbeMeta(p) {
++  const id = String(p?.id ?? "").trim();
++  const countryCode = String(p?.country_code ?? "").trim();
++  const asnV6 = toNumber(p?.asn_v6);
++  const asnV4 = toNumber(p?.asn_v4);
++  const asn = asnV6 ?? asnV4 ?? undefined;
++  const network = String(p?.asn_v6_name ?? p?.asn_v4_name ?? "").trim() || undefined;
++
++  let latitude;
++  let longitude;
++  const coords = p?.geometry?.coordinates;
++  if (Array.isArray(coords) && coords.length >= 2) {
++    const lon = Number(coords[0]);
++    const lat = Number(coords[1]);
++    if (Number.isFinite(lat) && Number.isFinite(lon)) {
++      latitude = lat;
++      longitude = lon;
++    }
++  }
++
++  return {
++    id: id || undefined,
++    country: countryCode || undefined,
++    country_code: countryCode || undefined,
++    asn,
++    network,
++    latitude,
++    longitude,
++  };
++}
++
++async function fetchProbeMetaMap(probeIds, apiKey, signal) {
++  const ids = Array.from(new Set((probeIds || []).map((x) => String(x).trim()).filter(Boolean)));
++  if (!ids.length) return new Map();
++
++  // Keep it bounded to avoid slow responses.
++  if (ids.length > 80) return new Map();
++
++  const qs = new URLSearchParams({
++    id__in: ids.join(","),
++    limit: String(ids.length),
++    fields: "id,country_code,asn_v4,asn_v6,asn_v4_name,asn_v6_name,geometry",
++  });
++
++  const data = await atlasGetJson(`/api/v2/probes/?${qs.toString()}`, apiKey, signal);
++  const list = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
++  const map = new Map();
++  for (const p of list) {
++    const meta = normalizeProbeMeta(p);
++    if (meta.id) map.set(String(meta.id), meta);
++  }
++  return map;
++}
++
+ function toNumber(x) {
+   const n = Number(x);
+   return Number.isFinite(n) ? n : null;
+@@ -183,10 +237,16 @@ export async function onRequestGet(context) {
+ 
+     const rows = Array.isArray(rawResults) ? rawResults : [];
+ 
++    const probeMeta = await fetchProbeMetaMap(
++      rows.map((r) => r?.prb_id),
++      apiKey,
++      request.signal
++    );
++
+     const normalized = rows
+       .map((r) => {
+         const prbId = String(r?.prb_id || "");
+-        const probe = { id: prbId };
++        const probe = probeMeta.get(prbId) || { id: prbId };
+         const type = String(r?.type || meta?.type || "").toLowerCase();
+         if (type === "ping") return normalizePingResult(r, probe);
+         if (type === "traceroute") return normalizeTracerouteResult(r, probe);
+diff --git a/src/App.jsx b/src/App.jsx
+index cd64061..221593f 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -279,6 +279,11 @@ const COPY = {
+     placeholderTargetHttp: "URL or hostname (e.g. https://example.com/)",
+     placeholderTargetDefault: "hostname (e.g. example.com)",
+     statusPreparing: "Preparing measurement...",
++    statusCreatingMeasurements: "Creating measurements...",
++    statusRunningMeasurements: "Running measurement...",
++    atlasSlowNote: "Atlas can take a bit longer to return results. Leave this page open.",
++    atlasFamilyStatus: ({ af, status, got, total }) => `Atlas IPv${af}: ${status} · ${got}/${total} probes`,
++    atlasFamilyWaiting: ({ af }) => `Atlas IPv${af}: waiting for probes...`,
+     statusWaitingVerification: ({ stepLabel }) => `Waiting for human verification${stepLabel}...`,
+     errorTargetRequired: "Please enter a target hostname or URL.",
+     errorHttpTarget: "For HTTP, enter a valid URL or hostname.",
+@@ -528,6 +533,18 @@ function probeHeader(x, idx) {
+   return `--- probe ${idx + 1}: ${p.city || ""} ${p.country || ""} AS${p.asn || ""} ${p.network || ""}`.trim();
+ }
+ 
++function formatProbeLocation(probe) {
++  if (!probe) return "-";
++  const city = String(probe.city ?? "").trim();
++  const country = String(probe.country ?? probe.country_code ?? "").trim();
++  if (city && country) return `${city}, ${country}`;
++  if (city) return city;
++  if (country && probe.id !== undefined && probe.id !== null) return `${country} · Probe ${probe.id}`;
++  if (country) return country;
++  if (probe.id !== undefined && probe.id !== null) return `Probe ${probe.id}`;
++  return "-";
++}
++
+ function applyGpTag(fromStr, tag) {
+   const t = (tag || "").trim();
+   if (!t || t === "any") return (fromStr || "").trim();
+@@ -1039,6 +1056,23 @@ export default function App() {
+ 
+   const maxProbes = backend === "atlas" ? 50 : 10;
+ 
++  const atlasProgressLine = useCallback(
++    (v, af) => {
++      const status = String(v?.statusName || v?.status || "").trim() || "in-progress";
++      const got = Array.isArray(v?.results) ? v.results.length : 0;
++      const m = v?.atlas?.measurement;
++      const totalRaw = Number(m?.probes_scheduled ?? m?.participant_count ?? m?.probes_requested);
++      const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : "?";
++
++      if (!got && (status.toLowerCase().includes("ongoing") || status.toLowerCase().includes("scheduled") || status.toLowerCase().includes("in"))) {
++        return t("atlasFamilyWaiting", { af });
++      }
++
++      return t("atlasFamilyStatus", { af, status, got, total });
++    },
++    [t]
++  );
++
+   useEffect(() => {
+     if (typeof window === "undefined") return;
+     try {
+@@ -1112,6 +1146,7 @@ export default function App() {
+   const [shareUrl, setShareUrl] = useState("");
+ 
+   const [running, setRunning] = useState(false);
++  const [runStatus, setRunStatus] = useState("");
+   const [err, setErr] = useState("");
+   const [v4, setV4] = useState(null);
+   const [v6, setV6] = useState(null);
+@@ -1416,6 +1451,7 @@ export default function App() {
+     setV6(null);
+     setShowRaw(false);
+     setTurnstileStatus(t("statusPreparing"));
++    setRunStatus("");
+     setRunning(true);
+     let turnstileTimedOut = false;
+     try {
+@@ -1496,9 +1532,13 @@ export default function App() {
+         clearTimeout(turnstileTimeoutId);
+         setTurnstileStatus("");
+ 
++        setRunStatus(t("statusCreatingMeasurements"));
++
+         // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
+         const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
+ 
++        setRunStatus(t("statusRunningMeasurements"));
++
+         const [r4, r6] = await Promise.all(
+           backend === "atlas"
+             ? [
+@@ -1577,6 +1617,7 @@ export default function App() {
+     } finally {
+       setRunning(false);
+       setTurnstileStatus("");
++      setRunStatus("");
+       setMultiRunStatus(null);
+     }
+   }
+@@ -2543,6 +2584,32 @@ export default function App() {
+             {turnstileStatus}
+           </div>
+         )}
++
++        {(running && (runStatus || backend === "atlas")) && (
++          <div
++            style={{
++              fontSize: 12,
++              opacity: 0.85,
++              width: "100%",
++              border: "1px solid rgba(17,24,39,.12)",
++              borderRadius: 10,
++              padding: 10,
++              background: "rgba(17,24,39,.03)",
++            }}
++            role="status"
++            aria-live="polite"
++          >
++            <div>{runStatus || t("statusRunningMeasurements")}</div>
++            {backend === "atlas" && (
++              <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
++                <div>{atlasProgressLine(v4, 4)}</div>
++                <div>{atlasProgressLine(v6, 6)}</div>
++                <div style={{ opacity: 0.75, marginTop: 2 }}>{t("atlasSlowNote")}</div>
++              </div>
++            )}
++          </div>
++        )}
++
+         {err && (
+           <div
+             style={{ background: "#fee", color: "#111", border: "1px solid #f99", padding: 12, width: "100%", whiteSpace: "pre-wrap" }}
+@@ -2923,7 +2990,7 @@ export default function App() {
+                 <tr key={r.key}>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+-                    {r.probe ? `${r.probe.city}, ${r.probe.country}` : "-"}
++                    {formatProbeLocation(r.probe)}
+                   </td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+@@ -2980,7 +3047,7 @@ export default function App() {
+               {trCompare.rows.map((r) => (
+                 <tr key={r.key}>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
++                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+ 
+@@ -3020,7 +3087,7 @@ export default function App() {
+                   <tr key={row.key}>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+-                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
++                      {formatProbeLocation(row.probe)}
+                     </td>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
+@@ -3077,7 +3144,7 @@ export default function App() {
+               {mtrCompare.rows.map((r) => (
+                 <tr key={r.key}>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
++                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+ 
+@@ -3120,7 +3187,7 @@ export default function App() {
+                   <tr key={row.key}>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+-                      {row.probe?.city ? `${row.probe.city}, ${row.probe.country}` : "-"}
++                      {formatProbeLocation(row.probe)}
+                     </td>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
+                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
+@@ -3170,7 +3237,7 @@ export default function App() {
+                 <tr key={r.key}>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
+-                    {r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}
++                    {formatProbeLocation(r.probe)}
+                   </td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+@@ -3227,7 +3294,7 @@ export default function App() {
+               {httpCompare.rows.map((r) => (
+                 <tr key={r.key}>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.city ? `${r.probe.city}, ${r.probe.country}` : "-"}</td>
++                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4sc ?? "-"}</td>
