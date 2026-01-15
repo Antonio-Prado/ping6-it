@@ -1,0 +1,37 @@
+--- a/functions/api/atlas/measurements-pair.js
++++ b/functions/api/atlas/measurements-pair.js
+@@ -109,11 +109,14 @@
+   return Array.from(out).join(",");
+ }
+ 
+-function enforceDualStackProbes(probes) {
+-  // We always create a v4+v6 pair. To avoid "No suitable probes" on the v4 side
+-  // (e.g., when v6 selected v6-only probes), require probes that can do both.
+-  // These are system tags documented by RIPE Atlas.
+-  const mustHave = ["system-ipv4-works", "system-ipv6-works"];
++function enforceDualStackProbes(probes, flow) {
++  // ping6.it always creates a v4+v6 pair.
++  // If the user enables "IPv6-capable probes only" (flow=v6first), we must ensure probes can do BOTH
++  // protocols; otherwise the v4 side may fail (e.g., v6-only probes) or Atlas may allocate probes that
++  // cannot execute one of the two measurements.
++  // If the user disables it (flow=v4first), we prioritise IPv4 coverage and accept that some probes may
++  // not return IPv6 results.
++  const mustHave = flow === "v6first" ? ["system-ipv4-works", "system-ipv6-works"] : ["system-ipv4-works"];
+   return (probes || []).map((p) => ({
+     ...p,
+     tags_include: mergeCsvTags(p.tags_include, mustHave),
+@@ -245,7 +248,13 @@
+   }
+ 
+   const { probes, warnings } = parseAtlasProbeRequest(base.locations?.[0] || {}, limit);
+-  const probesDualStack = enforceDualStackProbes(probes);
++  const probesDualStack = enforceDualStackProbes(probes, flow);
++
++  if (flow !== "v6first") {
++    warnings.push(
++      "IPv6-capable probes only is disabled: Atlas will prioritise IPv4 coverage; the IPv6 side may have fewer results if some probes lack IPv6 connectivity."
++    );
++  }
+ 
+   try {
+     // Create the IPv4+IPv6 pair in a *single* Atlas API request.
