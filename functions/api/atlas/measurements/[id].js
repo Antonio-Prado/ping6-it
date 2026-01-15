@@ -213,7 +213,14 @@ function normalizeTracerouteResult(r, probe) {
 }
 
 function normalizeDnsResult(r, probe) {
-  const total = toNumber(r?.rt);
+  const total =
+    toNumber(r?.rt) ??
+    (() => {
+      const resultset = Array.isArray(r?.resultset) ? r.resultset : [];
+      const rts = resultset.map((x) => toNumber(x?.rt)).filter((x) => x !== null);
+      if (!rts.length) return null;
+      return rts.reduce((sum, val) => sum + val, 0) / rts.length;
+    })();
   return {
     probe,
     result: {
