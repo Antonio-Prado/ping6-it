@@ -316,6 +316,16 @@ const COPY = {
     errorHumanVerification: "Human verification failed. Please retry.",
     errorHumanVerificationTimeout: "Human verification timed out. Please retry.",
     errorRequestFailed: ({ status }) => `Request failed (${status})`,
+    errorRateLimited: ({ retryAfter }) =>
+      `Too many requests (rate limit). Please wait${retryAfter ? ` ${retryAfter}` : ""} and try again.`,
+    errorUpstreamUnavailable: "The measurement service is temporarily unavailable. Please retry in a moment.",
+    errorNetworkFailure: "Network error. Please check your connection and retry.",
+    errorTurnstileChallengeFailed: ({ code }) =>
+      `Human verification failed (Turnstile error ${code}). Try refreshing the page, disabling blockers/VPN, or switching browser/network.`,
+    errorTurnstileConfig: ({ code }) =>
+      `Human verification is misconfigured (Turnstile error ${code}). Please contact the site owner.`,
+    errorTurnstileNetwork: ({ code }) =>
+      `Human verification could not load (Turnstile error ${code}). Please check your connection and disable blockers, then retry.`,
   },
 };
 
@@ -1262,7 +1272,22 @@ export default function App() {
           if (!pending || pending.done) return;
           pending.done = true;
           pending.cleanup();
-          pending.reject(new Error(`Turnstile error: ${code || "unknown"}`));
+
+          const raw = code ?? "unknown";
+          const n = Number(raw);
+          const family = Number.isFinite(n) ? Math.floor(n / 1000) : null;
+
+          let msg;
+          if (family === 600 || family === 300) msg = t("errorTurnstileChallengeFailed", { code: raw });
+          else if (family === 110 || family === 400) msg = t("errorTurnstileConfig", { code: raw });
+          else if (family === 120 || family === 102 || family === 103 || family === 104 || family === 106)
+            msg = t("errorTurnstileNetwork", { code: raw });
+          else msg = t("errorTurnstileChallengeFailed", { code: raw });
+
+          const err = new Error(msg);
+          err.kind = "turnstile";
+          err.turnstileCode = raw;
+          pending.reject(err);
         },
         "expired-callback": () => {
           const pending = turnstilePendingRef.current;
@@ -1316,6 +1341,123 @@ export default function App() {
     });
   }
 
+  function formatRetryAfterHeader(value) {
+    const s = String(value || "").trim();
+    if (!s) return "";
+
+    const n = Number(s);
+    if (Number.isFinite(n) && n > 0) return `${Math.round(n)}s`;
+
+    const d = Date.parse(s);
+    if (!Number.isNaN(d)) {
+      const delta = Math.round((d - Date.now()) / 1000);
+      if (Number.isFinite(delta) && delta > 0) return `${delta}s`;
+    }
+
+    return s;
+  }
+
+  function formatParamsList(params) {
+    if (!params || typeof params !== "object") return "";
+    const entries = Object.entries(params)
+      .map(([k, v]) => [String(k), typeof v === "string" ? v : JSON.stringify(v)])
+      .filter(([k, v]) => k && v);
+
+    if (!entries.length) return "";
+    return entries.map(([k, v]) => `- ${k}: ${v}`).join("\n");
+  }
+
+  function buildPairErrorMessage({ status, data, retryAfter }) {
+    const retry = formatRetryAfterHeader(retryAfter || data?.retryAfter);
+    const code = data?.error;
+
+    if (status === 429) {
+      return t("errorRateLimited", { retryAfter: retry });
+    }
+
+    if (code === "turnstile_failed") {
+      const codes = Array.isArray(data?.codes) ? data.codes.filter(Boolean) : [];
+      return codes.length ? `${t("errorHumanVerification")}
+Codes: ${codes.join(", ")}` : t("errorHumanVerification");
+    }
+
+    if (code === "turnstile_bad_action" || code === "turnstile_bad_hostname") {
+      return t("errorTurnstileConfig", { code: "server" });
+    }
+
+    if (code === "missing_atlas_api_key") {
+      return "RIPE Atlas needs an API key. Paste it in the Settings panel and retry.";
+    }
+
+    if (code === "invalid_json" || code === "missing_fields") {
+      return t("errorUpstreamUnavailable");
+    }
+
+    if (code === "invalid_target" || code === "invalid_type" || code === "invalid_flow" || code === "unsupported_type") {
+      return "Invalid request. Please review your input and retry.";
+    }
+
+    if (code === "globalping_failed") {
+      const upstream = data?.details || {};
+      const isValidation = upstream?.error?.type === "validation_error";
+      const header = isValidation
+        ? `Globalping rejected the request (${data?.status || status})`
+        : `Globalping failed (${data?.status || status})`;
+      const detailMsg =
+        upstream?.error?.message || upstream?.error?.type || upstream?.message || upstream?.error || upstream?.raw || "";
+
+      const paramLines = formatParamsList(upstream?.error?.params);
+      const pieces = [header];
+      if (detailMsg) pieces.push(String(detailMsg));
+      if (paramLines) pieces.push(paramLines);
+      return pieces.join("\n");
+    }
+
+    if (code === "atlas_failed") {
+      const upstream = data?.details || {};
+      const header = `RIPE Atlas failed (${data?.status || status})`;
+      const detailMsg = upstream?.message || upstream?.error || upstream?.raw || "";
+      const pieces = [header];
+      if (detailMsg) pieces.push(String(detailMsg));
+      return pieces.join("\n");
+    }
+
+    // Generic fallbacks.
+    if (status >= 500) return t("errorUpstreamUnavailable");
+    return code || t("errorRequestFailed", { status });
+  }
+
+  function toUserFacingError(e) {
+    if (!e) return t("errorUpstreamUnavailable");
+
+    // AbortController / fetch abort.
+    if (e.name === "AbortError" || e.message === "Aborted") {
+      return t("errorCancelled");
+    }
+
+    // Our API errors (createMeasurementsPair).
+    if (e.kind === "api" && typeof e.message === "string" && e.message) {
+      return e.message;
+    }
+
+    // Globalping/Atlas polling errors.
+    const status = e.status;
+    if (status === 429) {
+      return t("errorRateLimited", { retryAfter: formatRetryAfterHeader(e.retryAfter) });
+    }
+
+    if (status && status >= 500) {
+      return t("errorUpstreamUnavailable");
+    }
+
+    // Typical fetch network errors.
+    if (e instanceof TypeError && String(e.message || "").toLowerCase().includes("fetch")) {
+      return t("errorNetworkFailure");
+    }
+
+    return e.message || String(e);
+  }
+
   async function createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, signal) {
     const url = backend === "atlas" ? "/api/atlas/measurements-pair" : "/api/measurements-pair";
     const headers = { "content-type": "application/json" };
@@ -1338,11 +1480,13 @@ export default function App() {
     }
 
     if (!res.ok) {
-      const msg =
-        data?.error === "turnstile_failed"
-          ? t("errorHumanVerification")
-          : data?.error || t("errorRequestFailed", { status: res.status });
+      const retryAfter = res.headers.get("retry-after") || undefined;
+      const msg = buildPairErrorMessage({ status: res.status, data, retryAfter });
       const err = new Error(msg);
+      err.kind = "api";
+      err.status = res.status;
+      err.code = data?.error;
+      err.retryAfter = retryAfter || data?.retryAfter;
       err.details = data;
       throw err;
     }
@@ -1661,7 +1805,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      const message = e?.message || String(e);
+      const message = toUserFacingError(e);
       if (message === t("errorCancelled") && turnstileTimedOut) {
         setErr(t("errorHumanVerificationTimeout"));
       } else {

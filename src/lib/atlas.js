@@ -4,6 +4,30 @@ const DEFAULT_POLL_MAX_MS = 12000;
 const DEFAULT_STABLE_POLLS = 3;
 const DEFAULT_SETTLE_AFTER_MS = 15000;
 
+async function readTextSafe(resp) {
+  try {
+    return await resp.text();
+  } catch {
+    return "";
+  }
+}
+
+function tryParseJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function makeHttpError(message, meta) {
+  const err = new Error(message);
+  err.kind = "http";
+  if (meta && typeof meta === "object") Object.assign(err, meta);
+  return err;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -38,20 +62,26 @@ export function setStoredAtlasKey(key) {
 export async function getAtlasMeasurement(id, { signal, atlasKey } = {}) {
   const url = `/api/atlas/measurements/${encodeURIComponent(id)}`;
   const res = await fetch(url, { method: "GET", headers: buildHeaders({ atlasKey }), signal });
-  const text = await res.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // ignore
-  }
+
+  const text = await readTextSafe(res);
+  const parsed = tryParseJson(text);
+  const data = parsed !== null ? parsed : text ? { raw: text } : null;
+
   if (!res.ok) {
     const msg =
-      (data && (data.error || data.message)) ||
+      (parsed && (parsed.error || parsed.message)) ||
       (text && text.slice(0, 300)) ||
       `Atlas request failed (${res.status})`;
-    throw new Error(String(msg));
+
+    throw makeHttpError(String(msg), {
+      status: res.status,
+      url,
+      data: parsed || null,
+      text,
+      retryAfter: res.headers.get("retry-after") || undefined,
+    });
   }
+
   return data;
 }
 

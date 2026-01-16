@@ -33,6 +33,7 @@ async function postJson(url, payload, signal) {
   if (!res.ok) {
     const err = new Error("Upstream error");
     err.status = res.status;
+    err.retryAfter = res.headers.get("retry-after") || undefined;
     err.data = data;
     throw err;
   }
@@ -140,6 +141,6 @@ export async function onRequestPost(context) {
 
     return json({ m4, m6 });
   } catch (e) {
-    return json({ error: "globalping_failed", status: e.status || 500, details: e.data || {} }, e.status || 500);
+    return json({ error: "globalping_failed", status: e.status || 500, retryAfter: e.retryAfter || undefined, details: e.data || {} }, e.status || 500);
   }
 }
