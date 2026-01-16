@@ -85,6 +85,24 @@ function formatElapsed(msValue) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatAgeHuman(msValue) {
+  const ms = Number(msValue);
+  if (!Number.isFinite(ms) || ms < 0) return "-";
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutesTotal = Math.floor(totalSeconds / 60);
+  const hoursTotal = Math.floor(minutesTotal / 60);
+  const days = Math.floor(hoursTotal / 24);
+
+  const seconds = totalSeconds % 60;
+  const minutes = minutesTotal % 60;
+  const hours = hoursTotal % 24;
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hoursTotal > 0) return `${hoursTotal}h ${minutes}m`;
+  if (minutesTotal > 0) return `${minutesTotal}m ${seconds}s`;
+  return `${totalSeconds}s`;
+}
+
 function clampInputValue(value, { min, max, fallback, allowEmpty = false }) {
   const raw = `${value ?? ""}`.trim();
   if (!raw) return allowEmpty ? "" : String(fallback);
@@ -275,6 +293,14 @@ const COPY = {
     asnMetaRegistry: "Registry",
     asnMetaIana: "IANA block",
     asnMetaAnnounced: "Announced",
+    asnMetaProvenance: ({ source, cache, age, fetchedAt }) => {
+      const parts = [];
+      if (source) parts.push(`source: ${source}`);
+      if (cache) parts.push(`cache: ${cache}`);
+      if (age) parts.push(`fetched ${age} ago`);
+      if (fetchedAt) parts.push(`at ${fetchedAt}`);
+      return parts.length ? `Metadata · ${parts.join(' · ')}` : 'Metadata';
+    },
     helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
     helpIpv6Only:
       "Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target.",
@@ -1187,6 +1213,7 @@ export default function App() {
 
   // ASN details (in-app)
   const [asnCard, setAsnCard] = useState(null);
+  const [asnCardFromUrl, setAsnCardFromUrl] = useState(null);
 
   // Geo presets UI (macro + sub-regions)
   const [macroId, setMacroId] = useState("eu");
@@ -1212,6 +1239,15 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [asnCard]);
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (asnCard?.asn) url.searchParams.set('asncard', String(asnCard.asn));
+    else url.searchParams.delete('asncard');
+    window.history.replaceState(null, '', url.toString());
+  }, [asnCard?.asn]);
 
   useEffect(() => {
     const asn = asnCard?.asn;
@@ -1421,6 +1457,10 @@ export default function App() {
       setProbeIsp,
       setDeltaThreshold,
     });
+
+    const asnCardRaw = params.get("asncard");
+    const asnCardAsn = normalizeAsn(asnCardRaw);
+    if (asnCardAsn) setAsnCardFromUrl(asnCardAsn);
 
     const reportRaw = params.get("report");
     const dataRaw = params.get("data");
@@ -2163,6 +2203,7 @@ ${paramLines}` : header;
     if (probeAsn) params.set("asn", probeAsn);
     if (probeIsp) params.set("isp", probeIsp);
     if (deltaThreshold) params.set("delta", deltaThreshold);
+    if (asnCard?.asn) params.set("asncard", String(asnCard.asn));
 
     if (cmd === "ping" || cmd === "mtr") params.set("packets", String(packets || 3));
     if (cmd === "traceroute" || cmd === "mtr") {
@@ -2493,6 +2534,26 @@ ${paramLines}` : header;
     if (!showMtrTable) return null;
     return buildMtrCompare(v4, v6, { strict: strictCompare });
   }, [showMtrTable, v4, v6, strictCompare]);
+
+  const asnContext = useMemo(() => {
+    if (cmd === 'ping' && pingCompare) return { kind: 'ping', rows: pingCompare.rows };
+    if (cmd === 'traceroute' && trCompare) return { kind: 'traceroute', rows: trCompare.rows };
+    if (cmd === 'mtr' && mtrCompare) return { kind: 'mtr', rows: mtrCompare.rows };
+    if (cmd === 'dns' && dnsCompare) return { kind: 'dns', rows: dnsCompare.rows };
+    if (cmd === 'http' && httpCompare) return { kind: 'http', rows: httpCompare.rows };
+    return { kind: cmd, rows: [] };
+  }, [cmd, pingCompare, trCompare, mtrCompare, dnsCompare, httpCompare]);
+
+  useEffect(() => {
+    const asn = asnCardFromUrl;
+    if (!asn) return;
+    if (asnCard) return;
+
+    const kind = asnContext?.kind || cmd;
+    const rows = Array.isArray(asnContext?.rows) ? asnContext.rows : [];
+    openAsnCard(asn, kind, rows);
+    setAsnCardFromUrl(null);
+  }, [asnCardFromUrl, asnCard, asnContext, cmd]);
 
   const deltaThresholdValue = Number(deltaThreshold);
   const thresholdEnabled = Number.isFinite(deltaThresholdValue) && deltaThresholdValue > 0;
@@ -4124,8 +4185,25 @@ ${paramLines}` : header;
                 const registry = meta?.registry?.name || '-';
                 const announced = typeof meta?.announced === 'boolean' ? (meta.announced ? t('yes') : t('no')) : '-';
 
+                const source = (() => {
+                  const s = String(meta?.source || '').trim();
+                  if (s === 'ripestat-as-overview') return 'RIPEstat (as-overview)';
+                  return s || '-';
+                })();
+
+                const cache = (() => {
+                  const s = String(meta?.cache?.status || '').trim();
+                  return s || '-';
+                })();
+
+                const fetchedAtDate = meta?.fetchedAt ? new Date(meta.fetchedAt) : null;
+                const age = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? formatAgeHuman(Date.now() - fetchedAtDate.getTime()) : null;
+                const fetchedAtLabel = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? fetchedAtDate.toLocaleString(dateLocale) : null;
+                const provenance = t('asnMetaProvenance', { source, cache, age, fetchedAt: fetchedAtLabel });
+
                 return (
                   <>
+                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }} title={provenance}>{provenance}</div>
                     <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
                       <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
                         <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaHolder')}</div>
