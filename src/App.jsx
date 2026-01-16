@@ -6,6 +6,10 @@ import { GEO_PRESETS } from "./geoPresets";
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
 const TURNSTILE_EXEC_TIMEOUT_MS = 30000;
+
+// ASN metadata cache (in-browser, per page load)
+const ASN_META_CACHE = new Map();
+const ASN_META_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 function loadTurnstileScript() {
   if (typeof window === "undefined") return Promise.reject(new Error("Turnstile can only run in the browser."));
   if (window.turnstile) return Promise.resolve();
@@ -265,6 +269,12 @@ const COPY = {
     asnDetailsCopy: "Copy ASN",
     asnDetailsUseFilter: "Use as ASN filter",
     asnDetailsClose: "Close",
+    asnMetaLoading: "Loading ASN metadata…",
+    asnMetaUnavailable: "ASN metadata unavailable.",
+    asnMetaHolder: "Holder",
+    asnMetaRegistry: "Registry",
+    asnMetaIana: "IANA block",
+    asnMetaAnnounced: "Announced",
     helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
     helpIpv6Only:
       "Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target.",
@@ -1150,6 +1160,14 @@ function computeAsnSummary(kind, rows) {
 }
 
 
+async function fetchAsnMeta(asn, signal) {
+  const url = `/api/asn/${encodeURIComponent(String(asn))}`;
+  const resp = await fetch(url, { method: 'GET', signal });
+  if (!resp.ok) throw new Error(`ASN metadata request failed (${resp.status})`);
+  return await resp.json();
+}
+
+
 export default function App() {
   // Globalping UI
   const [target, setTarget] = useState("example.com");
@@ -1194,6 +1212,34 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [asnCard]);
+
+  useEffect(() => {
+    const asn = asnCard?.asn;
+    if (!asn) return;
+
+    const cached = ASN_META_CACHE.get(asn);
+    const now = Date.now();
+    if (cached && now - cached.at < ASN_META_CACHE_TTL_MS) {
+      setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, meta: cached.data, metaStatus: 'ok', metaError: null } : prev));
+      return;
+    }
+
+    const ac = new AbortController();
+    setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, metaStatus: 'loading', metaError: null } : prev));
+
+    (async () => {
+      try {
+        const meta = await fetchAsnMeta(asn, ac.signal);
+        ASN_META_CACHE.set(asn, { at: Date.now(), data: meta });
+        setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, meta, metaStatus: 'ok', metaError: null } : prev));
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, metaStatus: 'error', metaError: String(e || '') } : prev));
+      }
+    })();
+
+    return () => ac.abort();
+  }, [asnCard?.asn]);
 
   const macroPreset = useMemo(
     () => GEO_PRESETS.find((p) => p.id === macroId) ?? GEO_PRESETS[0],
@@ -2566,7 +2612,7 @@ ${paramLines}` : header;
   function openAsnCard(asnValue, kind, rows) {
     const asn = normalizeAsn(asnValue);
     if (!asn) return;
-    setAsnCard({ asn, kind, rows });
+    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'idle', metaError: null });
   }
 
   function renderAsnCell(asnValue, kind, rows) {
@@ -4070,6 +4116,40 @@ ${paramLines}` : header;
               </div>
 
               <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>{t('asnDetailsAbout')}</div>
+
+              {(() => {
+                const status = asnCard.metaStatus || 'idle';
+                const meta = asnCard.meta;
+                const holder = status === 'loading' ? t('asnMetaLoading') : status === 'error' ? t('asnMetaUnavailable') : (meta?.holder || '-');
+                const registry = meta?.registry?.name || '-';
+                const announced = typeof meta?.announced === 'boolean' ? (meta.announced ? t('yes') : t('no')) : '-';
+
+                return (
+                  <>
+                    <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
+                      <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaHolder')}</div>
+                        <div>{holder}</div>
+                      </div>
+                      <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaRegistry')}</div>
+                        <div>{registry}</div>
+                      </div>
+                      <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaAnnounced')}</div>
+                        <div>{announced}</div>
+                      </div>
+                    </div>
+
+                    {meta?.registry?.desc ? (
+                      <div style={{ marginTop: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 13 }}>
+                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaIana')}</div>
+                        <div>{meta.registry.desc}</div>
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
 
               <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
                 <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
