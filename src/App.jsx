@@ -1022,6 +1022,7 @@ export default function App() {
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
   const [requireV6Capable, setRequireV6Capable] = useState(true);
+  const [runWarnings, setRunWarnings] = useState([]);
 
   // Geo presets UI (macro + sub-regions)
   const [macroId, setMacroId] = useState("eu");
@@ -1483,6 +1484,7 @@ export default function App() {
         setTarget(normalizedTarget);
         setV4(null);
         setV6(null);
+        setRunWarnings([]);
 
         const base = {
           type: cmd,
@@ -1509,7 +1511,8 @@ export default function App() {
         setTurnstileStatus("");
 
         // Create the IPv4/IPv6 pair server-side so the Turnstile token is validated only once.
-        const { m4, m6 } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
+        const { m4, m6, warnings } = await createMeasurementsPair({ turnstileToken, base, measurementOptions, flow }, ac.signal);
+        if (Array.isArray(warnings) && warnings.length) setRunWarnings(warnings);
 
         const [r4, r6] = await Promise.all(
           backend === "atlas"
@@ -2555,6 +2558,28 @@ export default function App() {
         {turnstileStatus && (
           <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }} aria-live="polite">
             {turnstileStatus}
+          </div>
+        )}
+
+        {backend === "atlas" && runWarnings.length > 0 && (
+          <div
+            style={{
+              fontSize: 12,
+              opacity: 0.9,
+              width: "100%",
+              border: "1px solid rgba(17,24,39,.12)",
+              borderRadius: 10,
+              padding: 10,
+              background: "rgba(17,24,39,.02)",
+            }}
+            role="note"
+          >
+            <div style={{ fontWeight: 700, fontSize: 13 }}>RIPE Atlas notes</div>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
+              {runWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
           </div>
         )}
 
