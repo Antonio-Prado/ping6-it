@@ -1419,7 +1419,7 @@ export default function App() {
   }
 
   function buildPairErrorMessage({ status, data, retryAfter }) {
-    const retry = formatRetryAfterHeader(retryAfter || data?.retryAfter);
+    const retry = formatRetryAfterHeader(retryAfter || data?.retryAfter || data?.rateLimitReset);
     const code = data?.error;
 
     if (status === 429) {
@@ -1428,6 +1428,15 @@ export default function App() {
 
     if (code === "turnstile_failed") {
       const codes = Array.isArray(data?.codes) ? data.codes.filter(Boolean) : [];
+      const norm = codes.map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+
+      // Server-side Turnstile siteverify failure codes are strings.
+      if (norm.includes("timeout-or-duplicate")) return t("errorTurnstileTokenExpired");
+      if (norm.includes("missing-input-secret") || norm.includes("invalid-input-secret")) {
+        return t("errorTurnstileConfig", { code: codes[0] || "server" });
+      }
+      if (norm.includes("internal-error")) return t("errorUpstreamUnavailable");
+
       return codes.length ? `${t("errorHumanVerification")}
 Codes: ${codes.join(", ")}` : t("errorHumanVerification");
     }

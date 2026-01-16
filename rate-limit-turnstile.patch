@@ -1,0 +1,141 @@
+--- a/functions/api/atlas/measurements-pair.js
++++ b/functions/api/atlas/measurements-pair.js
+@@ -287,7 +287,15 @@
+   if (!res.ok) {
+     const err = new Error("Atlas upstream error");
+     err.status = res.status;
+-    err.retryAfter = res.headers.get("retry-after") || undefined;
++    // Prefer Retry-After, but support X-RateLimit-Reset (seconds) if present.
++    const retryAfterHeader = res.headers.get("retry-after") || "";
++    const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
++    const rateLimitResetSec = Number(rateLimitResetHeader);
++    err.retryAfter = retryAfterHeader
++      ? retryAfterHeader
++      : Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0
++        ? `${Math.ceil(rateLimitResetSec)}s`
++        : undefined;
+     err.data = data;
+     throw err;
+   }
+--- a/functions/api/measurements-pair.js
++++ b/functions/api/measurements-pair.js
+@@ -33,7 +33,15 @@
+   if (!res.ok) {
+     const err = new Error("Upstream error");
+     err.status = res.status;
+-    err.retryAfter = res.headers.get("retry-after") || undefined;
++    // Prefer Retry-After, but support X-RateLimit-Reset (seconds) if present.
++    const retryAfterHeader = res.headers.get("retry-after") || "";
++    const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
++    const rateLimitResetSec = Number(rateLimitResetHeader);
++    err.retryAfter = retryAfterHeader
++      ? retryAfterHeader
++      : Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0
++        ? `${Math.ceil(rateLimitResetSec)}s`
++        : undefined;
+     err.data = data;
+     throw err;
+   }
+--- a/src/lib/atlas.js
++++ b/src/lib/atlas.js
+@@ -78,7 +78,15 @@
+       url,
+       data: parsed || null,
+       text,
+-      retryAfter: res.headers.get("retry-after") || undefined,
++      retryAfter: (() => {
++        const retryAfterHeader = res.headers.get("retry-after") || "";
++        const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
++        const rateLimitResetSec = Number(rateLimitResetHeader);
++        if (retryAfterHeader) return retryAfterHeader;
++        if (Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0) return `${Math.ceil(rateLimitResetSec)}s`;
++        return undefined;
++      })(),
++      rateLimitReset: res.headers.get("x-ratelimit-reset") || undefined,
+     });
+   }
+ 
+--- a/src/lib/globalping.js
++++ b/src/lib/globalping.js
+@@ -17,6 +17,36 @@
+   } catch {
+     return null;
+   }
++
++function headerSafe(headers, name) {
++  try {
++    return headers?.get?.(name) || "";
++  } catch {
++    return "";
++  }
++}
++
++function buildRateLimitMeta(headers) {
++  const retryAfterHeader = headerSafe(headers, "retry-after");
++  const rateLimitResetHeader = headerSafe(headers, "x-ratelimit-reset");
++  const resetSec = Number(rateLimitResetHeader);
++
++  const retryAfter = retryAfterHeader
++    ? retryAfterHeader
++    : Number.isFinite(resetSec) && resetSec > 0
++      ? `${Math.ceil(resetSec)}s`
++      : undefined;
++
++  return {
++    retryAfter,
++    rateLimitLimit: headerSafe(headers, "x-ratelimit-limit") || undefined,
++    rateLimitRemaining: headerSafe(headers, "x-ratelimit-remaining") || undefined,
++    rateLimitReset: rateLimitResetHeader || undefined,
++    creditsRemaining: headerSafe(headers, "x-credits-remaining") || undefined,
++    requestCost: headerSafe(headers, "x-request-cost") || undefined,
++  };
++}
++
+ }
+ 
+ function makeHttpError(message, meta) {
+@@ -45,7 +75,7 @@
+       url,
+       data,
+       text,
+-      retryAfter: resp.headers.get("retry-after") || undefined,
++      ...buildRateLimitMeta(resp.headers),
+     });
+   }
+ 
+@@ -73,7 +103,7 @@
+       url,
+       data,
+       text,
+-      retryAfter: resp.headers.get("retry-after") || undefined,
++      ...buildRateLimitMeta(resp.headers),
+     });
+   }
+ 
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -1419,7 +1419,7 @@
+   }
+ 
+   function buildPairErrorMessage({ status, data, retryAfter }) {
+-    const retry = formatRetryAfterHeader(retryAfter || data?.retryAfter);
++    const retry = formatRetryAfterHeader(retryAfter || data?.retryAfter || data?.rateLimitReset);
+     const code = data?.error;
+ 
+     if (status === 429) {
+@@ -1428,6 +1428,15 @@
+ 
+     if (code === "turnstile_failed") {
+       const codes = Array.isArray(data?.codes) ? data.codes.filter(Boolean) : [];
++      const norm = codes.map((c) => String(c).trim().toLowerCase()).filter(Boolean);
++
++      // Server-side Turnstile siteverify failure codes are strings.
++      if (norm.includes("timeout-or-duplicate")) return t("errorTurnstileTokenExpired");
++      if (norm.includes("missing-input-secret") || norm.includes("invalid-input-secret")) {
++        return t("errorTurnstileConfig", { code: codes[0] || "server" });
++      }
++      if (norm.includes("internal-error")) return t("errorUpstreamUnavailable");
++
+       return codes.length ? `${t("errorHumanVerification")}
+ Codes: ${codes.join(", ")}` : t("errorHumanVerification");
+     }
