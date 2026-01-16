@@ -1171,6 +1171,9 @@ export default function App() {
   const [atlasPollV4, setAtlasPollV4] = useState(null);
   const [atlasPollV6, setAtlasPollV6] = useState(null);
   const [atlasRunStartedAt, setAtlasRunStartedAt] = useState(0);
+  const [gpUiNow, setGpUiNow] = useState(() => Date.now());
+  const [gpRunStartedAt, setGpRunStartedAt] = useState(0);
+  const [gpLastUpdateAt, setGpLastUpdateAt] = useState(0);
   const [showRaw, setShowRaw] = useState(false);
   const [advanced, setAdvanced] = useState(false);
 
@@ -1208,6 +1211,12 @@ export default function App() {
   useEffect(() => {
     if (!(running && backend === "atlas")) return;
     const id = setInterval(() => setAtlasUiNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [running, backend]);
+
+  useEffect(() => {
+    if (!(running && backend !== "atlas")) return;
+    const id = setInterval(() => setGpUiNow(Date.now()), 250);
     return () => clearInterval(id);
   }, [running, backend]);
 
@@ -1686,6 +1695,8 @@ ${paramLines}` : header;
     setAtlasPollV4(null);
     setAtlasPollV6(null);
     setAtlasRunStartedAt(0);
+    setGpRunStartedAt(0);
+    setGpLastUpdateAt(0);
     setShowRaw(false);
     setTurnstileStatus(t("statusPreparing"));
     setRunning(true);
@@ -1746,11 +1757,18 @@ ${paramLines}` : header;
         setRunWarnings([]);
 
         const atlasStartedAt = backend === "atlas" ? Date.now() : 0;
+        const gpStartedAt = backend !== "atlas" ? Date.now() : 0;
         if (atlasStartedAt) {
           setAtlasRunStartedAt(atlasStartedAt);
           setAtlasUiNow(atlasStartedAt);
           setAtlasPollV4({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
           setAtlasPollV6({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
+        }
+
+        if (gpStartedAt) {
+          setGpRunStartedAt(gpStartedAt);
+          setGpUiNow(gpStartedAt);
+          setGpLastUpdateAt(0);
         }
 
         const base = {
@@ -1822,8 +1840,20 @@ ${paramLines}` : header;
                 }),
               ]
             : [
-                waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
-                waitForMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal }),
+                waitForMeasurement(m4.id, {
+                  onUpdate: (u) => {
+                    setV4(u);
+                    setGpLastUpdateAt(Date.now());
+                  },
+                  signal: ac.signal,
+                }),
+                waitForMeasurement(m6.id, {
+                  onUpdate: (u) => {
+                    setV6(u);
+                    setGpLastUpdateAt(Date.now());
+                  },
+                  signal: ac.signal,
+                }),
               ]
         );
 
@@ -2349,6 +2379,9 @@ ${paramLines}` : header;
   const ccUrl = `${repoUrl}/blob/${commitRef}/LICENSE-DOCS`;
 
   const atlasElapsed = atlasRunStartedAt ? formatElapsed(atlasUiNow - atlasRunStartedAt) : "-";
+
+  const gpElapsed = gpRunStartedAt ? formatElapsed(gpUiNow - gpRunStartedAt) : "-";
+  const gpLastUpdateAge = gpLastUpdateAt ? formatElapsed(gpUiNow - gpLastUpdateAt) : null;
 
   function formatAtlasPollLine(poll) {
     if (!poll || !poll.lastPollAt) return "starting…";
@@ -2944,6 +2977,48 @@ ${paramLines}` : header;
               </div>
               <div style={{ opacity: 0.75, marginTop: 2, fontSize: 11 }}>
                 Results can take 10–60 seconds on RIPE Atlas. They will stream in as probes report back.
+              </div>
+            </div>
+          </div>
+        )}
+        {backend !== "atlas" && running && (
+          <div
+            style={{
+              fontSize: 12,
+              opacity: 0.85,
+              width: "100%",
+              border: "1px solid rgba(17,24,39,.12)",
+              borderRadius: 10,
+              padding: 10,
+              background: "rgba(17,24,39,.03)",
+            }}
+            role="status"
+            aria-live="polite"
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="p6-dots" aria-hidden="true"><span /><span /><span /></span>
+                <span>Globalping: measurement in progress…</span>
+              </div>
+              <div className="p6-spin" aria-hidden="true" />
+            </div>
+
+            <div style={{ marginTop: 8 }} className="p6-indet" aria-hidden="true" />
+
+            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              <div>
+                IPv4: {v4?.statusName || v4?.status || "waiting"} · {(v4?.results || []).length}/{limit}
+              </div>
+              <div>
+                IPv6: {v6?.statusName || v6?.status || "waiting"} · {(v6?.results || []).length}/{limit}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, opacity: 0.75, marginTop: 2, fontSize: 11 }}>
+                <span>Elapsed: {gpElapsed}</span>
+                {gpLastUpdateAge && <span>Last update: {gpLastUpdateAge} ago</span>}
+                {!gpLastUpdateAge && <span>Waiting for the first update…</span>}
+              </div>
+              <div style={{ opacity: 0.75, marginTop: 2, fontSize: 11 }}>
+                Results typically appear within a few seconds. They will stream in as probes report back.
               </div>
             </div>
           </div>

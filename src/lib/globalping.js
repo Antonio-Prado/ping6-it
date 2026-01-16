@@ -17,6 +17,7 @@ function tryParseJson(text) {
   } catch {
     return null;
   }
+}
 
 function headerSafe(headers, name) {
   try {
@@ -45,8 +46,6 @@ function buildRateLimitMeta(headers) {
     creditsRemaining: headerSafe(headers, "x-credits-remaining") || undefined,
     requestCost: headerSafe(headers, "x-request-cost") || undefined,
   };
-}
-
 }
 
 function makeHttpError(message, meta) {
