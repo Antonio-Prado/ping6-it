@@ -51,7 +51,14 @@ function toNumber(x) {
 
 function normalizeProbeMeta(p) {
   const id = String(p?.id ?? "").trim();
-  const countryCode = String(p?.country_code ?? "").trim();
+
+  // RIPE Atlas probe API generally exposes a 2-letter country code.
+  // Be tolerant to schema differences across API versions.
+  const countryCode = String(p?.country_code ?? p?.country ?? p?.countryCode ?? "").trim();
+
+  // City is not guaranteed, but include it if available.
+  const city = String(p?.city ?? p?.location?.city ?? p?.place?.city ?? "").trim();
+
   const asnV6 = toNumber(p?.asn_v6);
   const asnV4 = toNumber(p?.asn_v4);
   const asn = asnV6 ?? asnV4 ?? undefined;
@@ -70,6 +77,7 @@ function normalizeProbeMeta(p) {
 
   return {
     id: id || undefined,
+    city: city || undefined,
     country: countryCode || undefined,
     country_code: countryCode || undefined,
     asn,
@@ -131,7 +139,7 @@ async function fetchProbeMetaMap(probeIds, apiKey, signal) {
   const MAX = 80;
   const limited = ids.slice(0, MAX);
 
-  const fields = "id,country_code,asn_v4,asn_v6,geometry";
+  const fields = "id,country_code,asn_v4,asn_v6,geometry,city";
   const cache = getDefaultCache();
 
   // 1) Try cache first.
@@ -178,11 +186,18 @@ async function fetchProbeMetaMap(probeIds, apiKey, signal) {
       if (cached?.id) return cached;
 
       try {
-        const p = await atlasGetJson(
-          `/api/v2/probes/${encodeURIComponent(pid)}/?fields=${encodeURIComponent(fields)}`,
-          apiKey,
-          signal
-        );
+        let p;
+        try {
+          p = await atlasGetJson(
+            `/api/v2/probes/${encodeURIComponent(pid)}/?fields=${encodeURIComponent(fields)}`,
+            apiKey,
+            signal
+          );
+        } catch {
+          // Some Atlas deployments are picky about the `fields=` parameter.
+          // Fallback to the full probe payload if the filtered request fails.
+          p = await atlasGetJson(`/api/v2/probes/${encodeURIComponent(pid)}/`, apiKey, signal);
+        }
         const meta = normalizeProbeMeta(p);
         if (meta?.id) await cacheWriteProbeMeta(cache, meta.id, meta);
         return meta;

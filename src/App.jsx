@@ -564,18 +564,47 @@ function probeHeader(x, idx) {
   return `--- probe ${idx + 1}: ${p.city || ""} ${p.country || ""} AS${p.asn || ""} ${p.network || ""}`.trim();
 }
 
+
+const REGION_DISPLAY = (() => {
+  try {
+    if (typeof Intl !== "undefined" && Intl.DisplayNames) {
+      return new Intl.DisplayNames(["en"], { type: "region" });
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+})();
+
+function normalizeCountryLabel(country) {
+  const c = String(country ?? "").trim();
+  if (!c) return { code: "", name: "" };
+
+  // If it looks like an ISO-3166 alpha-2 code, expand it to a readable name.
+  const code = c.length === 2 ? c.toUpperCase() : "";
+  const name = code && REGION_DISPLAY ? String(REGION_DISPLAY.of(code) || "").trim() : "";
+
+  if (code && name) return { code, name };
+  if (code) return { code, name: code };
+  return { code: "", name: c };
+}
+
 function formatProbeLocation(probe) {
   if (!probe) return "-";
   const city = String(probe.city ?? "").trim();
-  const country = String(probe.country ?? probe.country_code ?? "").trim();
+  const rawCountry = probe.country ?? probe.country_code ?? probe.countryCode ?? "";
+  const { code, name } = normalizeCountryLabel(rawCountry);
   const id = probe.id !== undefined && probe.id !== null ? String(probe.id).trim() : "";
-  if (city && country) return `${city}, ${country}`;
+
+  if (city && name) return `${city}, ${name}`;
   if (city) return city;
-  if (country && id) return `${country} · Probe ${id}`;
-  if (country) return country;
+
+  if (name && id) return `${name} · Probe ${id}`;
+  if (name) return name;
   if (id) return `Probe ${id}`;
   return "-";
 }
+
 
 function applyGpTag(fromStr, tag) {
   const t = (tag || "").trim();
