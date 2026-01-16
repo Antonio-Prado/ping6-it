@@ -2,9 +2,13 @@ const RIPESTAT_AS_OVERVIEW = "https://stat.ripe.net/data/as-overview/data.json";
 
 // Server-side caching (prefer KV if available; fallback to the Cloudflare Cache API).
 // KV binding name (recommended): ASN_META_KV
+//
+// Fresh window: serve from cache without revalidation.
+// Stale window: serve stale + revalidate in background (stale-while-revalidate).
 const ASN_META_TTL_FRESH_SECONDS = 24 * 60 * 60;
-const ASN_META_TTL_STALE_SECONDS = 12 * 60 * 60;
-const ASN_META_TTL_TOTAL_SECONDS = ASN_META_TTL_FRESH_SECONDS + ASN_META_TTL_STALE_SECONDS;
+const ASN_META_TTL_STALE_SECONDS = 7 * 24 * 60 * 60;
+// Keep cached records for the whole stale window.
+const ASN_META_TTL_TOTAL_SECONDS = ASN_META_TTL_STALE_SECONDS;
 
 const ASN_META_CACHE_PREFIX = "https://ping6.it/_cache/asn/meta/";
 
@@ -25,6 +29,15 @@ function normalizeAsnParam(v) {
   if (!Number.isFinite(n)) return null;
   if (n <= 0 || n > 4294967295) return null;
   return String(Math.trunc(n));
+}
+
+function cleanText(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const low = s.toLowerCase();
+  if (low === "n/a" || low === "na" || low === "none" || low === "null" || low === "unknown" || low === "-") return null;
+  return s;
 }
 
 function getDefaultCache() {
@@ -95,7 +108,7 @@ async function writeToEdgeCache(cache, asn, record) {
   }
 }
 
-function buildResponsePayload(payload, fetchedAtMs, cacheStatus) {
+function buildResponsePayload(payload, fetchedAtMs, cacheStatus, opts = {}) {
   const now = Date.now();
   const ageSec = Math.max(0, Math.floor((now - fetchedAtMs) / 1000));
   return {
@@ -105,6 +118,8 @@ function buildResponsePayload(payload, fetchedAtMs, cacheStatus) {
       status: cacheStatus,
       ageSec,
       freshTtlSec: ASN_META_TTL_FRESH_SECONDS,
+      staleTtlSec: ASN_META_TTL_STALE_SECONDS,
+      revalidating: Boolean(opts.revalidating),
     },
   };
 }
@@ -128,15 +143,21 @@ async function fetchRipestat(asn) {
   const data = body && typeof body === "object" ? body.data : null;
   const block = data && typeof data === "object" ? data.block : null;
 
+  const holder = cleanText(data?.holder);
+
+  const regName = cleanText(block?.name);
+  const regDesc = cleanText(block?.desc);
+  const regResource = cleanText(block?.resource);
+
   return {
     asn: Number(asn),
-    holder: data?.holder ?? null,
+    holder,
     announced: typeof data?.announced === "boolean" ? data.announced : null,
-    registry: block
+    registry: regName || regDesc || regResource
       ? {
-          name: block?.name ?? null,
-          desc: block?.desc ?? null,
-          resource: block?.resource ?? null,
+          name: regName,
+          desc: regDesc,
+          resource: regResource,
         }
       : null,
     source: "ripestat-as-overview",
@@ -169,17 +190,30 @@ export async function onRequest(context) {
 
   if (rec) {
     const ageSec = Math.max(0, Math.floor((now - rec.fetchedAt) / 1000));
+
     if (ageSec <= ASN_META_TTL_FRESH_SECONDS) {
       return json(buildResponsePayload(rec.payload, rec.fetchedAt, "hit"));
     }
 
     // Stale-but-serveable: return it, and revalidate in the background.
-    try {
-      context.waitUntil(refreshRecord({ kv, cache, asn }));
-    } catch {
-      // ignore
+    if (ageSec <= ASN_META_TTL_STALE_SECONDS) {
+      let revalidating = false;
+      try {
+        context.waitUntil(refreshRecord({ kv, cache, asn }));
+        revalidating = true;
+      } catch {
+        // ignore
+      }
+      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale", { revalidating }));
     }
-    return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale"));
+
+    // Too old: try to refresh synchronously. If upstream fails, fall back to the expired record.
+    try {
+      const freshRec = await refreshRecord({ kv, cache, asn });
+      return json(buildResponsePayload(freshRec.payload, freshRec.fetchedAt, "miss"));
+    } catch {
+      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale-expired", { revalidating: false }));
+    }
   }
 
   // 3) Cache miss: fetch now.
