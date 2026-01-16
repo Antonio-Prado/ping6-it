@@ -289,14 +289,20 @@ const COPY = {
     asnDetailsClose: "Close",
     asnMetaLoading: "Loading ASN metadata…",
     asnMetaUnavailable: "ASN metadata unavailable.",
+    asnMetaRetry: "Retry",
+    asnMetaErrorHint: "Please try again. If the problem persists, the upstream service may be temporarily unavailable.",
+    asnMetaRefreshing: "refreshing…",
+    asnMetaShowMore: "Show more",
+    asnMetaShowLess: "Show less",
     asnMetaHolder: "Holder",
     asnMetaRegistry: "Registry",
     asnMetaIana: "IANA block",
     asnMetaAnnounced: "Announced",
-    asnMetaProvenance: ({ source, cache, age, fetchedAt }) => {
+    asnMetaProvenance: ({ source, cache, refreshing, age, fetchedAt }) => {
       const parts = [];
       if (source) parts.push(`source: ${source}`);
       if (cache) parts.push(`cache: ${cache}`);
+      if (refreshing) parts.push(refreshing);
       if (age) parts.push(`fetched ${age} ago`);
       if (fetchedAt) parts.push(`at ${fetchedAt}`);
       return parts.length ? `Metadata · ${parts.join(' · ')}` : 'Metadata';
@@ -1186,6 +1192,73 @@ function computeAsnSummary(kind, rows) {
 }
 
 
+
+function cleanUiText(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const low = s.toLowerCase();
+  if (low === "n/a" || low === "na" || low === "none" || low === "null" || low === "unknown" || low === "-") return null;
+  return s;
+}
+
+function SkeletonLine({ width = "100%", height = 12 }) {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width,
+        height,
+        borderRadius: 999,
+        background: "#e5e7eb",
+      }}
+    />
+  );
+}
+
+function ExpandableText({ text, lines = 2, moreLabel = "Show more", lessLabel = "Show less" }) {
+  const [expanded, setExpanded] = useState(false);
+  const s = cleanUiText(text) || "-";
+
+  if (s === "-") return <div>{s}</div>;
+
+  const showToggle = s.length > 140 || s.includes("\n");
+
+  const clampStyle = expanded
+    ? {}
+    : {
+        display: "-webkit-box",
+        WebkitLineClamp: lines,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+      };
+
+  return (
+    <div>
+      <div style={{ whiteSpace: "pre-wrap", ...clampStyle }}>{s}</div>
+      {showToggle ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            marginTop: 6,
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            cursor: "pointer",
+            textDecoration: "underline",
+            color: "#2563eb",
+            font: "inherit",
+            fontSize: 12,
+          }}
+        >
+          {expanded ? lessLabel : moreLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 async function fetchAsnMeta(asn, signal) {
   const url = `/api/asn/${encodeURIComponent(String(asn))}`;
   const resp = await fetch(url, { method: 'GET', signal });
@@ -1251,11 +1324,14 @@ export default function App() {
 
   useEffect(() => {
     const asn = asnCard?.asn;
+    const reqId = Number(asnCard?.metaReqId || 0);
     if (!asn) return;
+
+    const force = reqId > 0;
 
     const cached = ASN_META_CACHE.get(asn);
     const now = Date.now();
-    if (cached && now - cached.at < ASN_META_CACHE_TTL_MS) {
+    if (!force && cached && now - cached.at < ASN_META_CACHE_TTL_MS) {
       setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, meta: cached.data, metaStatus: 'ok', metaError: null } : prev));
       return;
     }
@@ -1263,19 +1339,53 @@ export default function App() {
     const ac = new AbortController();
     setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, metaStatus: 'loading', metaError: null } : prev));
 
+    let revalTimer = null;
+
     (async () => {
       try {
         const meta = await fetchAsnMeta(asn, ac.signal);
         ASN_META_CACHE.set(asn, { at: Date.now(), data: meta });
-        setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, meta, metaStatus: 'ok', metaError: null } : prev));
+
+        setAsnCard((prev) => {
+          if (!prev || prev.asn !== asn) return prev;
+          return { ...prev, meta, metaStatus: 'ok', metaError: null };
+        });
+
+        const shouldAutoRefresh = meta?.cache?.status === 'stale' && meta?.cache?.revalidating === true;
+        if (shouldAutoRefresh) {
+          revalTimer = setTimeout(() => {
+            setAsnCard((prev) => {
+              if (!prev || prev.asn !== asn) return prev;
+              const left = Number(prev.metaAutoRefreshLeft || 0);
+              if (left <= 0) return prev;
+
+              const stillStale = prev?.meta?.cache?.status === 'stale' && prev?.meta?.cache?.revalidating === true;
+              if (!stillStale) return prev;
+
+              return {
+                ...prev,
+                metaReqId: Number(prev.metaReqId || 0) + 1,
+                metaAutoRefreshLeft: left - 1,
+              };
+            });
+          }, 1200);
+        }
       } catch (e) {
         if (ac.signal.aborted) return;
-        setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, metaStatus: 'error', metaError: String(e || '') } : prev));
+        setAsnCard((prev) =>
+          prev && prev.asn === asn ? { ...prev, metaStatus: 'error', metaError: String(e || '') } : prev
+        );
       }
     })();
 
-    return () => ac.abort();
-  }, [asnCard?.asn]);
+    return () => {
+      try {
+        ac.abort();
+      } catch {}
+      if (revalTimer) clearTimeout(revalTimer);
+    };
+  }, [asnCard?.asn, asnCard?.metaReqId]);
+
 
   const macroPreset = useMemo(
     () => GEO_PRESETS.find((p) => p.id === macroId) ?? GEO_PRESETS[0],
@@ -2673,7 +2783,7 @@ ${paramLines}` : header;
   function openAsnCard(asnValue, kind, rows) {
     const asn = normalizeAsn(asnValue);
     if (!asn) return;
-    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'idle', metaError: null });
+    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'loading', metaError: null, metaReqId: 0, metaAutoRefreshLeft: 2 });
   }
 
   function renderAsnCell(asnValue, kind, rows) {
@@ -4178,11 +4288,17 @@ ${paramLines}` : header;
 
               <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>{t('asnDetailsAbout')}</div>
 
+
               {(() => {
                 const status = asnCard.metaStatus || 'idle';
                 const meta = asnCard.meta;
-                const holder = status === 'loading' ? t('asnMetaLoading') : status === 'error' ? t('asnMetaUnavailable') : (meta?.holder || '-');
-                const registry = meta?.registry?.name || '-';
+
+                const isLoading = status === 'loading' || status === 'idle';
+                const isError = status === 'error';
+
+                const holderText = cleanUiText(meta?.holder) || '-';
+                const registryName = cleanUiText(meta?.registry?.name) || '-';
+                const ianaDesc = cleanUiText(meta?.registry?.desc);
                 const announced = typeof meta?.announced === 'boolean' ? (meta.announced ? t('yes') : t('no')) : '-';
 
                 const source = (() => {
@@ -4196,35 +4312,123 @@ ${paramLines}` : header;
                   return s || '-';
                 })();
 
+                const refreshing = meta?.cache?.revalidating === true ? t('asnMetaRefreshing') : null;
+
                 const fetchedAtDate = meta?.fetchedAt ? new Date(meta.fetchedAt) : null;
                 const age = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? formatAgeHuman(Date.now() - fetchedAtDate.getTime()) : null;
                 const fetchedAtLabel = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? fetchedAtDate.toLocaleString(dateLocale) : null;
-                const provenance = t('asnMetaProvenance', { source, cache, age, fetchedAt: fetchedAtLabel });
+                const provenance = meta
+                  ? t('asnMetaProvenance', { source, cache, refreshing, age, fetchedAt: fetchedAtLabel })
+                  : null;
 
                 return (
                   <>
-                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }} title={provenance}>{provenance}</div>
-                    <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
-                      <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
-                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaHolder')}</div>
-                        <div>{holder}</div>
-                      </div>
-                      <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
-                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaRegistry')}</div>
-                        <div>{registry}</div>
-                      </div>
-                      <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
-                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaAnnounced')}</div>
-                        <div>{announced}</div>
-                      </div>
+                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }} title={provenance || ''}>
+                      {isLoading ? <SkeletonLine width="60%" height={12} /> : (provenance || 'Metadata')}
                     </div>
 
-                    {meta?.registry?.desc ? (
-                      <div style={{ marginTop: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 13 }}>
-                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaIana')}</div>
-                        <div>{meta.registry.desc}</div>
+                    {isError ? (
+                      <div
+                        style={{
+                          marginTop: 12,
+                          padding: 10,
+                          border: '1px solid #fed7aa',
+                          borderRadius: 12,
+                          background: '#fff7ed',
+                          fontSize: 13,
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaUnavailable')}</div>
+                        <div style={{ opacity: 0.85 }}>{t('asnMetaErrorHint')}</div>
+                        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAsnCard((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      metaReqId: Number(prev.metaReqId || 0) + 1,
+                                      metaAutoRefreshLeft: 2,
+                                      metaStatus: 'loading',
+                                      metaError: null,
+                                    }
+                                  : prev
+                              )
+                            }
+                            style={{
+                              padding: '6px 10px',
+                              borderRadius: 10,
+                              border: '1px solid #e5e7eb',
+                              background: '#fff',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {t('asnMetaRetry')}
+                          </button>
+                          {asnCard.metaError ? <div style={{ fontSize: 12, opacity: 0.75 }}>{asnCard.metaError}</div> : null}
+                        </div>
                       </div>
-                    ) : null}
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            marginTop: 12,
+                            display: 'grid',
+                            gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)',
+                            gap: 10,
+                            fontSize: 13,
+                          }}
+                        >
+                          <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaHolder')}</div>
+                            {isLoading ? (
+                              <div style={{ display: 'grid', gap: 6 }}>
+                                <SkeletonLine width="85%" />
+                                <SkeletonLine width="65%" />
+                              </div>
+                            ) : (
+                              <ExpandableText
+                                text={holderText}
+                                lines={2}
+                                moreLabel={t('asnMetaShowMore')}
+                                lessLabel={t('asnMetaShowLess')}
+                              />
+                            )}
+                          </div>
+
+                          <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaRegistry')}</div>
+                            {isLoading ? <SkeletonLine width="70%" /> : <div>{registryName}</div>}
+                          </div>
+
+                          <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaAnnounced')}</div>
+                            {isLoading ? <SkeletonLine width="40%" /> : <div>{announced}</div>}
+                          </div>
+                        </div>
+
+                        {isLoading ? (
+                          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 13 }}>
+                            <div style={{ display: 'grid', gap: 6 }}>
+                              <SkeletonLine width="30%" />
+                              <SkeletonLine width="95%" />
+                              <SkeletonLine width="85%" />
+                            </div>
+                          </div>
+                        ) : ianaDesc ? (
+                          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 13 }}>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaIana')}</div>
+                            <ExpandableText
+                              text={ianaDesc}
+                              lines={3}
+                              moreLabel={t('asnMetaShowMore')}
+                              lessLabel={t('asnMetaShowLess')}
+                            />
+                          </div>
+                        ) : null}
+                      </>
+                    )}
                   </>
                 );
               })()}
