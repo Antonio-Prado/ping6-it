@@ -1,0 +1,279 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index 414ff05..3f7f9ba 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -379,10 +379,10 @@ function loadHistory() {
+   }
+ }
+ 
+-function normalizeHistorySummary(cmd, v4, v6) {
++function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
+   if (!v4 || !v6) return null;
+   if (cmd === "ping") {
+-    const { summary } = buildPingCompare(v4, v6);
++    const { summary } = buildPingCompare(v4, v6, { strict });
+     return {
+       kind: "ping",
+       medianV4: summary.median_avg_v4,
+@@ -393,7 +393,7 @@ function normalizeHistorySummary(cmd, v4, v6) {
+     };
+   }
+   if (cmd === "traceroute") {
+-    const { summary } = buildTracerouteCompare(v4, v6);
++    const { summary } = buildTracerouteCompare(v4, v6, { strict });
+     return {
+       kind: "traceroute",
+       medianV4: summary.median_v4,
+@@ -402,7 +402,7 @@ function normalizeHistorySummary(cmd, v4, v6) {
+     };
+   }
+   if (cmd === "mtr") {
+-    const { summary } = buildMtrCompare(v4, v6);
++    const { summary } = buildMtrCompare(v4, v6, { strict });
+     return {
+       kind: "mtr",
+       medianV4: summary.median_avg_v4,
+@@ -413,7 +413,7 @@ function normalizeHistorySummary(cmd, v4, v6) {
+     };
+   }
+   if (cmd === "dns") {
+-    const { summary } = buildDnsCompare(v4, v6);
++    const { summary } = buildDnsCompare(v4, v6, { strict });
+     return {
+       kind: "dns",
+       medianV4: summary.median_v4,
+@@ -422,7 +422,7 @@ function normalizeHistorySummary(cmd, v4, v6) {
+     };
+   }
+   if (cmd === "http") {
+-    const { summary } = buildHttpCompare(v4, v6);
++    const { summary } = buildHttpCompare(v4, v6, { strict });
+     return {
+       kind: "http",
+       medianV4: summary.median_v4,
+@@ -701,7 +701,7 @@ function pickPingStats(x) {
+   return { avgMs, lossPct };
+ }
+ 
+-function buildPingCompare(v4, v6) {
++function buildPingCompare(v4, v6, { strict = false } = {}) {
+   const a = v4?.results ?? [];
+   const b = v6?.results ?? [];
+   const bMap = new Map(b.map((x) => [probeKey(x), x]));
+@@ -736,13 +736,16 @@ function buildPingCompare(v4, v6) {
+       winner,
+     };
+   });
++  const avgBase = strict ? rows.filter((r) => Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)) : rows;
++  const lossBase = strict ? rows.filter((r) => Number.isFinite(r.v4loss) && Number.isFinite(r.v6loss)) : rows;
+ 
+-  const v4AvgArr = rows.map((r) => r.v4avg).filter(Number.isFinite);
+-  const v6AvgArr = rows.map((r) => r.v6avg).filter(Number.isFinite);
+-  const v4LossArr = rows.map((r) => r.v4loss).filter(Number.isFinite);
+-  const v6LossArr = rows.map((r) => r.v6loss).filter(Number.isFinite);
+-  const dAvgArr = rows.map((r) => r.deltaAvg).filter(Number.isFinite);
+-  const dLossArr = rows.map((r) => r.deltaLoss).filter(Number.isFinite);
++  const v4AvgArr = avgBase.map((r) => r.v4avg).filter(Number.isFinite);
++  const v6AvgArr = avgBase.map((r) => r.v6avg).filter(Number.isFinite);
++  const dAvgArr = avgBase.map((r) => r.deltaAvg).filter(Number.isFinite);
++
++  const v4LossArr = lossBase.map((r) => r.v4loss).filter(Number.isFinite);
++  const v6LossArr = lossBase.map((r) => r.v6loss).filter(Number.isFinite);
++  const dLossArr = lossBase.map((r) => r.deltaLoss).filter(Number.isFinite);
+ 
+   const summary = {
+     n: rows.length,
+@@ -770,7 +773,7 @@ function pickDnsTotalMs(x) {
+   return Number.isFinite(t) && t > 0 ? t : null;
+ }
+ 
+-function buildDnsCompare(v4, v6) {
++function buildDnsCompare(v4, v6, { strict = false } = {}) {
+   const a = v4?.results ?? [];
+   const b = v6?.results ?? [];
+   const bMap = new Map(b.map((x) => [probeKey(x), x]));
+@@ -803,10 +806,11 @@ function buildDnsCompare(v4, v6) {
+           : "-",
+     };
+   });
++  const baseRows = strict ? rows.filter((r) => Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)) : rows;
+ 
+-  const v4msArr = rows.map((r) => r.v4ms).filter(Number.isFinite);
+-  const v6msArr = rows.map((r) => r.v6ms).filter(Number.isFinite);
+-  const dArr = rows.map((r) => r.delta).filter(Number.isFinite);
++  const v4msArr = baseRows.map((r) => r.v4ms).filter(Number.isFinite);
++  const v6msArr = baseRows.map((r) => r.v6ms).filter(Number.isFinite);
++  const dArr = baseRows.map((r) => r.delta).filter(Number.isFinite);
+ 
+   const summary = {
+     n: rows.length,
+@@ -856,7 +860,7 @@ function pickHttpStatusCode(x) {
+   return Number.isFinite(sc) ? sc : null;
+ }
+ 
+-function buildHttpCompare(v4, v6) {
++function buildHttpCompare(v4, v6, { strict = false } = {}) {
+   const a = v4?.results ?? [];
+   const b = v6?.results ?? [];
+   const bMap = new Map(b.map((x) => [probeKey(x), x]));
+@@ -894,10 +898,11 @@ function buildHttpCompare(v4, v6) {
+           : "-",
+     };
+   });
++  const baseRows = strict ? rows.filter((r) => Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)) : rows;
+ 
+-  const v4msArr = rows.map((r) => r.v4ms).filter(Number.isFinite);
+-  const v6msArr = rows.map((r) => r.v6ms).filter(Number.isFinite);
+-  const dArr = rows.map((r) => r.delta).filter(Number.isFinite);
++  const v4msArr = baseRows.map((r) => r.v4ms).filter(Number.isFinite);
++  const v6msArr = baseRows.map((r) => r.v6ms).filter(Number.isFinite);
++  const dArr = baseRows.map((r) => r.delta).filter(Number.isFinite);
+ 
+   const summary = {
+     n: rows.length,
+@@ -960,7 +965,7 @@ function pickMtrDstStats(x) {
+   return { reached: Boolean(dstHop), hops: hopCount, avgMs, lossPct };
+ }
+ 
+-function buildTracerouteCompare(v4, v6) {
++function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
+   const a = v4?.results ?? [];
+   const b = v6?.results ?? [];
+   const bMap = new Map(b.map((x) => [probeKey(x), x]));
+@@ -995,10 +1000,11 @@ function buildTracerouteCompare(v4, v6) {
+       winner,
+     };
+   });
++  const baseRows = strict ? rows.filter((r) => Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst)) : rows;
+ 
+-  const v4Arr = rows.map((r) => r.v4dst).filter(Number.isFinite);
+-  const v6Arr = rows.map((r) => r.v6dst).filter(Number.isFinite);
+-  const dArr = rows.map((r) => r.delta).filter(Number.isFinite);
++  const v4Arr = baseRows.map((r) => r.v4dst).filter(Number.isFinite);
++  const v6Arr = baseRows.map((r) => r.v6dst).filter(Number.isFinite);
++  const dArr = baseRows.map((r) => r.delta).filter(Number.isFinite);
+ 
+   const summary = {
+     n: rows.length,
+@@ -1013,7 +1019,7 @@ function buildTracerouteCompare(v4, v6) {
+   return { rows, summary };
+ }
+ 
+-function buildMtrCompare(v4, v6) {
++function buildMtrCompare(v4, v6, { strict = false } = {}) {
+   const a = v4?.results ?? [];
+   const b = v6?.results ?? [];
+   const bMap = new Map(b.map((x) => [probeKey(x), x]));
+@@ -1056,13 +1062,16 @@ function buildMtrCompare(v4, v6) {
+       winner,
+     };
+   });
++  const avgBase = strict ? rows.filter((r) => Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)) : rows;
++  const lossBase = strict ? rows.filter((r) => Number.isFinite(r.v4loss) && Number.isFinite(r.v6loss)) : rows;
++
++  const v4AvgArr = avgBase.map((r) => r.v4avg).filter(Number.isFinite);
++  const v6AvgArr = avgBase.map((r) => r.v6avg).filter(Number.isFinite);
++  const dAvgArr = avgBase.map((r) => r.deltaAvg).filter(Number.isFinite);
+ 
+-  const v4AvgArr = rows.map((r) => r.v4avg).filter(Number.isFinite);
+-  const v6AvgArr = rows.map((r) => r.v6avg).filter(Number.isFinite);
+-  const v4LossArr = rows.map((r) => r.v4loss).filter(Number.isFinite);
+-  const v6LossArr = rows.map((r) => r.v6loss).filter(Number.isFinite);
+-  const dAvgArr = rows.map((r) => r.deltaAvg).filter(Number.isFinite);
+-  const dLossArr = rows.map((r) => r.deltaLoss).filter(Number.isFinite);
++  const v4LossArr = lossBase.map((r) => r.v4loss).filter(Number.isFinite);
++  const v6LossArr = lossBase.map((r) => r.v6loss).filter(Number.isFinite);
++  const dLossArr = lossBase.map((r) => r.deltaLoss).filter(Number.isFinite);
+ 
+   const summary = {
+     n: rows.length,
+@@ -1121,6 +1130,8 @@ export default function App() {
+     ? parsedMultiTargets.length > 0 && parsedMultiTargets.every((item) => !isIpLiteral(item))
+     : !isIpLiteral((target || "").trim());
+ 
++  const strictCompare = requireV6Capable && canRequireV6Capable;
++
+   const maxProbes = backend === "atlas" ? 50 : 10;
+ 
+   useEffect(() => {
+@@ -1894,7 +1905,7 @@ ${paramLines}` : header;
+         setV4(r4);
+         setV6(r6);
+ 
+-        const summary = normalizeHistorySummary(cmd, r4, r6);
++        const summary = normalizeHistorySummary(cmd, r4, r6, { strict: canEnforceV6 });
+         const entry = {
+           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+           backend,
+@@ -2058,7 +2069,7 @@ ${paramLines}` : header;
+   }
+ 
+   function buildReportPayload() {
+-    const summary = normalizeHistorySummary(cmd, v4, v6);
++    const summary = normalizeHistorySummary(cmd, v4, v6, { strict: strictCompare });
+     if (!summary) return null;
+     return {
+       v: SHARE_VERSION,
+@@ -2080,7 +2091,7 @@ ${paramLines}` : header;
+ 
+   function buildExportBundle() {
+     if (!v4 || !v6) return null;
+-    const summary = normalizeHistorySummary(cmd, v4, v6);
++    const summary = normalizeHistorySummary(cmd, v4, v6, { strict: strictCompare });
+     const base = {
+       generatedAt: new Date().toISOString(),
+       cmd,
+@@ -2317,7 +2328,7 @@ ${paramLines}` : header;
+         v6path: formatHopPath(y),
+       };
+     });
+-  }, [showTracerouteTable, v4, v6]);
++  }, [showTracerouteTable, v4, v6, strictCompare]);
+ 
+   const mtrPaths = useMemo(() => {
+     if (!showMtrTable || !v4 || !v6) return [];
+@@ -2334,33 +2345,33 @@ ${paramLines}` : header;
+         v6path: formatHopPath(y),
+       };
+     });
+-  }, [showMtrTable, v4, v6]);
++  }, [showMtrTable, v4, v6, strictCompare]);
+ 
+   const pingCompare = useMemo(() => {
+     if (!showPingTable) return null;
+-    return buildPingCompare(v4, v6);
+-  }, [showPingTable, v4, v6]);
++    return buildPingCompare(v4, v6, { strict: strictCompare });
++  }, [showPingTable, v4, v6, strictCompare]);
+ 
+   const dnsCompare = useMemo(() => {
+     if (!showDnsTable) return null;
+-    return buildDnsCompare(v4, v6);
+-  }, [showDnsTable, v4, v6]);
++    return buildDnsCompare(v4, v6, { strict: strictCompare });
++  }, [showDnsTable, v4, v6, strictCompare]);
+ 
+   const httpCompare = useMemo(() => {
+     if (!showHttpTable) return null;
+-    return buildHttpCompare(v4, v6);
+-  }, [showHttpTable, v4, v6]);
++    return buildHttpCompare(v4, v6, { strict: strictCompare });
++  }, [showHttpTable, v4, v6, strictCompare]);
+ 
+ 
+   const trCompare = useMemo(() => {
+     if (!showTracerouteTable) return null;
+-    return buildTracerouteCompare(v4, v6);
+-  }, [showTracerouteTable, v4, v6]);
++    return buildTracerouteCompare(v4, v6, { strict: strictCompare });
++  }, [showTracerouteTable, v4, v6, strictCompare]);
+ 
+   const mtrCompare = useMemo(() => {
+     if (!showMtrTable) return null;
+-    return buildMtrCompare(v4, v6);
+-  }, [showMtrTable, v4, v6]);
++    return buildMtrCompare(v4, v6, { strict: strictCompare });
++  }, [showMtrTable, v4, v6, strictCompare]);
+ 
+   const deltaThresholdValue = Number(deltaThreshold);
+   const thresholdEnabled = Number.isFinite(deltaThresholdValue) && deltaThresholdValue > 0;
