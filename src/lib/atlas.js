@@ -59,6 +59,7 @@ export async function waitForAtlasMeasurement(
   id,
   {
     onUpdate,
+    onMeta,
     signal,
     timeoutMs = DEFAULT_TIMEOUT_MS,
 
@@ -103,6 +104,7 @@ export async function waitForAtlasMeasurement(
     if (signal?.aborted) throw new Error("Aborted");
 
     const m = await getAtlasMeasurement(id, { signal, atlasKey });
+    const polledAt = Date.now();
     if (onUpdate) onUpdate(m);
 
     const status = String(m?.status || "").toLowerCase();
@@ -148,8 +150,25 @@ export async function waitForAtlasMeasurement(
         currentPollMs = Math.min(pollMaxMs, Math.round(currentPollMs * 1.25));
       }
     }
-
     const jitter = Math.floor(Math.random() * 250);
-    await sleep(currentPollMs + jitter);
+    const nextDelayMs = currentPollMs + jitter;
+
+    if (onMeta) {
+      try {
+        onMeta({
+          polledAt,
+          status,
+          resultsLen,
+          expectedTotal: total,
+          nextPollInMs: nextDelayMs,
+          elapsedMs: polledAt - start,
+          timeoutMs,
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    await sleep(nextDelayMs);
   }
 }
