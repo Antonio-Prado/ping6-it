@@ -287,7 +287,15 @@ async function atlasPost(path, payload, apiKey, signal) {
   if (!res.ok) {
     const err = new Error("Atlas upstream error");
     err.status = res.status;
-    err.retryAfter = res.headers.get("retry-after") || undefined;
+    // Prefer Retry-After, but support X-RateLimit-Reset (seconds) if present.
+    const retryAfterHeader = res.headers.get("retry-after") || "";
+    const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
+    const rateLimitResetSec = Number(rateLimitResetHeader);
+    err.retryAfter = retryAfterHeader
+      ? retryAfterHeader
+      : Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0
+        ? `${Math.ceil(rateLimitResetSec)}s`
+        : undefined;
     err.data = data;
     throw err;
   }

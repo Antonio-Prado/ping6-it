@@ -17,6 +17,36 @@ function tryParseJson(text) {
   } catch {
     return null;
   }
+
+function headerSafe(headers, name) {
+  try {
+    return headers?.get?.(name) || "";
+  } catch {
+    return "";
+  }
+}
+
+function buildRateLimitMeta(headers) {
+  const retryAfterHeader = headerSafe(headers, "retry-after");
+  const rateLimitResetHeader = headerSafe(headers, "x-ratelimit-reset");
+  const resetSec = Number(rateLimitResetHeader);
+
+  const retryAfter = retryAfterHeader
+    ? retryAfterHeader
+    : Number.isFinite(resetSec) && resetSec > 0
+      ? `${Math.ceil(resetSec)}s`
+      : undefined;
+
+  return {
+    retryAfter,
+    rateLimitLimit: headerSafe(headers, "x-ratelimit-limit") || undefined,
+    rateLimitRemaining: headerSafe(headers, "x-ratelimit-remaining") || undefined,
+    rateLimitReset: rateLimitResetHeader || undefined,
+    creditsRemaining: headerSafe(headers, "x-credits-remaining") || undefined,
+    requestCost: headerSafe(headers, "x-request-cost") || undefined,
+  };
+}
+
 }
 
 function makeHttpError(message, meta) {
@@ -45,7 +75,7 @@ export async function createMeasurement(body, signal) {
       url,
       data,
       text,
-      retryAfter: resp.headers.get("retry-after") || undefined,
+      ...buildRateLimitMeta(resp.headers),
     });
   }
 
@@ -73,7 +103,7 @@ export async function getMeasurement(id, { etag, signal } = {}) {
       url,
       data,
       text,
-      retryAfter: resp.headers.get("retry-after") || undefined,
+      ...buildRateLimitMeta(resp.headers),
     });
   }
 

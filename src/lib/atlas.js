@@ -78,7 +78,15 @@ export async function getAtlasMeasurement(id, { signal, atlasKey } = {}) {
       url,
       data: parsed || null,
       text,
-      retryAfter: res.headers.get("retry-after") || undefined,
+      retryAfter: (() => {
+        const retryAfterHeader = res.headers.get("retry-after") || "";
+        const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
+        const rateLimitResetSec = Number(rateLimitResetHeader);
+        if (retryAfterHeader) return retryAfterHeader;
+        if (Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0) return `${Math.ceil(rateLimitResetSec)}s`;
+        return undefined;
+      })(),
+      rateLimitReset: res.headers.get("x-ratelimit-reset") || undefined,
     });
   }
 
