@@ -14,6 +14,10 @@ function json(body, status = 200) {
   });
 }
 
+function badRequest(error, message, params) {
+  return json({ error, message, params }, 400);
+}
+
 async function postJson(url, payload, signal) {
   const res = await fetch(url, {
     method: "POST",
@@ -58,20 +62,31 @@ export async function onRequestPost(context) {
   try {
     body = await request.json();
   } catch {
-    return json({ error: "invalid_json" }, 400);
+    return badRequest("invalid_json", "Invalid JSON body.", { hint: "Send a JSON object with turnstileToken, base, measurementOptions, and flow." });
   }
 
   const { turnstileToken, base, measurementOptions, flow } = body || {};
-  if (!turnstileToken || !base || !measurementOptions || !flow) {
-    return json({ error: "missing_fields" }, 400);
+
+  const missing = [];
+  if (!turnstileToken) missing.push("turnstileToken");
+  if (!base) missing.push("base");
+  if (!measurementOptions) missing.push("measurementOptions");
+  if (!flow) missing.push("flow");
+  if (missing.length) {
+    return badRequest("missing_fields", `Missing required field(s): ${missing.join(", ")}.`, { missing });
   }
+
   if (flow !== "v4first" && flow !== "v6first") {
-    return json({ error: "invalid_flow" }, 400);
+    return badRequest("invalid_flow", 'Invalid "flow". Expected "v4first" or "v6first".', { flow, allowed: ["v4first", "v6first"] });
   }
 
   // Defensive validation / clamping to reduce abuse.
-  if (!ALLOWED_TYPES.has(base.type)) return json({ error: "invalid_type" }, 400);
-  if (typeof base.target !== "string" || !base.target.trim()) return json({ error: "invalid_target" }, 400);
+  if (!ALLOWED_TYPES.has(base.type)) {
+    return badRequest("invalid_type", `Unsupported measurement type: ${String(base.type)}.`, { type: base.type, allowed: Array.from(ALLOWED_TYPES) });
+  }
+  if (typeof base.target !== "string" || !base.target.trim()) {
+    return badRequest("invalid_target", 'Invalid "target". Expected a non-empty hostname/IP/URL string.', { target: base.target });
+  }
 
   const limit = Math.max(1, Math.min(10, Number(base.limit) || 3));
 

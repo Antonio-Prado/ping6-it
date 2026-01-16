@@ -316,6 +316,7 @@ const COPY = {
     errorHumanVerification: "Human verification failed. Please retry.",
     errorHumanVerificationTimeout: "Human verification timed out. Please retry.",
     errorRequestFailed: ({ status }) => `Request failed (${status})`,
+    errorInvalidRequest: "Invalid request. Please review your input and retry.",
     errorRateLimited: ({ retryAfter }) =>
       `Too many requests (rate limit). Please wait${retryAfter ? ` ${retryAfter}` : ""} and try again.`,
     rateLimitRetryIn: ({ seconds }) => `Rate limited. Retry in ${seconds}s.`,
@@ -1402,8 +1403,11 @@ export default function App() {
     if (!e || typeof e !== "object") return null;
     return (
       retryAfterToSeconds(e.retryAfter) ||
+      retryAfterToSeconds(e.rateLimitReset) ||
       retryAfterToSeconds(e?.details?.retryAfter) ||
+      retryAfterToSeconds(e?.details?.rateLimitReset) ||
       retryAfterToSeconds(e?.data?.retryAfter) ||
+      retryAfterToSeconds(e?.data?.rateLimitReset) ||
       null
     );
   }
@@ -1449,12 +1453,18 @@ Codes: ${codes.join(", ")}` : t("errorHumanVerification");
       return "RIPE Atlas needs an API key. Paste it in the Settings panel and retry.";
     }
 
-    if (code === "invalid_json" || code === "missing_fields") {
-      return t("errorUpstreamUnavailable");
-    }
-
-    if (code === "invalid_target" || code === "invalid_type" || code === "invalid_flow" || code === "unsupported_type") {
-      return "Invalid request. Please review your input and retry.";
+    if (
+      code === "invalid_json" ||
+      code === "missing_fields" ||
+      code === "invalid_target" ||
+      code === "invalid_type" ||
+      code === "invalid_flow" ||
+      code === "unsupported_type"
+    ) {
+      const header = data?.message || t("errorInvalidRequest");
+      const paramLines = formatParamsList(data?.params);
+      return paramLines ? `${header}
+${paramLines}` : header;
     }
 
     if (code === "globalping_failed") {
@@ -1503,7 +1513,8 @@ Codes: ${codes.join(", ")}` : t("errorHumanVerification");
     // Globalping/Atlas polling errors.
     const status = e.status;
     if (status === 429) {
-      return t("errorRateLimited", { retryAfter: formatRetryAfterHeader(e.retryAfter) });
+      const ra = e.retryAfter || e.rateLimitReset || e?.details?.retryAfter || e?.details?.rateLimitReset || e?.data?.retryAfter || e?.data?.rateLimitReset;
+      return t("errorRateLimited", { retryAfter: formatRetryAfterHeader(ra) });
     }
 
     if (status && status >= 500) {
@@ -1540,13 +1551,21 @@ Codes: ${codes.join(", ")}` : t("errorHumanVerification");
     }
 
     if (!res.ok) {
-      const retryAfter = res.headers.get("retry-after") || undefined;
+      const retryAfterHeader = res.headers.get("retry-after") || "";
+      const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
+      const resetSec = Number(rateLimitResetHeader);
+      const retryAfter = retryAfterHeader
+        ? retryAfterHeader
+        : Number.isFinite(resetSec) && resetSec > 0
+          ? `${Math.ceil(resetSec)}s`
+          : undefined;
       const msg = buildPairErrorMessage({ status: res.status, data, retryAfter });
       const err = new Error(msg);
       err.kind = "api";
       err.status = res.status;
       err.code = data?.error;
       err.retryAfter = retryAfter || data?.retryAfter;
+      err.rateLimitReset = rateLimitResetHeader || data?.rateLimitReset;
       err.details = data;
       throw err;
     }

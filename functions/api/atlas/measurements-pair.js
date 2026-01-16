@@ -14,6 +14,10 @@ function json(body, status = 200) {
   });
 }
 
+function badRequest(error, message, params) {
+  return json({ error, message, params }, 400);
+}
+
 function clampInt(x, { min, max, fallback }) {
   const n = Number(x);
   if (!Number.isFinite(n)) return fallback;
@@ -309,26 +313,38 @@ export async function onRequestPost(context) {
   if (!secret) return json({ error: "TURNSTILE_SECRET not set" }, 500);
 
   const apiKey = extractAtlasKey(request, env);
-  if (!apiKey) return json({ error: "missing_atlas_api_key" }, 400);
+  if (!apiKey) return badRequest("missing_atlas_api_key", "RIPE Atlas needs an API key.", { hint: "Paste it in Settings (Atlas API key) and retry." });
 
   let body;
   try {
     body = await request.json();
   } catch {
-    return json({ error: "invalid_json" }, 400);
+    return badRequest("invalid_json", "Invalid JSON body.", { hint: "Send a JSON object with turnstileToken, base, measurementOptions, and flow." });
   }
 
   const { turnstileToken, base, measurementOptions, flow } = body || {};
-  if (!turnstileToken || !base || !measurementOptions || !flow) {
-    return json({ error: "missing_fields" }, 400);
+
+  const missing = [];
+  if (!turnstileToken) missing.push("turnstileToken");
+  if (!base) missing.push("base");
+  if (!measurementOptions) missing.push("measurementOptions");
+  if (!flow) missing.push("flow");
+  if (missing.length) {
+    return badRequest("missing_fields", `Missing required field(s): ${missing.join(", ")}.`, { missing });
   }
 
-  if (!ALLOWED_TYPES.has(base.type)) return json({ error: "unsupported_type" }, 400);
-  if (typeof base.target !== "string" || !base.target.trim()) return json({ error: "invalid_target" }, 400);
+  if (!ALLOWED_TYPES.has(base.type)) {
+    return badRequest("unsupported_type", `Unsupported measurement type for RIPE Atlas: ${String(base.type)}.`, { type: base.type, allowed: Array.from(ALLOWED_TYPES) });
+  }
+  if (typeof base.target !== "string" || !base.target.trim()) {
+    return badRequest("invalid_target", 'Invalid "target". Expected a non-empty hostname/IP/URL string.', { target: base.target });
+  }
 
   // Atlas needs a v6-first flow to enforce the same probes for v4/v6.
   // We'll still accept both values for compatibility with the current client.
-  if (flow !== "v4first" && flow !== "v6first") return json({ error: "invalid_flow" }, 400);
+  if (flow !== "v4first" && flow !== "v6first") {
+    return badRequest("invalid_flow", 'Invalid "flow". Expected "v4first" or "v6first".', { flow, allowed: ["v4first", "v6first"] });
+  }
 
   const limit = clampInt(base.limit, { min: 1, max: 50, fallback: 3 });
 
