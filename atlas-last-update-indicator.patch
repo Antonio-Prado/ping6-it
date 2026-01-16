@@ -1,0 +1,82 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index d50d519..1eacb98 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -1200,6 +1200,7 @@ export default function App() {
+   const [atlasPollV4, setAtlasPollV4] = useState(null);
+   const [atlasPollV6, setAtlasPollV6] = useState(null);
+   const [atlasRunStartedAt, setAtlasRunStartedAt] = useState(0);
++  const [atlasLastUpdateAt, setAtlasLastUpdateAt] = useState(0);
+   const [gpUiNow, setGpUiNow] = useState(() => Date.now());
+   const [gpRunStartedAt, setGpRunStartedAt] = useState(0);
+   const [gpLastUpdateAt, setGpLastUpdateAt] = useState(0);
+@@ -1208,6 +1209,10 @@ export default function App() {
+ 
+   const abortRef = useRef(null);
+ 
++  // Track Atlas progress changes (results length / status) to show a user-facing "Last update" timer.
++  const atlasMetaRefV4 = useRef({ len: 0, status: "" });
++  const atlasMetaRefV6 = useRef({ len: 0, status: "" });
++
+   useEffect(() => {
+     if (!rateLimitUntil) {
+       setRateLimitLeft(0);
+@@ -1792,6 +1797,9 @@ ${paramLines}` : header;
+           setAtlasUiNow(atlasStartedAt);
+           setAtlasPollV4({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
+           setAtlasPollV6({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
++          setAtlasLastUpdateAt(0);
++          atlasMetaRefV4.current = { len: 0, status: "" };
++          atlasMetaRefV6.current = { len: 0, status: "" };
+         }
+ 
+         if (gpStartedAt) {
+@@ -1834,6 +1842,15 @@ ${paramLines}` : header;
+                   onUpdate: setV4,
+                   onMeta: (meta) => {
+                     if (!atlasStartedAt) return;
++                    try {
++                      const nextLen = Number(meta?.resultsLen) || 0;
++                      const nextStatus = String(meta?.status || "");
++                      const prev = atlasMetaRefV4.current || { len: 0, status: "" };
++                      if (nextLen > (Number(prev.len) || 0) || (nextStatus && nextStatus !== prev.status)) {
++                        setAtlasLastUpdateAt(meta?.polledAt || Date.now());
++                      }
++                      atlasMetaRefV4.current = { len: nextLen, status: nextStatus };
++                    } catch {}
+                     setAtlasPollV4((prev) => ({
+                       ...(prev || { startedAt: atlasStartedAt }),
+                       startedAt: prev?.startedAt || atlasStartedAt,
+@@ -1854,6 +1871,15 @@ ${paramLines}` : header;
+                   onUpdate: setV6,
+                   onMeta: (meta) => {
+                     if (!atlasStartedAt) return;
++                    try {
++                      const nextLen = Number(meta?.resultsLen) || 0;
++                      const nextStatus = String(meta?.status || "");
++                      const prev = atlasMetaRefV6.current || { len: 0, status: "" };
++                      if (nextLen > (Number(prev.len) || 0) || (nextStatus && nextStatus !== prev.status)) {
++                        setAtlasLastUpdateAt(meta?.polledAt || Date.now());
++                      }
++                      atlasMetaRefV6.current = { len: nextLen, status: nextStatus };
++                    } catch {}
+                     setAtlasPollV6((prev) => ({
+                       ...(prev || { startedAt: atlasStartedAt }),
+                       startedAt: prev?.startedAt || atlasStartedAt,
+@@ -2411,6 +2437,7 @@ ${paramLines}` : header;
+   const ccUrl = `${repoUrl}/blob/${commitRef}/LICENSE-DOCS`;
+ 
+   const atlasElapsed = atlasRunStartedAt ? formatElapsed(atlasUiNow - atlasRunStartedAt) : "-";
++  const atlasLastUpdateAge = atlasLastUpdateAt ? formatElapsed(atlasUiNow - atlasLastUpdateAt) : null;
+ 
+   const gpElapsed = gpRunStartedAt ? formatElapsed(gpUiNow - gpRunStartedAt) : "-";
+   const gpLastUpdateAge = gpLastUpdateAt ? formatElapsed(gpUiNow - gpLastUpdateAt) : null;
+@@ -3003,6 +3030,8 @@ ${paramLines}` : header;
+               </div>
+               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, opacity: 0.75, marginTop: 2, fontSize: 11 }}>
+                 <span>Elapsed: {atlasElapsed}</span>
++                {atlasLastUpdateAge && <span>Last update: {atlasLastUpdateAge} ago</span>}
++                {!atlasLastUpdateAge && <span>Waiting for the first update…</span>}
+ 
+                 {((v4?.results || []).length + (v6?.results || []).length) === 0 && (
+                   <span>Waiting for the first probe response…</span>

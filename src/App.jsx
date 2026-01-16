@@ -2444,6 +2444,14 @@ ${paramLines}` : header;
 
   const atlasElapsed = atlasRunStartedAt ? formatElapsed(atlasUiNow - atlasRunStartedAt) : "-";
 
+  const atlasLastPollAt = Math.max(
+    0,
+    Number(atlasPollV4?.lastPollAt || 0),
+    Number(atlasPollV6?.lastPollAt || 0)
+  );
+  const atlasLastUpdateAge = atlasLastPollAt ? formatElapsed(atlasUiNow - atlasLastPollAt) : null;
+
+
   const gpElapsed = gpRunStartedAt ? formatElapsed(gpUiNow - gpRunStartedAt) : "-";
   const gpLastUpdateAge = gpLastUpdateAt ? formatElapsed(gpUiNow - gpLastUpdateAt) : null;
 
@@ -3035,6 +3043,8 @@ ${paramLines}` : header;
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, opacity: 0.75, marginTop: 2, fontSize: 11 }}>
                 <span>Elapsed: {atlasElapsed}</span>
+                {atlasLastUpdateAge && <span>Last update: {atlasLastUpdateAge} ago</span>}
+                {!atlasLastUpdateAge && <span>Waiting for the first update…</span>}
                 {((v4?.results || []).length + (v6?.results || []).length) === 0 && (
                   <span>Waiting for the first probe response…</span>
                 )}
