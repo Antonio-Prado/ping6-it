@@ -1,0 +1,247 @@
+diff --git a/src/lib/atlas.js b/src/lib/atlas.js
+index 3250292..b385194 100644
+--- a/src/lib/atlas.js
++++ b/src/lib/atlas.js
+@@ -59,6 +59,7 @@ export async function waitForAtlasMeasurement(
+   id,
+   {
+     onUpdate,
++    onMeta,
+     signal,
+     timeoutMs = DEFAULT_TIMEOUT_MS,
+ 
+@@ -103,6 +104,7 @@ export async function waitForAtlasMeasurement(
+     if (signal?.aborted) throw new Error("Aborted");
+ 
+     const m = await getAtlasMeasurement(id, { signal, atlasKey });
++    const polledAt = Date.now();
+     if (onUpdate) onUpdate(m);
+ 
+     const status = String(m?.status || "").toLowerCase();
+@@ -148,8 +150,25 @@ export async function waitForAtlasMeasurement(
+         currentPollMs = Math.min(pollMaxMs, Math.round(currentPollMs * 1.25));
+       }
+     }
+-
+     const jitter = Math.floor(Math.random() * 250);
+-    await sleep(currentPollMs + jitter);
++    const nextDelayMs = currentPollMs + jitter;
++
++    if (onMeta) {
++      try {
++        onMeta({
++          polledAt,
++          status,
++          resultsLen,
++          expectedTotal: total,
++          nextPollInMs: nextDelayMs,
++          elapsedMs: polledAt - start,
++          timeoutMs,
++        });
++      } catch {
++        // ignore
++      }
++    }
++
++    await sleep(nextDelayMs);
+   }
+ }
+
+diff --git a/src/App.jsx b/src/App.jsx
+index 1f2dacb..896b43a 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -72,6 +72,15 @@ function pct(n) {
+   return `${n.toFixed(1)}%`;
+ }
+ 
++function formatElapsed(msValue) {
++  const ms = Number(msValue);
++  if (!Number.isFinite(ms) || ms < 0) return "-";
++  const totalSeconds = Math.floor(ms / 1000);
++  const minutes = Math.floor(totalSeconds / 60);
++  const seconds = totalSeconds % 60;
++  return `${minutes}:${String(seconds).padStart(2, "0")}`;
++}
++
+ function clampInputValue(value, { min, max, fallback, allowEmpty = false }) {
+   const raw = `${value ?? ""}`.trim();
+   if (!raw) return allowEmpty ? "" : String(fallback);
+@@ -90,6 +99,20 @@ const TOOLTIP_CSS = `
+ @media (prefers-reduced-motion: reduce){.tt-bubble{transition:none}}
+ `;
+ 
++const ATLAS_PROGRESS_CSS = `
++.p6-spin{width:14px;height:14px;border-radius:999px;border:2px solid rgba(17,24,39,.2);border-top-color:rgba(17,24,39,.75);animation:p6rot 900ms linear infinite}
++@keyframes p6rot{to{transform:rotate(360deg)}}
++.p6-dots{display:inline-flex;gap:3px;align-items:center}
++.p6-dots span{width:4px;height:4px;border-radius:999px;background:rgba(17,24,39,.65);animation:p6dot 1200ms ease-in-out infinite}
++.p6-dots span:nth-child(2){animation-delay:150ms}
++.p6-dots span:nth-child(3){animation-delay:300ms}
++@keyframes p6dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
++.p6-indet{position:relative;height:3px;border-radius:999px;background:rgba(17,24,39,.12);overflow:hidden}
++.p6-indet::after{content:"";position:absolute;top:0;left:0;height:100%;width:40%;border-radius:999px;background:rgba(17,24,39,.35);transform:translateX(-60%);animation:p6bar 1100ms ease-in-out infinite}
++@keyframes p6bar{to{transform:translateX(320%)}}
++@media (prefers-reduced-motion: reduce){.p6-spin,.p6-dots span,.p6-indet::after{animation:none}}
++`;
++
+ const COPY = {
+   en: {
+     tagline: "IPv4 vs IPv6, side by side",
+@@ -1128,6 +1151,10 @@ export default function App() {
+   const [err, setErr] = useState("");
+   const [v4, setV4] = useState(null);
+   const [v6, setV6] = useState(null);
++  const [atlasUiNow, setAtlasUiNow] = useState(() => Date.now());
++  const [atlasPollV4, setAtlasPollV4] = useState(null);
++  const [atlasPollV6, setAtlasPollV6] = useState(null);
++  const [atlasRunStartedAt, setAtlasRunStartedAt] = useState(0);
+   const [showRaw, setShowRaw] = useState(false);
+   const [advanced, setAdvanced] = useState(false);
+ 
+@@ -1147,6 +1174,12 @@ export default function App() {
+     } catch {}
+   }, [history]);
+ 
++  useEffect(() => {
++    if (!(running && backend === "atlas")) return;
++    const id = setInterval(() => setAtlasUiNow(Date.now()), 250);
++    return () => clearInterval(id);
++  }, [running, backend]);
++
+   useEffect(() => {
+     if (!history.length) return;
+     setHistoryCompareA((prev) => prev || history[0]?.id || "");
+@@ -1427,6 +1460,9 @@ export default function App() {
+     setErr("");
+     setV4(null);
+     setV6(null);
++    setAtlasPollV4(null);
++    setAtlasPollV6(null);
++    setAtlasRunStartedAt(0);
+     setShowRaw(false);
+     setTurnstileStatus(t("statusPreparing"));
+     setRunning(true);
+@@ -1486,6 +1522,14 @@ export default function App() {
+         setV6(null);
+         setRunWarnings([]);
+ 
++        const atlasStartedAt = backend === "atlas" ? Date.now() : 0;
++        if (atlasStartedAt) {
++          setAtlasRunStartedAt(atlasStartedAt);
++          setAtlasUiNow(atlasStartedAt);
++          setAtlasPollV4({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
++          setAtlasPollV6({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
++        }
++
+         const base = {
+           type: cmd,
+           target: effectiveTarget,
+@@ -1517,8 +1561,42 @@ export default function App() {
+         const [r4, r6] = await Promise.all(
+           backend === "atlas"
+             ? [
+-                waitForAtlasMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal, atlasKey: atlasApiKey }),
+-                waitForAtlasMeasurement(m6.id, { onUpdate: setV6, signal: ac.signal, atlasKey: atlasApiKey }),
++                waitForAtlasMeasurement(m4.id, {
++                  onUpdate: setV4,
++                  onMeta: (meta) => {
++                    if (!atlasStartedAt) return;
++                    setAtlasPollV4((prev) => ({
++                      ...(prev || { startedAt: atlasStartedAt }),
++                      startedAt: prev?.startedAt || atlasStartedAt,
++                      checks: (prev?.checks || 0) + 1,
++                      lastPollAt: meta?.polledAt || Date.now(),
++                      nextPollAt: Number.isFinite(Number(meta?.nextPollInMs)) ? (meta.polledAt || Date.now()) + Number(meta.nextPollInMs) : null,
++                      lastStatus: meta?.status,
++                      expectedTotal: meta?.expectedTotal ?? null,
++                      lastResultsLen: meta?.resultsLen ?? null,
++                    }));
++                  },
++                  signal: ac.signal,
++                  atlasKey: atlasApiKey,
++                }),
++                waitForAtlasMeasurement(m6.id, {
++                  onUpdate: setV6,
++                  onMeta: (meta) => {
++                    if (!atlasStartedAt) return;
++                    setAtlasPollV6((prev) => ({
++                      ...(prev || { startedAt: atlasStartedAt }),
++                      startedAt: prev?.startedAt || atlasStartedAt,
++                      checks: (prev?.checks || 0) + 1,
++                      lastPollAt: meta?.polledAt || Date.now(),
++                      nextPollAt: Number.isFinite(Number(meta?.nextPollInMs)) ? (meta.polledAt || Date.now()) + Number(meta.nextPollInMs) : null,
++                      lastStatus: meta?.status,
++                      expectedTotal: meta?.expectedTotal ?? null,
++                      lastResultsLen: meta?.resultsLen ?? null,
++                    }));
++                  },
++                  signal: ac.signal,
++                  atlasKey: atlasApiKey,
++                }),
+               ]
+             : [
+                 waitForMeasurement(m4.id, { onUpdate: setV4, signal: ac.signal }),
+@@ -2043,9 +2121,22 @@ export default function App() {
+   const agplUrl = `${repoUrl}/blob/${commitRef}/LICENSE`;
+   const ccUrl = `${repoUrl}/blob/${commitRef}/LICENSE-DOCS`;
+ 
++  const atlasElapsed = atlasRunStartedAt ? formatElapsed(atlasUiNow - atlasRunStartedAt) : "-";
++
++  function formatAtlasPollLine(poll) {
++    if (!poll || !poll.lastPollAt) return "starting…";
++    const lastAgeSec = Math.max(0, (atlasUiNow - poll.lastPollAt) / 1000);
++    const nextInSec = poll.nextPollAt ? Math.max(0, (poll.nextPollAt - atlasUiNow) / 1000) : null;
++    const checks = poll.checks || 0;
++    const last = `${lastAgeSec.toFixed(1)}s ago`;
++    const next = nextInSec === null ? "next: ?" : `next in ${nextInSec.toFixed(1)}s`;
++    return `checks: ${checks} · last: ${last} · ${next}`;
++  }
++
+   return (
+     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+       <style>{TOOLTIP_CSS}</style>
++      <style>{ATLAS_PROGRESS_CSS}</style>
+ <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
+   <a href="https://ping6.it" style={{ display: "inline-flex", alignItems: "baseline", gap: "10px", textDecoration: "none", color: "inherit" }}>
+     <img src="/logo-badge.svg" alt="Ping6" width="28" height="28" />
+@@ -2597,18 +2688,35 @@ export default function App() {
+             role="status"
+             aria-live="polite"
+           >
+-            <div style={{ fontWeight: 700, fontSize: 13 }}>RIPE Atlas: measurement in progress…</div>
+-            <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
++            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
++              <div style={{ fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
++                <span className="p6-dots" aria-hidden="true"><span /><span /><span /></span>
++                <span>RIPE Atlas: measurement in progress…</span>
++              </div>
++              <div className="p6-spin" aria-hidden="true" />
++            </div>
++
++            <div style={{ marginTop: 8 }} className="p6-indet" aria-hidden="true" />
++
++            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+               <div>
+                 IPv4: {v4?.statusName || v4?.status || "waiting"} · {(v4?.results || []).length}/
+                 {v4?.atlas?.measurement?.probes_scheduled || v4?.atlas?.measurement?.probes_requested || limit}
++                <div style={{ marginTop: 2, fontSize: 11, opacity: 0.75 }}>{formatAtlasPollLine(atlasPollV4)}</div>
+               </div>
+               <div>
+                 IPv6: {v6?.statusName || v6?.status || "waiting"} · {(v6?.results || []).length}/
+                 {v6?.atlas?.measurement?.probes_scheduled || v6?.atlas?.measurement?.probes_requested || limit}
++                <div style={{ marginTop: 2, fontSize: 11, opacity: 0.75 }}>{formatAtlasPollLine(atlasPollV6)}</div>
++              </div>
++              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, opacity: 0.75, marginTop: 2, fontSize: 11 }}>
++                <span>Elapsed: {atlasElapsed}</span>
++                {((v4?.results || []).length + (v6?.results || []).length) === 0 && (
++                  <span>Waiting for the first probe response…</span>
++                )}
+               </div>
+-              <div style={{ opacity: 0.75, marginTop: 2 }}>
+-                Results can take a few seconds to appear. They will stream in as probes report back.
++              <div style={{ opacity: 0.75, marginTop: 2, fontSize: 11 }}>
++                Results can take 10–60 seconds on RIPE Atlas. They will stream in as probes report back.
+               </div>
+             </div>
+           </div>
