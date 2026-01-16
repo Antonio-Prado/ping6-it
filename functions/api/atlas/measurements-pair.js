@@ -45,6 +45,95 @@ function normalizeMagic(magic) {
     .trim();
 }
 
+
+const PRESET_COUNTRY_NAME_TO_CODE = {
+  brazil: "BR",
+  argentina: "AR",
+  chile: "CL",
+  colombia: "CO",
+};
+
+// ping6.it geo presets use UN M49 region labels (e.g. "Asia", "Western Europe").
+// RIPE Atlas probe selection does not support those directly, so we map them to Atlas "area" buckets.
+// This is an approximation (Atlas areas are coarse).
+const PRESET_REGION_TO_ATLAS_AREAS = {
+  // Macro regions
+  europe: ["West"],
+  africa: ["West"],
+  "north america": ["North-Central"],
+  "south america": ["South-Central"],
+  asia: ["North-East", "South-East"],
+
+  // Europe (UN M49 subregions)
+  "western europe": ["West"],
+  "northern europe": ["West"],
+  "southern europe": ["West"],
+  "eastern europe": ["West"],
+
+  // Africa (UN M49 subregions)
+  "northern africa": ["West"],
+  "western africa": ["West"],
+  "middle africa": ["West"],
+  "eastern africa": ["West"],
+  "southern africa": ["West"],
+
+  // Americas
+  "northern america": ["North-Central"],
+  "central america": ["North-Central"],
+  caribbean: ["North-Central"],
+
+  // Asia (UN M49 subregions)
+  "western asia": ["North-East"],
+  "central asia": ["North-East"],
+  "southern asia": ["South-East"],
+  "south-eastern asia": ["South-East"],
+  "eastern asia": ["North-East"],
+
+  // Oceania moved under Asia in the UI
+  "australia and new zealand": ["South-East"],
+  melanesia: ["South-East"],
+  micronesia: ["South-East"],
+  polynesia: ["South-East"],
+};
+
+function distributeRequested(total, buckets) {
+  const t = Math.max(1, Math.trunc(Number(total) || 1));
+  const b = Math.max(1, Math.trunc(Number(buckets) || 1));
+  const base = Math.floor(t / b);
+  const rem = t % b;
+  const out = [];
+  for (let i = 0; i < b; i += 1) {
+    const n = base + (i < rem ? 1 : 0);
+    if (n > 0) out.push(n);
+  }
+  return out;
+}
+
+function presetToAtlasProbeSelection(label, requested, warnings) {
+  const raw = String(label || "").trim();
+  const key = raw.toLowerCase();
+  if (!key) return null;
+
+  const cc = PRESET_COUNTRY_NAME_TO_CODE[key];
+  if (cc) {
+    warnings.push(`Mapped preset "${raw}" to RIPE Atlas country=${cc}.`);
+    return { probes: [{ requested, type: "country", value: cc }], warnings };
+  }
+
+  const areas = PRESET_REGION_TO_ATLAS_AREAS[key];
+  if (Array.isArray(areas) && areas.length) {
+    const counts = distributeRequested(requested, areas.length);
+    const usedAreas = areas.slice(0, counts.length);
+    const probes = usedAreas.map((a, i) => ({ requested: counts[i], type: "area", value: a }));
+    warnings.push(
+      `Mapped preset "${raw}" to RIPE Atlas area${usedAreas.length > 1 ? "s" : ""}: ${usedAreas.join(", ")}. (Atlas areas are coarse and may not match the Globalping region exactly.)`
+    );
+    return { probes, warnings };
+  }
+
+  return null;
+}
+
 function parseAtlasProbeRequest(location, requested) {
   const req = clampInt(requested, { min: 1, max: 50, fallback: 3 });
 
@@ -65,6 +154,9 @@ function parseAtlasProbeRequest(location, requested) {
   if (area) {
     return { probes: [{ requested: req, type: "area", value: area }], warnings };
   }
+
+  const mapped = presetToAtlasProbeSelection(s, req, warnings);
+  if (mapped) return mapped;
 
   const mAsn = s.match(/^(?:asn:|AS)(\d+)$/i);
   if (mAsn) {
@@ -94,7 +186,7 @@ function parseAtlasProbeRequest(location, requested) {
 
   // Fallback
   warnings.push(
-    "Atlas probe selection syntax differs from Globalping. Falling back to area=WW. Examples: WW, IT, AS3269, asn:3356, prefix:2001:db8::/32, probes:123,456."
+    "Atlas probe selection syntax differs from Globalping. Unknown regions/names will fall back to area=WW. Examples: WW, IT, AS3269, asn:3356, prefix:2001:db8::/32, probes:123,456."
   );
   return { probes: [{ requested: req, type: "area", value: "WW" }], warnings };
 }
