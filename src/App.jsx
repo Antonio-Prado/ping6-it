@@ -202,6 +202,8 @@ const COPY = {
     footer: "If it works, thank",
     footerTail: "If not, blame IPv4!",
     summaryBoth: "both",
+    comparedOnDualStack: ({ both, n }) => `Compared on ${both}/${n} dual-stack probes. Rows missing v4 or v6 are excluded from statistics.`,
+    excludedBadge: "excluded",
     all: "All",
     summaryMedianV4: "median v4",
     summaryMedianV6: "median v6",
@@ -2444,6 +2446,18 @@ ${paramLines}` : header;
     lineHeight: 1.35,
   };
 
+  const excludedRowStyle = { opacity: 0.55 };
+  const excludedBadgeStyle = {
+    display: "inline-block",
+    padding: "1px 6px",
+    border: "1px solid #d1d5db",
+    borderRadius: 999,
+    fontSize: 11,
+    marginRight: 6,
+    verticalAlign: "baseline",
+    opacity: 0.85,
+  };
+
   // Licensing (AGPL) and build provenance (Cloudflare Pages commit SHA -> VITE_COMMIT_SHA)
   const repoUrl = "https://github.com/Antonio-Prado/ping6-it";
   const commitSha = String(import.meta.env.VITE_COMMIT_SHA || "").trim();
@@ -3449,6 +3463,11 @@ ${paramLines}` : header;
               {t("summaryMedianLossV4")} {pct(pingCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")}{" "}
               {pct(pingCompare.summary.median_loss_v6)}
             </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: pingCompare.summary.both, n: pingCompare.summary.n })}
+              </div>
+            )}
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -3473,8 +3492,10 @@ ${paramLines}` : header;
               </tr>
             </thead>
             <tbody>
-              {pingCompare.rows.map((r) => (
-                <tr key={r.key}>
+              {pingCompare.rows.map((r) => {
+                const excluded = strictCompare && (!(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)));
+                return (
+                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {formatProbeLocation(r.probe)}
@@ -3486,9 +3507,10 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6avg)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v6loss)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
-                </tr>
-              ))}
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -3534,6 +3556,11 @@ ${paramLines}` : header;
               <br />
               {t("summaryP95V4")} {ms(trCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(trCompare.summary.p95_v6)}
             </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: trCompare.summary.both, n: trCompare.summary.n })}
+              </div>
+            )}
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -3560,8 +3587,10 @@ ${paramLines}` : header;
               </tr>
             </thead>
             <tbody>
-              {trCompare.rows.map((r) => (
-                <tr key={r.key}>
+              {trCompare.rows.map((r) => {
+                const excluded = strictCompare && (!(Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst)));
+                return (
+                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
@@ -3576,9 +3605,10 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6dst)}</td>
 
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
-                </tr>
-              ))}
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -3628,6 +3658,11 @@ ${paramLines}` : header;
               {t("summaryMedianLossV4")} {pct(mtrCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")}{" "}
               {pct(mtrCompare.summary.median_loss_v6)} · {t("summaryDeltaLoss")} {pct(mtrCompare.summary.median_delta_loss)}
             </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: mtrCompare.summary.both, n: mtrCompare.summary.n })}
+              </div>
+            )}
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -3657,8 +3692,10 @@ ${paramLines}` : header;
               </tr>
             </thead>
             <tbody>
-              {mtrCompare.rows.map((r) => (
-                <tr key={r.key}>
+              {mtrCompare.rows.map((r) => {
+                const excluded = strictCompare && (!(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)));
+                return (
+                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
@@ -3676,9 +3713,10 @@ ${paramLines}` : header;
 
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.deltaLoss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
-                </tr>
-              ))}
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -3726,6 +3764,11 @@ ${paramLines}` : header;
               <br />
               {t("summaryP95V4")} {ms(dnsCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(dnsCompare.summary.p95_v6)}
             </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: dnsCompare.summary.both, n: dnsCompare.summary.n })}
+              </div>
+            )}
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -3749,8 +3792,10 @@ ${paramLines}` : header;
               </tr>
             </thead>
             <tbody>
-              {dnsCompare.rows.map((r) => (
-                <tr key={r.key}>
+              {dnsCompare.rows.map((r) => {
+                const excluded = strictCompare && (!(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)));
+                return (
+                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {formatProbeLocation(r.probe)}
@@ -3763,9 +3808,10 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}
                   </td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
-                </tr>
-              ))}
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -3782,6 +3828,11 @@ ${paramLines}` : header;
               <br />
               {t("summaryP95V4")} {ms(httpCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(httpCompare.summary.p95_v6)}
             </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: httpCompare.summary.both, n: httpCompare.summary.n })}
+              </div>
+            )}
           </div>
 
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -3807,8 +3858,10 @@ ${paramLines}` : header;
               </tr>
             </thead>
             <tbody>
-              {httpCompare.rows.map((r) => (
-                <tr key={r.key}>
+              {httpCompare.rows.map((r) => {
+                const excluded = strictCompare && (!(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)));
+                return (
+                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
@@ -3819,9 +3872,10 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6ms)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.winner}</td>
-                </tr>
-              ))}
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
