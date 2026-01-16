@@ -258,6 +258,13 @@ const COPY = {
     helpAtlasKey: "Get an API key from RIPE Atlas: log in → My Atlas → Keys (API Keys) → Create key. Paste it here. Stored locally and never included in share links.",
     helpAsn: "Filter probes by ASN (e.g. 12345).",
     helpIsp: "ISP name filtering is not supported by the Globalping API: use an ASN when possible.",
+    asnCellHint: "Click for ASN details.",
+    asnDetailsTitle: "ASN details",
+    asnDetailsAbout: "An ASN (Autonomous System Number) identifies the network announcing the probe's public IP. Atlas/Globalping may not always know it for both address families.",
+    asnDetailsInTable: ({ n }) => `In this table: ${n} probe(s) with this ASN.`,
+    asnDetailsCopy: "Copy ASN",
+    asnDetailsUseFilter: "Use as ASN filter",
+    asnDetailsClose: "Close",
     helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
     helpIpv6Only:
       "Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target.",
@@ -1089,6 +1096,60 @@ function buildMtrCompare(v4, v6, { strict = false } = {}) {
   return { rows, summary };
 }
 
+function normalizeAsn(x) {
+  const n = Number(x);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function computeAsnSummary(kind, rows) {
+  const r = Array.isArray(rows) ? rows : [];
+  const pick = (k) => r.map((row) => row?.[k]).filter(Number.isFinite);
+
+  if (kind === 'ping' || kind === 'mtr') {
+    const v4 = pick('v4avg');
+    const v6 = pick('v6avg');
+    const d = pick('deltaAvg');
+    const l4 = pick('v4loss');
+    const l6 = pick('v6loss');
+    const dl = pick('deltaLoss');
+    return {
+      n: r.length,
+      median_v4: percentile(v4, 0.5),
+      median_v6: percentile(v6, 0.5),
+      median_delta: percentile(d, 0.5),
+      median_loss_v4: percentile(l4, 0.5),
+      median_loss_v6: percentile(l6, 0.5),
+      median_loss_delta: percentile(dl, 0.5),
+    };
+  }
+
+  if (kind === 'traceroute') {
+    const v4 = pick('v4dst');
+    const v6 = pick('v6dst');
+    const d = pick('delta');
+    return {
+      n: r.length,
+      median_v4: percentile(v4, 0.5),
+      median_v6: percentile(v6, 0.5),
+      median_delta: percentile(d, 0.5),
+    };
+  }
+
+  // dns/http
+  const v4 = pick('v4ms');
+  const v6 = pick('v6ms');
+  const d = pick('delta');
+  const ratio = pick('ratio');
+  return {
+    n: r.length,
+    median_v4: percentile(v4, 0.5),
+    median_v6: percentile(v6, 0.5),
+    median_delta: percentile(d, 0.5),
+    median_ratio: percentile(ratio, 0.5),
+  };
+}
+
+
 export default function App() {
   // Globalping UI
   const [target, setTarget] = useState("example.com");
@@ -1106,6 +1167,9 @@ export default function App() {
   const [requireV6Capable, setRequireV6Capable] = useState(true);
   const [runWarnings, setRunWarnings] = useState([]);
 
+  // ASN details (in-app)
+  const [asnCard, setAsnCard] = useState(null);
+
   // Geo presets UI (macro + sub-regions)
   const [macroId, setMacroId] = useState("eu");
   const [subId, setSubId] = useState("eu-w");
@@ -1121,6 +1185,15 @@ export default function App() {
       document.documentElement.lang = "en";
     }
   }, []);
+
+  useEffect(() => {
+    if (!asnCard) return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setAsnCard(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [asnCard]);
 
   const macroPreset = useMemo(
     () => GEO_PRESETS.find((p) => p.id === macroId) ?? GEO_PRESETS[0],
@@ -2490,6 +2563,47 @@ ${paramLines}` : header;
     return `checks: ${checks} · last: ${last} · ${next}`;
   }
 
+  function openAsnCard(asnValue, kind, rows) {
+    const asn = normalizeAsn(asnValue);
+    if (!asn) return;
+    setAsnCard({ asn, kind, rows });
+  }
+
+  function renderAsnCell(asnValue, kind, rows) {
+    const asn = normalizeAsn(asnValue);
+    if (!asn) return '-';
+    return (
+      <span className="tt">
+        <button
+          type="button"
+          onClick={() => openAsnCard(asn, kind, rows)}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            padding: 0,
+            margin: 0,
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            color: '#2563eb',
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+          }}
+        >
+          {asn}
+        </button>
+        <span className="tt-bubble">{t('asnCellHint')}</span>
+      </span>
+    );
+  }
+
+  async function copyAsnToClipboard(asn) {
+    try {
+      await navigator.clipboard?.writeText(String(asn));
+    } catch {
+      // ignore
+    }
+  }
+
   return (
     <div style={{ fontFamily: "ui-monospace, Menlo, monospace", padding: 16, maxWidth: 1100, margin: "0 auto", minHeight: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
       <style>{TOOLTIP_CSS}</style>
@@ -3500,7 +3614,7 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {formatProbeLocation(r.probe)}
                   </td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "ping", pingCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4avg)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v4loss)}</td>
@@ -3593,7 +3707,7 @@ ${paramLines}` : header;
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "traceroute", trCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? t("yes") : t("no")}</td>
@@ -3698,7 +3812,7 @@ ${paramLines}` : header;
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "mtr", mtrCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? t("yes") : t("no")}</td>
@@ -3800,7 +3914,7 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {formatProbeLocation(r.probe)}
                   </td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "dns", dnsCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4ms)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6ms)}</td>
@@ -3864,7 +3978,7 @@ ${paramLines}` : header;
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.asn ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "http", httpCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4sc ?? "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6sc ?? "-"}</td>
@@ -3880,6 +3994,159 @@ ${paramLines}` : header;
           </table>
         </div>
       )}
+
+
+      {asnCard && (() => {
+        const rows = Array.isArray(asnCard.rows) ? asnCard.rows : [];
+        const related = rows.filter((r) => normalizeAsn(r?.probe?.asn) === asnCard.asn);
+        const summary = computeAsnSummary(asnCard.kind, related);
+
+        const isPingLike = asnCard.kind === 'ping' || asnCard.kind === 'mtr';
+        const isTrace = asnCard.kind === 'traceroute';
+        const isHttp = asnCard.kind === 'http';
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setAsnCard(null);
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+              zIndex: 10000,
+            }}
+          >
+            <div
+              style={{
+                background: '#fff',
+                color: '#111',
+                borderRadius: 14,
+                border: '1px solid #e5e7eb',
+                boxShadow: '0 24px 60px rgba(0,0,0,.25)',
+                width: 'min(860px, 100%)',
+                maxHeight: '80vh',
+                overflow: 'auto',
+                padding: 16,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 18 }}>{t('asnDetailsTitle')}: {asnCard.asn}</div>
+                  <div style={{ marginTop: 4, fontSize: 13, opacity: 0.8 }}>{t('asnDetailsInTable', { n: summary.n })}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => copyAsnToClipboard(asnCard.asn)}
+                    style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}
+                  >
+                    {t('asnDetailsCopy')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProbeAsn(String(asnCard.asn));
+                      setAsnCard(null);
+                    }}
+                    style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}
+                  >
+                    {t('asnDetailsUseFilter')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAsnCard(null)}
+                    style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}
+                  >
+                    {t('asnDetailsClose')}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>{t('asnDetailsAbout')}</div>
+
+              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
+                <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Median v4</div>
+                  <div>{ms(summary.median_v4)}</div>
+                </div>
+                <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Median v6</div>
+                  <div>{ms(summary.median_v6)}</div>
+                </div>
+                <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Median Δ (v6-v4)</div>
+                  <div>{ms(summary.median_delta)}</div>
+                </div>
+              </div>
+
+              {isPingLike && (
+                <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
+                  <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Median loss v4</div>
+                    <div>{pct(summary.median_loss_v4)}</div>
+                  </div>
+                  <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Median loss v6</div>
+                    <div>{pct(summary.median_loss_v6)}</div>
+                  </div>
+                  <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Median Δ loss</div>
+                    <div>{pct(summary.median_loss_delta)}</div>
+                  </div>
+                </div>
+              )}
+
+              {!isPingLike && !isTrace && !isHttp && summary.median_ratio !== undefined && (
+                <div style={{ marginTop: 10, padding: 10, border: '1px solid #e5e7eb', borderRadius: 12, fontSize: 13 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Median ratio (v6/v4)</div>
+                  <div>{Number.isFinite(summary.median_ratio) ? summary.median_ratio.toFixed(2) : '-'}</div>
+                </div>
+              )}
+
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>Probes</div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        {['#', 'Location', 'v4', 'v6', 'Δ'].map((h) => (
+                          <th key={h} style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {related.slice(0, 30).map((row, i) => {
+                        const v4 = row.v4avg ?? row.v4dst ?? row.v4ms;
+                        const v6 = row.v6avg ?? row.v6dst ?? row.v6ms;
+                        const d = row.deltaAvg ?? row.delta ?? row.delta;
+                        return (
+                          <tr key={row.key || i}>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{i + 1}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{formatProbeLocation(row.probe)}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{ms(v4)}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{ms(v6)}</td>
+                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{ms(d)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {related.length > 30 ? (
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>Showing first 30 probes.</div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
 
       {/* RAW outputs */}
