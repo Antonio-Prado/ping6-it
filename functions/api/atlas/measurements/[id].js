@@ -61,7 +61,11 @@ function normalizeProbeMeta(p) {
 
   const asnV6 = toNumber(p?.asn_v6);
   const asnV4 = toNumber(p?.asn_v4);
-  const asn = asnV6 ?? asnV4 ?? undefined;
+  const asnAny = toNumber(p?.asn);
+
+  // Atlas may report 0 when the ASN is unknown for a given address-family.
+  // Prefer the first positive ASN we can find (v6, then v4, then generic).
+  const asn = [asnV6, asnV4, asnAny].find((n) => Number.isFinite(n) && n > 0) ?? undefined;
 
   let latitude;
   let longitude;
