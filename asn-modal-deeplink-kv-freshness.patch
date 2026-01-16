@@ -1,0 +1,352 @@
+diff --git a/functions/api/asn/[asn].js b/functions/api/asn/[asn].js
+index ea407d8..135169b 100644
+--- a/functions/api/asn/[asn].js
++++ b/functions/api/asn/[asn].js
+@@ -1,6 +1,14 @@
+ const RIPESTAT_AS_OVERVIEW = "https://stat.ripe.net/data/as-overview/data.json";
+ 
+-function json(body, status = 200, cacheControl = "public, max-age=86400, stale-while-revalidate=43200") {
++// Server-side caching (prefer KV if available; fallback to the Cloudflare Cache API).
++// KV binding name (recommended): ASN_META_KV
++const ASN_META_TTL_FRESH_SECONDS = 24 * 60 * 60;
++const ASN_META_TTL_STALE_SECONDS = 12 * 60 * 60;
++const ASN_META_TTL_TOTAL_SECONDS = ASN_META_TTL_FRESH_SECONDS + ASN_META_TTL_STALE_SECONDS;
++
++const ASN_META_CACHE_PREFIX = "https://ping6.it/_cache/asn/meta/";
++
++function json(body, status = 200, cacheControl = "public, max-age=600, stale-while-revalidate=43200") {
+   return new Response(JSON.stringify(body), {
+     status,
+     headers: {
+@@ -19,44 +27,108 @@ function normalizeAsnParam(v) {
+   return String(Math.trunc(n));
+ }
+ 
+-export async function onRequest(context) {
+-  const asn = normalizeAsnParam(context?.params?.asn);
+-  if (!asn) {
+-    return json({ error: "bad_request", message: "Invalid ASN." }, 400, "no-store");
++function getDefaultCache() {
++  try {
++    return typeof caches !== "undefined" && caches.default ? caches.default : null;
++  } catch {
++    return null;
+   }
++}
+ 
+-  const upstream = new URL(RIPESTAT_AS_OVERVIEW);
+-  upstream.searchParams.set("resource", asn);
++function cacheKey(asn) {
++  return `${ASN_META_CACHE_PREFIX}${encodeURIComponent(String(asn))}`;
++}
+ 
+-  let resp;
++function coerceRecord(rec) {
++  if (!rec || typeof rec !== "object") return null;
++  const fetchedAt = Number(rec.fetchedAt);
++  const payload = rec.payload && typeof rec.payload === "object" ? rec.payload : null;
++  if (!Number.isFinite(fetchedAt) || !payload) return null;
++  return { fetchedAt, payload };
++}
++
++async function readFromKv(kv, asn) {
++  if (!kv) return null;
+   try {
+-    resp = await fetch(upstream.toString(), {
+-      method: "GET",
+-      headers: { accept: "application/json" },
+-    });
+-  } catch (e) {
+-    return json({ error: "upstream_unreachable", message: "RIPEstat request failed." }, 502, "no-store");
++    const rec = await kv.get(`asn-meta:${asn}`, { type: "json" });
++    return coerceRecord(rec);
++  } catch {
++    return null;
+   }
++}
+ 
+-  if (!resp.ok) {
+-    return json(
+-      { error: "upstream_error", message: "RIPEstat returned an error.", status: resp.status },
+-      502,
+-      "no-store"
+-    );
++async function writeToKv(kv, asn, record) {
++  if (!kv || !record) return;
++  try {
++    await kv.put(`asn-meta:${asn}`, JSON.stringify(record), { expirationTtl: ASN_META_TTL_TOTAL_SECONDS });
++  } catch {
++    // ignore
+   }
++}
+ 
+-  let body;
++async function readFromEdgeCache(cache, asn) {
++  if (!cache) return null;
+   try {
+-    body = await resp.json();
++    const req = new Request(cacheKey(asn));
++    const res = await cache.match(req);
++    if (!res) return null;
++    const rec = await res.json();
++    return coerceRecord(rec);
+   } catch {
+-    return json({ error: "upstream_invalid", message: "RIPEstat returned invalid JSON." }, 502, "no-store");
++    return null;
+   }
++}
++
++async function writeToEdgeCache(cache, asn, record) {
++  if (!cache || !record) return;
++  try {
++    const req = new Request(cacheKey(asn));
++    const res = new Response(JSON.stringify(record), {
++      headers: {
++        "content-type": "application/json; charset=utf-8",
++        "cache-control": `public, max-age=${ASN_META_TTL_TOTAL_SECONDS}`,
++      },
++    });
++    await cache.put(req, res);
++  } catch {
++    // ignore
++  }
++}
++
++function buildResponsePayload(payload, fetchedAtMs, cacheStatus) {
++  const now = Date.now();
++  const ageSec = Math.max(0, Math.floor((now - fetchedAtMs) / 1000));
++  return {
++    ...payload,
++    fetchedAt: new Date(fetchedAtMs).toISOString(),
++    cache: {
++      status: cacheStatus,
++      ageSec,
++      freshTtlSec: ASN_META_TTL_FRESH_SECONDS,
++    },
++  };
++}
+ 
++async function fetchRipestat(asn) {
++  const upstream = new URL(RIPESTAT_AS_OVERVIEW);
++  upstream.searchParams.set("resource", asn);
++
++  const resp = await fetch(upstream.toString(), {
++    method: "GET",
++    headers: { accept: "application/json" },
++  });
++
++  if (!resp.ok) {
++    const err = new Error("RIPEstat returned an error");
++    err.status = resp.status;
++    throw err;
++  }
++
++  const body = await resp.json();
+   const data = body && typeof body === "object" ? body.data : null;
+   const block = data && typeof data === "object" ? data.block : null;
+ 
+-  return json({
++  return {
+     asn: Number(asn),
+     holder: data?.holder ?? null,
+     announced: typeof data?.announced === "boolean" ? data.announced : null,
+@@ -68,5 +140,58 @@ export async function onRequest(context) {
+         }
+       : null,
+     source: "ripestat-as-overview",
+-  });
++  };
++}
++
++async function refreshRecord({ kv, cache, asn }) {
++  const payload = await fetchRipestat(asn);
++  const record = { fetchedAt: Date.now(), payload };
++  await Promise.all([writeToKv(kv, asn, record), writeToEdgeCache(cache, asn, record)]);
++  return record;
++}
++
++export async function onRequest(context) {
++  const asn = normalizeAsnParam(context?.params?.asn);
++  if (!asn) {
++    return json({ error: "bad_request", message: "Invalid ASN." }, 400, "no-store");
++  }
++
++  const kv = context?.env?.ASN_META_KV || null;
++  const cache = getDefaultCache();
++  const now = Date.now();
++
++  // 1) Try KV (preferred)
++  let rec = await readFromKv(kv, asn);
++  if (!rec) {
++    // 2) Fallback to edge cache
++    rec = await readFromEdgeCache(cache, asn);
++  }
++
++  if (rec) {
++    const ageSec = Math.max(0, Math.floor((now - rec.fetchedAt) / 1000));
++    if (ageSec <= ASN_META_TTL_FRESH_SECONDS) {
++      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "hit"));
++    }
++
++    // Stale-but-serveable: return it, and revalidate in the background.
++    try {
++      context.waitUntil(refreshRecord({ kv, cache, asn }));
++    } catch {
++      // ignore
++    }
++    return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale"));
++  }
++
++  // 3) Cache miss: fetch now.
++  let payload;
++  try {
++    payload = await fetchRipestat(asn);
++  } catch {
++    return json({ error: "upstream_error", message: "RIPEstat request failed." }, 502, "no-store");
++  }
++
++  const record = { fetchedAt: Date.now(), payload };
++  await Promise.all([writeToKv(kv, asn, record), writeToEdgeCache(cache, asn, record)]);
++
++  return json(buildResponsePayload(payload, record.fetchedAt, "miss"));
+ }
+diff --git a/src/App.jsx b/src/App.jsx
+index 1deaf71..b14cc06 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -85,6 +85,24 @@ function formatElapsed(msValue) {
+   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+ }
+ 
++function formatAgeHuman(msValue) {
++  const ms = Number(msValue);
++  if (!Number.isFinite(ms) || ms < 0) return "-";
++  const totalSeconds = Math.floor(ms / 1000);
++  const minutesTotal = Math.floor(totalSeconds / 60);
++  const hoursTotal = Math.floor(minutesTotal / 60);
++  const days = Math.floor(hoursTotal / 24);
++
++  const seconds = totalSeconds % 60;
++  const minutes = minutesTotal % 60;
++  const hours = hoursTotal % 24;
++
++  if (days > 0) return `${days}d ${hours}h`;
++  if (hoursTotal > 0) return `${hoursTotal}h ${minutes}m`;
++  if (minutesTotal > 0) return `${minutesTotal}m ${seconds}s`;
++  return `${totalSeconds}s`;
++}
++
+ function clampInputValue(value, { min, max, fallback, allowEmpty = false }) {
+   const raw = `${value ?? ""}`.trim();
+   if (!raw) return allowEmpty ? "" : String(fallback);
+@@ -275,6 +293,14 @@ const COPY = {
+     asnMetaRegistry: "Registry",
+     asnMetaIana: "IANA block",
+     asnMetaAnnounced: "Announced",
++    asnMetaProvenance: ({ source, cache, age, fetchedAt }) => {
++      const parts = [];
++      if (source) parts.push(`source: ${source}`);
++      if (cache) parts.push(`cache: ${cache}`);
++      if (age) parts.push(`fetched ${age} ago`);
++      if (fetchedAt) parts.push(`at ${fetchedAt}`);
++      return parts.length ? `Metadata · ${parts.join(' · ')}` : 'Metadata';
++    },
+     helpDeltaAlert: "Show a warning when the median v6-v4 delta exceeds this threshold.",
+     helpIpv6Only:
+       "Select only probes that can run IPv6, then run IPv4 on the same probes for a fair comparison. Requires a hostname target.",
+@@ -1187,6 +1213,7 @@ export default function App() {
+ 
+   // ASN details (in-app)
+   const [asnCard, setAsnCard] = useState(null);
++  const [asnCardFromUrl, setAsnCardFromUrl] = useState(null);
+ 
+   // Geo presets UI (macro + sub-regions)
+   const [macroId, setMacroId] = useState("eu");
+@@ -1213,6 +1240,15 @@ export default function App() {
+     return () => window.removeEventListener('keydown', onKeyDown);
+   }, [asnCard]);
+ 
++
++  useEffect(() => {
++    if (typeof window === 'undefined') return;
++    const url = new URL(window.location.href);
++    if (asnCard?.asn) url.searchParams.set('asncard', String(asnCard.asn));
++    else url.searchParams.delete('asncard');
++    window.history.replaceState(null, '', url.toString());
++  }, [asnCard?.asn]);
++
+   useEffect(() => {
+     const asn = asnCard?.asn;
+     if (!asn) return;
+@@ -1422,6 +1458,10 @@ export default function App() {
+       setDeltaThreshold,
+     });
+ 
++    const asnCardRaw = params.get("asncard");
++    const asnCardAsn = normalizeAsn(asnCardRaw);
++    if (asnCardAsn) setAsnCardFromUrl(asnCardAsn);
++
+     const reportRaw = params.get("report");
+     const dataRaw = params.get("data");
+     if (reportRaw === "1" && dataRaw) {
+@@ -2163,6 +2203,7 @@ ${paramLines}` : header;
+     if (probeAsn) params.set("asn", probeAsn);
+     if (probeIsp) params.set("isp", probeIsp);
+     if (deltaThreshold) params.set("delta", deltaThreshold);
++    if (asnCard?.asn) params.set("asncard", String(asnCard.asn));
+ 
+     if (cmd === "ping" || cmd === "mtr") params.set("packets", String(packets || 3));
+     if (cmd === "traceroute" || cmd === "mtr") {
+@@ -2494,6 +2535,26 @@ ${paramLines}` : header;
+     return buildMtrCompare(v4, v6, { strict: strictCompare });
+   }, [showMtrTable, v4, v6, strictCompare]);
+ 
++  const asnContext = useMemo(() => {
++    if (cmd === 'ping' && pingCompare) return { kind: 'ping', rows: pingCompare.rows };
++    if (cmd === 'traceroute' && trCompare) return { kind: 'traceroute', rows: trCompare.rows };
++    if (cmd === 'mtr' && mtrCompare) return { kind: 'mtr', rows: mtrCompare.rows };
++    if (cmd === 'dns' && dnsCompare) return { kind: 'dns', rows: dnsCompare.rows };
++    if (cmd === 'http' && httpCompare) return { kind: 'http', rows: httpCompare.rows };
++    return { kind: cmd, rows: [] };
++  }, [cmd, pingCompare, trCompare, mtrCompare, dnsCompare, httpCompare]);
++
++  useEffect(() => {
++    const asn = asnCardFromUrl;
++    if (!asn) return;
++    if (asnCard) return;
++
++    const kind = asnContext?.kind || cmd;
++    const rows = Array.isArray(asnContext?.rows) ? asnContext.rows : [];
++    openAsnCard(asn, kind, rows);
++    setAsnCardFromUrl(null);
++  }, [asnCardFromUrl, asnCard, asnContext, cmd]);
++
+   const deltaThresholdValue = Number(deltaThreshold);
+   const thresholdEnabled = Number.isFinite(deltaThresholdValue) && deltaThresholdValue > 0;
+   const deltaAlert = useMemo(() => {
+@@ -4124,8 +4185,25 @@ ${paramLines}` : header;
+                 const registry = meta?.registry?.name || '-';
+                 const announced = typeof meta?.announced === 'boolean' ? (meta.announced ? t('yes') : t('no')) : '-';
+ 
++                const source = (() => {
++                  const s = String(meta?.source || '').trim();
++                  if (s === 'ripestat-as-overview') return 'RIPEstat (as-overview)';
++                  return s || '-';
++                })();
++
++                const cache = (() => {
++                  const s = String(meta?.cache?.status || '').trim();
++                  return s || '-';
++                })();
++
++                const fetchedAtDate = meta?.fetchedAt ? new Date(meta.fetchedAt) : null;
++                const age = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? formatAgeHuman(Date.now() - fetchedAtDate.getTime()) : null;
++                const fetchedAtLabel = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? fetchedAtDate.toLocaleString(dateLocale) : null;
++                const provenance = t('asnMetaProvenance', { source, cache, age, fetchedAt: fetchedAtLabel });
++
+                 return (
+                   <>
++                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }} title={provenance}>{provenance}</div>
+                     <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, fontSize: 13 }}>
+                       <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                         <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaHolder')}</div>
