@@ -287,6 +287,7 @@ async function atlasPost(path, payload, apiKey, signal) {
   if (!res.ok) {
     const err = new Error("Atlas upstream error");
     err.status = res.status;
+    err.retryAfter = res.headers.get("retry-after") || undefined;
     err.data = data;
     throw err;
   }
@@ -377,6 +378,7 @@ export async function onRequestPost(context) {
       {
         error: "atlas_failed",
         status: e.status || 500,
+        retryAfter: e.retryAfter || undefined,
         details: e.data || {},
       },
       e.status || 500
