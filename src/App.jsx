@@ -3425,35 +3425,6 @@ ${paramLines}` : header;
           <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>{t("coverageHint")}</div>
         </div>
       )}
-      {probePoints.length > 0 && (
-        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("probeMap")}</div>
-          {probeMapUrl ? (
-            <img
-              src={probeMapUrl}
-              alt={t("probeMapAlt")}
-              style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid #e5e7eb" }}
-            />
-          ) : (
-            <div style={{ fontSize: 13, opacity: 0.8 }}>{t("noProbeCoordinates")}</div>
-          )}
-          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
-            {probePoints.slice(0, 30).map((p, idx) => (
-              <a
-                key={`${p.lat}-${p.lon}-${idx}`}
-                href={`https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=6/${p.lat}/${p.lon}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ textDecoration: "underline" }}
-              >
-                {p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`}
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-            {/* Ping compare table */}
       {showPingTable && pingCompare && (
         <div style={{ overflowX: "auto", marginBottom: 16 }}>
           <div style={{ margin: "0 0 8px 0" }}>
@@ -3509,6 +3480,35 @@ ${paramLines}` : header;
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+
+      {probePoints.length > 0 && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("probeMap")}</div>
+          {probeMapUrl ? (
+            <img
+              src={probeMapUrl}
+              alt={t("probeMapAlt")}
+              style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid #e5e7eb" }}
+            />
+          ) : (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>{t("noProbeCoordinates")}</div>
+          )}
+          <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
+            {probePoints.slice(0, 30).map((p, idx) => (
+              <a
+                key={`${p.lat}-${p.lon}-${idx}`}
+                href={`https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=6/${p.lat}/${p.lon}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ textDecoration: "underline" }}
+              >
+                {p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`}
+              </a>
+            ))}
+          </div>
         </div>
       )}
 
