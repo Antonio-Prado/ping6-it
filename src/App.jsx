@@ -336,7 +336,7 @@ const COPY = {
     helpFrom: "Where probes are selected (Globalping location string). Presets below can fill this automatically.",
     helpProbes: "Number of probes to run (Globalping: 1–10, Atlas: 1–50). More probes improve coverage but take longer.",
     helpBackend: "Choose the measurement network backend. Globalping is the default. RIPE Atlas can provide many more probes but requires an API key.",
-    helpAtlasKey: "Get an API key from RIPE Atlas: log in → My Atlas → Keys (API Keys) → Create key. Paste it here. Stored locally and never included in share links.",
+    helpAtlasKey: "Get an API key from RIPE Atlas: log in → My Atlas → Keys (API Keys) → Create key. Paste it here. Kept in memory (not stored) and never included in share links.",
     helpAsn: "Filter probes by ASN (e.g. 12345).",
     helpIsp: "ISP name filtering is not supported by the Globalping API: use an ASN when possible.",
     asnCellHint: "Click for ASN details.",
@@ -1544,8 +1544,6 @@ export default function App() {
     try {
       const b = String(window.localStorage.getItem("PING6_BACKEND") || "").trim();
       if (b === "atlas" || b === "globalping") setBackend(b);
-      const k = String(window.localStorage.getItem("PING6_ATLAS_API_KEY") || "").trim();
-      if (k) setAtlasApiKey(k);
     } catch {}
   }, []);
 
