@@ -230,6 +230,8 @@ const COPY = {
     exportAllJson: "Export all JSON",
     exportAllCsvSummary: "Export all CSV (summary)",
     exportAllCsvRows: "Export all CSV (rows)",
+    includeRaw: "Include raw",
+    tipIncludeRaw: "Include raw backend payloads in the exported JSON (may be large).",
     shareLink: "Share link",
     reportMode: "Report mode",
     linkReady: "Link ready:",
@@ -1376,6 +1378,7 @@ export default function App() {
   const [multiRunResults, setMultiRunResults] = useState([]);
   const [multiRunStatus, setMultiRunStatus] = useState(null);
   const [multiActiveId, setMultiActiveId] = useState(null);
+  const [multiExportIncludeRaw, setMultiExportIncludeRaw] = useState(false);
   const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns | http
   const [backend, setBackend] = useState("globalping"); // globalping | atlas
   const [atlasApiKey, setAtlasApiKey] = useState("");
@@ -2697,7 +2700,7 @@ ${paramLines}` : header;
     };
   }
 
-  function buildMultiExportBundle() {
+  function buildMultiExportBundle({ includeRaw = false } = {}) {
     const arr = Array.isArray(multiRunResults) ? multiRunResults : [];
     if (!arr.length) return null;
 
@@ -2715,6 +2718,7 @@ ${paramLines}` : header;
           effectiveTarget: b.effectiveTarget,
           summary: b.summary,
           rows: b.rows,
+          ...(includeRaw ? { raw: { v4: e?.v4, v6: e?.v6 } } : {}),
         };
       })
       .filter(Boolean);
@@ -2724,6 +2728,7 @@ ${paramLines}` : header;
       mode: "multiTarget",
       backend,
       cmd: cmdLabel,
+      rawIncluded: includeRaw,
       from,
       net: gpTag,
       limit,
@@ -2754,7 +2759,7 @@ ${paramLines}` : header;
   }
 
   function downloadMultiJson() {
-    const bundle = buildMultiExportBundle();
+    const bundle = buildMultiExportBundle({ includeRaw: multiExportIncludeRaw });
     if (!bundle) return;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = `ping6-multi-${bundle.cmd}-${stamp}.json`;
@@ -4012,6 +4017,17 @@ ${paramLines}` : header;
                 <button onClick={downloadMultiJson} disabled={!multiRunResults.length} style={{ padding: "6px 10px" }}>
                   {t("exportAllJson")}
                 </button>
+              </Tip>
+              <Tip text={t("tipIncludeRaw")}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, opacity: 0.85 }}>
+                  <input
+                    type="checkbox"
+                    checked={multiExportIncludeRaw}
+                    onChange={(e) => setMultiExportIncludeRaw(e.target.checked)}
+                    disabled={!multiRunResults.length}
+                  />
+                  {t("includeRaw")}
+                </label>
               </Tip>
               <Tip text={t("tipExportAllCsvSummary")}>
                 <button onClick={downloadMultiCsvSummary} disabled={!multiRunResults.length} style={{ padding: "6px 10px" }}>
