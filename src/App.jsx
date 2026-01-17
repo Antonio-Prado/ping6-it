@@ -112,6 +112,60 @@ function clampInputValue(value, { min, max, fallback, allowEmpty = false }) {
   return String(clamped);
 }
 
+
+function sortRowsStable(rows, getVal, dir = "asc") {
+  const arr = Array.isArray(rows) ? rows : [];
+  const mult = dir === "desc" ? -1 : 1;
+  const isNil = (v) => v === null || v === undefined || (typeof v === "number" && Number.isNaN(v));
+
+  return arr
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => {
+      const va = getVal(a.r);
+      const vb = getVal(b.r);
+
+      const na = isNil(va);
+      const nb = isNil(vb);
+      if (na && nb) return a.i - b.i;
+      if (na) return 1;
+      if (nb) return -1;
+
+      if (typeof va === "number" && typeof vb === "number") {
+        const d = (va - vb) * mult;
+        return d !== 0 ? d : a.i - b.i;
+      }
+
+      const sa = String(va);
+      const sb = String(vb);
+      const d = sa.localeCompare(sb) * mult;
+      return d !== 0 ? d : a.i - b.i;
+    })
+    .map((x) => x.r);
+}
+
+function getCompareSortValue(_table, key, row) {
+  const r = row || {};
+  const p = r.probe || {};
+
+  if (key === "idx") return Number.isFinite(r.idx) ? r.idx : 0;
+  if (key === "location") return formatProbeLocation(p) || "";
+  if (key === "asn") {
+    const n = Number(p.asn);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (key === "network") return p.network || "";
+
+  const v = r[key];
+  if (typeof v === "boolean") return v ? 1 : 0;
+  return v;
+}
+
+function sortCompareRows(rows, table, sort) {
+  const s = sort || {};
+  if (!s.key || s.table !== table) return rows;
+  return sortRowsStable(rows, (r) => getCompareSortValue(table, s.key, r), s.dir || "asc");
+}
+
 const TOOLTIP_CSS = `
 .tt{position:relative;display:inline-flex;align-items:center}
 .tt-bubble{position:absolute;left:50%;top:100%;transform:translateX(-50%) translateY(-2px);margin-top:8px;padding:8px 10px;width:max-content;max-width:360px;white-space:normal;font-size:12px;line-height:1.35;border-radius:10px;background:#111827;color:#fff;box-shadow:0 12px 28px rgba(0,0,0,.22);opacity:0;pointer-events:none;z-index:9999;transition:opacity 120ms ease,transform 120ms ease}
@@ -428,6 +482,34 @@ function Help({ text }) {
         {text}
       </span>
     </span>
+  );
+}
+
+
+function SortTh({ table, colKey, label, sort, onToggle, defaultDir = "asc" }) {
+  const active = sort?.table === table && sort?.key === colKey;
+  const arrow = active ? (sort?.dir === "asc" ? " ▲" : " ▼") : "";
+  return (
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+      <button
+        type="button"
+        onClick={() => onToggle?.(table, colKey, defaultDir)}
+        style={{
+          padding: 0,
+          margin: 0,
+          background: "transparent",
+          border: "none",
+          font: "inherit",
+          color: "inherit",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+        title="Click to sort"
+      >
+        {label}
+        {arrow}
+      </button>
+    </th>
   );
 }
 
@@ -1296,6 +1378,18 @@ export default function App() {
   const [limit, setLimit] = useState(3);
   const [requireV6Capable, setRequireV6Capable] = useState(true);
   const [runWarnings, setRunWarnings] = useState([]);
+
+  // Compare table sorting
+  const [tableSort, setTableSort] = useState({ table: "", key: "", dir: "asc" });
+  const toggleTableSort = useCallback((table, key, defaultDir = "asc") => {
+    setTableSort((prev) => {
+      if (prev.table === table && prev.key === key) {
+        return { table, key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { table, key, dir: defaultDir };
+    });
+  }, []);
+
 
   // ASN details (in-app)
   const [asnCard, setAsnCard] = useState(null);
@@ -2700,6 +2794,12 @@ ${paramLines}` : header;
     return buildMtrCompare(v4, v6, { strict: strictCompare });
   }, [showMtrTable, v4, v6, strictCompare]);
 
+  const pingRows = useMemo(() => (pingCompare ? sortCompareRows(pingCompare.rows, "ping", tableSort) : []), [pingCompare, tableSort]);
+  const tracerouteRows = useMemo(() => (trCompare ? sortCompareRows(trCompare.rows, "traceroute", tableSort) : []), [trCompare, tableSort]);
+  const mtrRows = useMemo(() => (mtrCompare ? sortCompareRows(mtrCompare.rows, "mtr", tableSort) : []), [mtrCompare, tableSort]);
+  const dnsRows = useMemo(() => (dnsCompare ? sortCompareRows(dnsCompare.rows, "dns", tableSort) : []), [dnsCompare, tableSort]);
+  const httpRows = useMemo(() => (httpCompare ? sortCompareRows(httpCompare.rows, "http", tableSort) : []), [httpCompare, tableSort]);
+
   const asnContext = useMemo(() => {
     if (cmd === 'ping' && pingCompare) return { kind: 'ping', rows: pingCompare.rows };
     if (cmd === 'traceroute' && trCompare) return { kind: 'traceroute', rows: trCompare.rows };
@@ -3859,30 +3959,24 @@ ${paramLines}` : header;
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {[
-                  "#",
-                  t("location"),
-                  "ASN",
-                  t("network"),
-                  t("v4Avg"),
-                  t("v4Loss"),
-                  t("v6Avg"),
-                  t("v6Loss"),
-                  t("deltaV6V4"),
-                  t("winner"),
-                ].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
-                    {h}
-                  </th>
-                ))}
+                <SortTh table="ping" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="ping" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="ping" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="ping" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="ping" colKey="v4avg" label={t("v4Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="ping" colKey="v4loss" label={t("v4Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="ping" colKey="v6avg" label={t("v6Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="ping" colKey="v6loss" label={t("v6Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="ping" colKey="deltaAvg" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="ping" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
               </tr>
             </thead>
             <tbody>
-              {pingCompare.rows.map((r) => {
+              {pingRows.map((r, i) => {
                 const excluded = strictCompare && (!(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)));
                 return (
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {formatProbeLocation(r.probe)}
                   </td>
@@ -3952,32 +4046,26 @@ ${paramLines}` : header;
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {[
-                  "#",
-                  t("location"),
-                  "ASN",
-                  t("network"),
-                  t("v4Reached"),
-                  t("v4Hops"),
-                  t("v4Dst"),
-                  t("v6Reached"),
-                  t("v6Hops"),
-                  t("v6Dst"),
-                  t("deltaV6V4"),
-                  t("winner"),
-                ].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
-                    {h}
-                  </th>
-                ))}
+                <SortTh table="traceroute" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="v4reached" label={t("v4Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v4hops" label={t("v4Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v4dst" label={t("v4Dst")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v6reached" label={t("v6Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v6hops" label={t("v6Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v6dst" label={t("v6Dst")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
               </tr>
             </thead>
             <tbody>
-              {trCompare.rows.map((r) => {
+              {tracerouteRows.map((r, i) => {
                 const excluded = strictCompare && (!(Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst)));
                 return (
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "traceroute", trCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
@@ -4054,35 +4142,29 @@ ${paramLines}` : header;
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {[
-                  "#",
-                  t("location"),
-                  "ASN",
-                  t("network"),
-                  t("v4Reached"),
-                  t("v4Hops"),
-                  t("v4Loss"),
-                  t("v4Avg"),
-                  t("v6Reached"),
-                  t("v6Hops"),
-                  t("v6Loss"),
-                  t("v6Avg"),
-                  t("deltaAvg"),
-                  t("deltaLoss"),
-                  t("winner"),
-                ].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
-                    {h}
-                  </th>
-                ))}
+                <SortTh table="mtr" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="v4reached" label={t("v4Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v4hops" label={t("v4Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v4loss" label={t("v4Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v4avg" label={t("v4Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6reached" label={t("v6Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6hops" label={t("v6Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6loss" label={t("v6Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6avg" label={t("v6Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="deltaAvg" label={t("deltaAvg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="deltaLoss" label={t("deltaLoss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
               </tr>
             </thead>
             <tbody>
-              {mtrCompare.rows.map((r) => {
+              {mtrRows.map((r, i) => {
                 const excluded = strictCompare && (!(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)));
                 return (
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "mtr", mtrCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
@@ -4160,29 +4242,23 @@ ${paramLines}` : header;
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {[
-                  "#",
-                  t("location"),
-                  "ASN",
-                  t("network"),
-                  t("v4Total"),
-                  t("v6Total"),
-                  t("deltaV6V4"),
-                  t("ratio"),
-                  t("winner"),
-                ].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
-                    {h}
-                  </th>
-                ))}
+                <SortTh table="dns" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="dns" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="dns" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="dns" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="dns" colKey="v4ms" label={t("v4Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="dns" colKey="v6ms" label={t("v6Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="dns" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="dns" colKey="ratio" label={t("ratio")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="dns" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
               </tr>
             </thead>
             <tbody>
-              {dnsCompare.rows.map((r) => {
+              {dnsRows.map((r, i) => {
                 const excluded = strictCompare && (!(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)));
                 return (
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {formatProbeLocation(r.probe)}
                   </td>
@@ -4224,31 +4300,25 @@ ${paramLines}` : header;
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                {[
-                  "#",
-                  t("location"),
-                  "ASN",
-                  t("network"),
-                  t("v4Status"),
-                  t("v6Status"),
-                  t("v4Total"),
-                  t("v6Total"),
-                  t("deltaV6V4"),
-                  t("ratio"),
-                  t("winner"),
-                ].map((h) => (
-                  <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
-                    {h}
-                  </th>
-                ))}
+                <SortTh table="http" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="http" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="http" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="http" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="http" colKey="v4sc" label={t("v4Status")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="http" colKey="v6sc" label={t("v6Status")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="http" colKey="v4ms" label={t("v4Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="http" colKey="v6ms" label={t("v6Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="http" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="http" colKey="ratio" label={t("ratio")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="http" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
               </tr>
             </thead>
             <tbody>
-              {httpCompare.rows.map((r) => {
+              {httpRows.map((r, i) => {
                 const excluded = strictCompare && (!(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)));
                 return (
                   <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.idx + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "http", httpCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
