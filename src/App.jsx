@@ -292,6 +292,7 @@ const COPY = {
     asnMetaRetry: "Retry",
     asnMetaErrorHint: "Please try again. If the problem persists, the upstream service may be temporarily unavailable.",
     asnMetaRefreshing: "refreshing…",
+    asnMetaWarming: "warming cache…",
     asnMetaShowMore: "Show more",
     asnMetaShowLess: "Show less",
     asnMetaHolder: "Holder",
@@ -309,11 +310,12 @@ const COPY = {
     asnMetaRpkiPrefix: "prefix",
     asnMetaRpkiStatus: "status",
     asnMetaRpkiSampleNote: ({ n, v4, v6 }) => `Sample: ${n} prefix(es) (${v4} v4, ${v6} v6).`,
-    asnMetaProvenance: ({ source, cache, refreshing, age, fetchedAt }) => {
+    asnMetaProvenance: ({ source, cache, refreshing, warming, age, fetchedAt }) => {
       const parts = [];
       if (source) parts.push(`source: ${source}`);
       if (cache) parts.push(`cache: ${cache}`);
       if (refreshing) parts.push(refreshing);
+      if (warming) parts.push(warming);
       if (age) parts.push(`fetched ${age} ago`);
       if (fetchedAt) parts.push(`at ${fetchedAt}`);
       return parts.length ? `Metadata · ${parts.join(' · ')}` : 'Metadata';
@@ -1272,7 +1274,7 @@ function ExpandableText({ text, lines = 2, moreLabel = "Show more", lessLabel = 
 
 async function fetchAsnMeta(asn, signal) {
   const url = `/api/asn/${encodeURIComponent(String(asn))}`;
-  const resp = await fetch(url, { method: 'GET', signal });
+  const resp = await fetch(url, { method: 'GET', signal, cache: 'no-store' });
   if (!resp.ok) throw new Error(`ASN metadata request failed (${resp.status})`);
   return await resp.json();
 }
@@ -1342,8 +1344,8 @@ export default function App() {
 
     const cached = ASN_META_CACHE.get(asn);
     const now = Date.now();
-    if (!force && cached && now - cached.at < ASN_META_CACHE_TTL_MS) {
-      setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, meta: cached.data, metaStatus: 'ok', metaError: null } : prev));
+    if (!force && cached && now - cached.at < ASN_META_CACHE_TTL_MS && cached?.data?.cache?.status !== 'miss') {
+      setAsnCard((prev) => (prev && prev.asn === asn ? { ...prev, meta: cached.data, metaStatus: 'ok', metaError: null, metaMissRetryPending: false } : prev));
       return;
     }
 
@@ -1359,7 +1361,9 @@ export default function App() {
 
         setAsnCard((prev) => {
           if (!prev || prev.asn !== asn) return prev;
-          return { ...prev, meta, metaStatus: 'ok', metaError: null };
+          const missLeft = Number(prev.metaMissRetryLeft || 0);
+          const shouldWarm = meta?.cache?.status === 'miss' && missLeft > 0;
+          return { ...prev, meta, metaStatus: 'ok', metaError: null, metaMissRetryPending: shouldWarm };
         });
 
         const shouldAutoRefresh = meta?.cache?.status === 'stale' && meta?.cache?.revalidating === true;
@@ -1381,10 +1385,30 @@ export default function App() {
             });
           }, 1200);
         }
+
+        const shouldWarmMiss = meta?.cache?.status === 'miss';
+        if (shouldWarmMiss) {
+          revalTimer = setTimeout(() => {
+            setAsnCard((prev) => {
+              if (!prev || prev.asn !== asn) return prev;
+              const left = Number(prev.metaMissRetryLeft || 0);
+              if (left <= 0) return { ...prev, metaMissRetryPending: false };
+              const stillMiss = prev?.meta?.cache?.status === 'miss';
+              const alreadyLoading = prev?.metaStatus === 'loading';
+              if (!stillMiss || alreadyLoading) return { ...prev, metaMissRetryPending: false };
+              return {
+                ...prev,
+                metaReqId: Number(prev.metaReqId || 0) + 1,
+                metaMissRetryLeft: left - 1,
+                metaMissRetryPending: true,
+              };
+            });
+          }, 450);
+        }
       } catch (e) {
         if (ac.signal.aborted) return;
         setAsnCard((prev) =>
-          prev && prev.asn === asn ? { ...prev, metaStatus: 'error', metaError: String(e || '') } : prev
+          prev && prev.asn === asn ? { ...prev, metaStatus: 'error', metaError: String(e || ''), metaMissRetryPending: false } : prev
         );
       }
     })();
@@ -2814,7 +2838,7 @@ ${paramLines}` : header;
   function openAsnCard(asnValue, kind, rows) {
     const asn = normalizeAsn(asnValue);
     if (!asn) return;
-    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'loading', metaError: null, metaReqId: 0, metaAutoRefreshLeft: 2 });
+    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'loading', metaError: null, metaReqId: 0, metaAutoRefreshLeft: 2, metaMissRetryLeft: 1, metaMissRetryPending: false });
   }
 
   function renderAsnCell(asnValue, kind, rows) {
@@ -4345,11 +4369,13 @@ ${paramLines}` : header;
 
                 const refreshing = meta?.cache?.revalidating === true ? t('asnMetaRefreshing') : null;
 
+                const warming = asnCard?.metaMissRetryPending === true ? t('asnMetaWarming') : null;
+
                 const fetchedAtDate = meta?.fetchedAt ? new Date(meta.fetchedAt) : null;
                 const age = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? formatAgeHuman(Date.now() - fetchedAtDate.getTime()) : null;
                 const fetchedAtLabel = fetchedAtDate && Number.isFinite(fetchedAtDate.getTime()) ? fetchedAtDate.toLocaleString(dateLocale) : null;
                 const provenance = meta
-                  ? t('asnMetaProvenance', { source, cache, refreshing, age, fetchedAt: fetchedAtLabel })
+                  ? t('asnMetaProvenance', { source, cache, refreshing, warming, age, fetchedAt: fetchedAtLabel })
                   : null;
 
                 return (
@@ -4381,6 +4407,8 @@ ${paramLines}` : header;
                                       ...prev,
                                       metaReqId: Number(prev.metaReqId || 0) + 1,
                                       metaAutoRefreshLeft: 2,
+                                      metaMissRetryLeft: 1,
+                                      metaMissRetryPending: false,
                                       metaStatus: 'loading',
                                       metaError: null,
                                     }
