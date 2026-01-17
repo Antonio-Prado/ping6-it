@@ -90,6 +90,11 @@ export async function onRequestPost(context) {
 
   const limit = Math.max(1, Math.min(10, Number(base.limit) || 3));
 
+  const warnings = [];
+  if (flow === "v4first") {
+    warnings.push("IPv6-capable probes only is disabled: probe selection is driven by IPv4 reachability, so IPv6 results may be fewer if some probes lack IPv6 connectivity.");
+  }
+
   // 1) Turnstile siteverify (server-side validation is mandatory).
   const remoteip =
     request.headers.get("CF-Connecting-IP") ||
@@ -162,8 +167,8 @@ export async function onRequestPost(context) {
       );
     }
 
-    return json({ m4, m6 });
+    return json({ m4, m6, warnings });
   } catch (e) {
-    return json({ error: "globalping_failed", status: e.status || 500, retryAfter: e.retryAfter || undefined, details: e.data || {} }, e.status || 500);
+    return json({ error: "globalping_failed", status: e.status || 500, retryAfter: e.retryAfter || undefined, details: e.data || {}, warnings }, e.status || 500);
   }
 }
