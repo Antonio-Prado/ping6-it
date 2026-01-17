@@ -227,6 +227,9 @@ const COPY = {
     hideRaw: "Hide raw",
     exportJson: "Export JSON",
     exportCsv: "Export CSV",
+    exportAllJson: "Export all JSON",
+    exportAllCsvSummary: "Export all CSV (summary)",
+    exportAllCsvRows: "Export all CSV (rows)",
     shareLink: "Share link",
     reportMode: "Report mode",
     linkReady: "Link ready:",
@@ -406,6 +409,9 @@ const COPY = {
     tipRaw: "Show or hide the raw Globalping output for each probe (IPv4 and IPv6).",
     tipExportJson: "Export the current results as JSON (raw values).",
     tipExportCsv: "Export the current results as CSV (per-probe rows).",
+    tipExportAllJson: "Export multi-target results as JSON (one entry per target).",
+    tipExportAllCsvSummary: "Export multi-target results as CSV (one row per target).",
+    tipExportAllCsvRows: "Export multi-target results as CSV (per-probe rows, all targets).",
     tipShareLink: "Create a shareable link with the current settings.",
     tipReportMode: "Generate a report link from the latest completed run.",
     tipPreset: ({ label }) => `Preset: ${label}. Updates the "From" field.`,
@@ -2642,6 +2648,314 @@ ${paramLines}` : header;
     downloadFile(filename, csv, "text/csv");
   }
 
+  // Multi-target export helpers.
+  function buildExportBundleForPair(pairCmd, r4, r6, { target: targetOverride, effectiveTarget: effectiveOverride } = {}) {
+    if (!r4 || !r6) return null;
+
+    const summary = normalizeHistorySummary(pairCmd, r4, r6, { strict: strictCompare });
+
+    let rows = [];
+    if (pairCmd === "ping") rows = buildPingCompare(r4, r6, { strict: strictCompare })?.rows || [];
+    else if (pairCmd === "traceroute") rows = buildTracerouteCompare(r4, r6, { strict: strictCompare })?.rows || [];
+    else if (pairCmd === "mtr") rows = buildMtrCompare(r4, r6, { strict: strictCompare })?.rows || [];
+    else if (pairCmd === "dns") rows = buildDnsCompare(r4, r6, { strict: strictCompare })?.rows || [];
+    else if (pairCmd === "http") rows = buildHttpCompare(r4, r6, { strict: strictCompare })?.rows || [];
+
+    return {
+      generatedAt: new Date().toISOString(),
+      backend,
+      cmd: pairCmd,
+      target: targetOverride || target || "",
+      effectiveTarget: effectiveOverride || "",
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        deltaThreshold,
+      },
+      options: {
+        packets,
+        trProto,
+        trPort,
+        dnsQuery,
+        dnsProto,
+        dnsPort,
+        dnsResolver,
+        dnsTrace,
+        httpMethod,
+        httpProto,
+        httpPath,
+        httpQuery,
+        httpPort,
+        httpResolver,
+      },
+      summary,
+      rows: attachExcludedFlag(pairCmd, rows),
+    };
+  }
+
+  function buildMultiExportBundle() {
+    const arr = Array.isArray(multiRunResults) ? multiRunResults : [];
+    if (!arr.length) return null;
+
+    const cmds = Array.from(new Set(arr.map((x) => x?.cmd).filter(Boolean)));
+    const cmdLabel = cmds.length === 1 ? cmds[0] : "mixed";
+
+    const entries = arr
+      .map((e) => {
+        const b = buildExportBundleForPair(e?.cmd, e?.v4, e?.v6, { target: e?.target, effectiveTarget: e?.effectiveTarget });
+        if (!b) return null;
+        return {
+          id: e?.id,
+          cmd: b.cmd,
+          target: b.target,
+          effectiveTarget: b.effectiveTarget,
+          summary: b.summary,
+          rows: b.rows,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      mode: "multiTarget",
+      backend,
+      cmd: cmdLabel,
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        deltaThreshold,
+      },
+      options: {
+        packets,
+        trProto,
+        trPort,
+        dnsQuery,
+        dnsProto,
+        dnsPort,
+        dnsResolver,
+        dnsTrace,
+        httpMethod,
+        httpProto,
+        httpPath,
+        httpQuery,
+        httpPort,
+        httpResolver,
+      },
+      entries,
+    };
+  }
+
+  function downloadMultiJson() {
+    const bundle = buildMultiExportBundle();
+    if (!bundle) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-multi-${bundle.cmd}-${stamp}.json`;
+    downloadFile(filename, JSON.stringify(bundle, null, 2), "application/json");
+  }
+
+  function downloadMultiCsvSummary() {
+    const arr = Array.isArray(multiRunResults) ? multiRunResults : [];
+    if (!arr.length) return;
+
+    const headers = [
+      "target",
+      "cmd",
+      "median_v4_ms",
+      "median_v6_ms",
+      "median_delta_ms",
+      "median_loss_v4_pct",
+      "median_loss_v6_pct",
+    ];
+
+    const lines = arr.map((e) => {
+      const s = normalizeHistorySummary(e?.cmd, e?.v4, e?.v6, { strict: strictCompare }) || {};
+      return [
+        e?.target || "",
+        e?.cmd || "",
+        s.medianV4 ?? "",
+        s.medianV6 ?? "",
+        s.medianDelta ?? "",
+        s.medianLossV4 ?? "",
+        s.medianLossV6 ?? "",
+      ];
+    });
+
+    const csv = [headers.map(csvEscape).join(","), ...lines.map((row) => row.map(csvEscape).join(","))].join("\n");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-multi-summary-${stamp}.csv`;
+    downloadFile(filename, csv, "text/csv");
+  }
+
+
+  function downloadMultiCsvRows() {
+    const arr = Array.isArray(multiRunResults) ? multiRunResults : [];
+    if (!arr.length) return;
+
+    const headers = [
+      "target",
+      "cmd",
+      "idx",
+      "city",
+      "country",
+      "asn",
+      "network",
+      "v4_reached",
+      "v4_hops",
+      "v4_dst_ms",
+      "v4_loss_pct",
+      "v4_avg_ms",
+      "v4_total_ms",
+      "v4_status",
+      "v6_reached",
+      "v6_hops",
+      "v6_dst_ms",
+      "v6_loss_pct",
+      "v6_avg_ms",
+      "v6_total_ms",
+      "v6_status",
+      "delta_ms",
+      "delta_avg_ms",
+      "delta_loss_pct",
+      "ratio",
+      "winner",
+      "excluded",
+    ];
+
+    const lines = [];
+
+    for (const e of arr) {
+      const cmd = e?.cmd;
+      const r4 = e?.v4;
+      const r6 = e?.v6;
+      const tname = e?.target || "";
+      if (!cmd || !r4 || !r6) continue;
+
+      const bundle = buildExportBundleForPair(cmd, r4, r6, { target: tname, effectiveTarget: e?.effectiveTarget });
+      const rows = Array.isArray(bundle?.rows) ? bundle.rows : [];
+
+      for (let i = 0; i < rows.length; i += 1) {
+        const r = rows[i];
+        const p = r?.probe || {};
+        const idx = Number.isFinite(r?.idx) ? r.idx + 1 : i + 1;
+
+        const base = {
+          target: tname,
+          cmd,
+          idx,
+          city: p.city ?? "",
+          country: p.country ?? "",
+          asn: p.asn ?? "",
+          network: p.network ?? "",
+          v4_reached: "",
+          v4_hops: "",
+          v4_dst_ms: "",
+          v4_loss_pct: "",
+          v4_avg_ms: "",
+          v4_total_ms: "",
+          v4_status: "",
+          v6_reached: "",
+          v6_hops: "",
+          v6_dst_ms: "",
+          v6_loss_pct: "",
+          v6_avg_ms: "",
+          v6_total_ms: "",
+          v6_status: "",
+          delta_ms: "",
+          delta_avg_ms: "",
+          delta_loss_pct: "",
+          ratio: "",
+          winner: r?.winner ?? "",
+          excluded: r?.excluded ? "yes" : "no",
+        };
+
+        if (cmd === "ping") {
+          base.v4_avg_ms = r?.v4avg ?? "";
+          base.v4_loss_pct = r?.v4loss ?? "";
+          base.v6_avg_ms = r?.v6avg ?? "";
+          base.v6_loss_pct = r?.v6loss ?? "";
+          base.delta_avg_ms = r?.deltaAvg ?? "";
+          base.delta_loss_pct = r?.deltaLoss ?? "";
+        } else if (cmd === "traceroute") {
+          base.v4_reached = r?.v4reached ? "yes" : "no";
+          base.v4_hops = r?.v4hops ?? "";
+          base.v4_dst_ms = r?.v4dst ?? "";
+          base.v6_reached = r?.v6reached ? "yes" : "no";
+          base.v6_hops = r?.v6hops ?? "";
+          base.v6_dst_ms = r?.v6dst ?? "";
+          base.delta_ms = r?.delta ?? "";
+        } else if (cmd === "mtr") {
+          base.v4_reached = r?.v4reached ? "yes" : "no";
+          base.v4_hops = r?.v4hops ?? "";
+          base.v4_loss_pct = r?.v4loss ?? "";
+          base.v4_avg_ms = r?.v4avg ?? "";
+          base.v6_reached = r?.v6reached ? "yes" : "no";
+          base.v6_hops = r?.v6hops ?? "";
+          base.v6_loss_pct = r?.v6loss ?? "";
+          base.v6_avg_ms = r?.v6avg ?? "";
+          base.delta_avg_ms = r?.deltaAvg ?? "";
+          base.delta_loss_pct = r?.deltaLoss ?? "";
+        } else if (cmd === "dns") {
+          base.v4_total_ms = r?.v4ms ?? "";
+          base.v6_total_ms = r?.v6ms ?? "";
+          base.delta_ms = r?.delta ?? "";
+          base.ratio = r?.ratio ?? "";
+        } else if (cmd === "http") {
+          base.v4_status = r?.v4sc ?? "";
+          base.v6_status = r?.v6sc ?? "";
+          base.v4_total_ms = r?.v4ms ?? "";
+          base.v6_total_ms = r?.v6ms ?? "";
+          base.delta_ms = r?.delta ?? "";
+          base.ratio = r?.ratio ?? "";
+        }
+
+        lines.push([
+          base.target,
+          base.cmd,
+          base.idx,
+          base.city,
+          base.country,
+          base.asn,
+          base.network,
+          base.v4_reached,
+          base.v4_hops,
+          base.v4_dst_ms,
+          base.v4_loss_pct,
+          base.v4_avg_ms,
+          base.v4_total_ms,
+          base.v4_status,
+          base.v6_reached,
+          base.v6_hops,
+          base.v6_dst_ms,
+          base.v6_loss_pct,
+          base.v6_avg_ms,
+          base.v6_total_ms,
+          base.v6_status,
+          base.delta_ms,
+          base.delta_avg_ms,
+          base.delta_loss_pct,
+          base.ratio,
+          base.winner,
+          base.excluded,
+        ]);
+      }
+    }
+
+    const csv = [headers.map(csvEscape).join(","), ...lines.map((row) => row.map(csvEscape).join(","))].join("\n");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `ping6-multi-rows-${stamp}.csv`;
+    downloadFile(filename, csv, "text/csv");
+  }
+
+
+
   function updateShareLink() {
     if (typeof window === "undefined") return;
     const params = buildShareParams();
@@ -3681,16 +3995,35 @@ ${paramLines}` : header;
       {!reportMode && multiTargetMode && (multiRunResults.length > 0 || multiRunStatus) && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 700 }}>{t("multiTargetResults")}</div>
-            {multiRunStatus && (
-              <div style={{ fontSize: 13, opacity: 0.8 }} role="status" aria-live="polite">
-                {t("runningWithTarget", {
-                  current: multiRunStatus.current,
-                  total: multiRunStatus.total,
-                  target: multiRunStatus.target,
-                })}
-              </div>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 700 }}>{t("multiTargetResults")}</div>
+              {multiRunStatus && (
+                <div style={{ fontSize: 13, opacity: 0.8 }} role="status" aria-live="polite">
+                  {t("runningWithTarget", {
+                    current: multiRunStatus.current,
+                    total: multiRunStatus.total,
+                    target: multiRunStatus.target,
+                  })}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <Tip text={t("tipExportAllJson")}>
+                <button onClick={downloadMultiJson} disabled={!multiRunResults.length} style={{ padding: "6px 10px" }}>
+                  {t("exportAllJson")}
+                </button>
+              </Tip>
+              <Tip text={t("tipExportAllCsvSummary")}>
+                <button onClick={downloadMultiCsvSummary} disabled={!multiRunResults.length} style={{ padding: "6px 10px" }}>
+                  {t("exportAllCsvSummary")}
+                </button>
+              </Tip>
+              <Tip text={t("tipExportAllCsvRows")}>
+                <button onClick={downloadMultiCsvRows} disabled={!multiRunResults.length} style={{ padding: "6px 10px" }}>
+                  {t("exportAllCsvRows")}
+                </button>
+              </Tip>
+            </div>
           </div>
           <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4 }}>
             {multiRunStatus
