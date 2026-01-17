@@ -1,0 +1,153 @@
+diff --git a/functions/api/measurements-pair.js b/functions/api/measurements-pair.js
+index d5723fc..2b3e0f2 100644
+--- a/functions/api/measurements-pair.js
++++ b/functions/api/measurements-pair.js
+@@ -90,6 +90,11 @@ export async function onRequestPost(context) {
+ 
+   const limit = Math.max(1, Math.min(10, Number(base.limit) || 3));
+ 
++  const warnings = [];
++  if (flow === "v4first") {
++    warnings.push("IPv6-capable probes only is disabled: probe selection is driven by IPv4 reachability, so IPv6 results may be fewer if some probes lack IPv6 connectivity.");
++  }
++
+   // 1) Turnstile siteverify (server-side validation is mandatory).
+   const remoteip =
+     request.headers.get("CF-Connecting-IP") ||
+@@ -162,8 +167,8 @@ export async function onRequestPost(context) {
+       );
+     }
+ 
+-    return json({ m4, m6 });
++    return json({ m4, m6, warnings });
+   } catch (e) {
+-    return json({ error: "globalping_failed", status: e.status || 500, retryAfter: e.retryAfter || undefined, details: e.data || {} }, e.status || 500);
++    return json({ error: "globalping_failed", status: e.status || 500, retryAfter: e.retryAfter || undefined, details: e.data || {}, warnings }, e.status || 500);
+   }
+ }
+diff --git a/src/App.jsx b/src/App.jsx
+index b14cc06..c9e870a 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -2251,6 +2251,21 @@ ${paramLines}` : header;
+     };
+   }
+ 
++  function isDualStackRowForExport(kind, r) {
++    if (!r) return false;
++    if (kind === "ping") return Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg);
++    if (kind === "traceroute") return Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst);
++    if (kind === "mtr") return Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg);
++    if (kind === "dns") return Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms);
++    if (kind === "http") return Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms);
++    return false;
++  }
++
++  function attachExcludedFlag(kind, rows) {
++    const arr = Array.isArray(rows) ? rows : [];
++    return arr.map((r) => ({ ...r, excluded: !isDualStackRowForExport(kind, r) }));
++  }
++
+   function buildExportBundle() {
+     if (!v4 || !v6) return null;
+     const summary = normalizeHistorySummary(cmd, v4, v6, { strict: strictCompare });
+@@ -2269,11 +2284,11 @@ ${paramLines}` : header;
+       },
+       summary,
+     };
+-    if (cmd === "ping" && pingCompare) return { ...base, rows: pingCompare.rows };
+-    if (cmd === "traceroute" && trCompare) return { ...base, rows: trCompare.rows };
+-    if (cmd === "mtr" && mtrCompare) return { ...base, rows: mtrCompare.rows };
+-    if (cmd === "dns" && dnsCompare) return { ...base, rows: dnsCompare.rows };
+-    if (cmd === "http" && httpCompare) return { ...base, rows: httpCompare.rows };
++    if (cmd === "ping" && pingCompare) return { ...base, rows: attachExcludedFlag("ping", pingCompare.rows) };
++    if (cmd === "traceroute" && trCompare) return { ...base, rows: attachExcludedFlag("traceroute", trCompare.rows) };
++    if (cmd === "mtr" && mtrCompare) return { ...base, rows: attachExcludedFlag("mtr", mtrCompare.rows) };
++    if (cmd === "dns" && dnsCompare) return { ...base, rows: attachExcludedFlag("dns", dnsCompare.rows) };
++    if (cmd === "http" && httpCompare) return { ...base, rows: attachExcludedFlag("http", httpCompare.rows) };
+     return { ...base, rows: [] };
+   }
+ 
+@@ -2293,7 +2308,7 @@ ${paramLines}` : header;
+     let lines = [];
+ 
+     if (cmd === "ping") {
+-      headers = ["idx", "city", "country", "asn", "network", "v4_avg_ms", "v4_loss_pct", "v6_avg_ms", "v6_loss_pct", "delta_avg_ms", "delta_loss_pct", "winner"];
++      headers = ["idx", "city", "country", "asn", "network", "v4_avg_ms", "v4_loss_pct", "v6_avg_ms", "v6_loss_pct", "delta_avg_ms", "delta_loss_pct", "winner", "excluded"];
+       lines = rows.map((r) => [
+         r.idx + 1,
+         r.probe?.city ?? "",
+@@ -2307,9 +2322,10 @@ ${paramLines}` : header;
+         r.deltaAvg,
+         r.deltaLoss,
+         r.winner,
++        r.excluded ? "yes" : "no",
+       ]);
+     } else if (cmd === "traceroute") {
+-      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_dst_ms", "v6_reached", "v6_hops", "v6_dst_ms", "delta_ms", "winner"];
++      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_dst_ms", "v6_reached", "v6_hops", "v6_dst_ms", "delta_ms", "winner", "excluded"];
+       lines = rows.map((r) => [
+         r.idx + 1,
+         r.probe?.city ?? "",
+@@ -2324,9 +2340,10 @@ ${paramLines}` : header;
+         r.v6dst,
+         r.delta,
+         r.winner,
++        r.excluded ? "yes" : "no",
+       ]);
+     } else if (cmd === "mtr") {
+-      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_loss_pct", "v4_avg_ms", "v6_reached", "v6_hops", "v6_loss_pct", "v6_avg_ms", "delta_avg_ms", "delta_loss_pct", "winner"];
++      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_loss_pct", "v4_avg_ms", "v6_reached", "v6_hops", "v6_loss_pct", "v6_avg_ms", "delta_avg_ms", "delta_loss_pct", "winner", "excluded"];
+       lines = rows.map((r) => [
+         r.idx + 1,
+         r.probe?.city ?? "",
+@@ -2344,9 +2361,10 @@ ${paramLines}` : header;
+         r.deltaAvg,
+         r.deltaLoss,
+         r.winner,
++        r.excluded ? "yes" : "no",
+       ]);
+     } else if (cmd === "dns") {
+-      headers = ["idx", "city", "country", "asn", "network", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner"];
++      headers = ["idx", "city", "country", "asn", "network", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner", "excluded"];
+       lines = rows.map((r) => [
+         r.idx + 1,
+         r.probe?.city ?? "",
+@@ -2358,9 +2376,10 @@ ${paramLines}` : header;
+         r.delta,
+         r.ratio,
+         r.winner,
++        r.excluded ? "yes" : "no",
+       ]);
+     } else if (cmd === "http") {
+-      headers = ["idx", "city", "country", "asn", "network", "v4_status", "v6_status", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner"];
++      headers = ["idx", "city", "country", "asn", "network", "v4_status", "v6_status", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner", "excluded"];
+       lines = rows.map((r) => [
+         r.idx + 1,
+         r.probe?.city ?? "",
+@@ -2374,6 +2393,7 @@ ${paramLines}` : header;
+         r.delta,
+         r.ratio,
+         r.winner,
++        r.excluded ? "yes" : "no",
+       ]);
+     }
+ 
+@@ -3230,7 +3250,7 @@ ${paramLines}` : header;
+           </div>
+         )}
+ 
+-        {backend === "atlas" && runWarnings.length > 0 && (
++        {runWarnings.length > 0 && (
+           <div
+             style={{
+               fontSize: 12,
+@@ -3243,7 +3263,7 @@ ${paramLines}` : header;
+             }}
+             role="note"
+           >
+-            <div style={{ fontWeight: 700, fontSize: 13 }}>RIPE Atlas notes</div>
++            <div style={{ fontWeight: 700, fontSize: 13 }}>{backend === "atlas" ? "RIPE Atlas notes" : "Globalping notes"}</div>
+             <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
+               {runWarnings.map((w, i) => (
+                 <li key={i}>{w}</li>
