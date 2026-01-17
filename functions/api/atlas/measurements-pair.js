@@ -1,15 +1,23 @@
+import { applyRateLimit } from "../_lib/rateLimit.js";
+import {
+  sanitizeLocations,
+  sanitizeMeasurementOptions,
+  sanitizeTarget,
+} from "../_lib/guardrails.js";
+
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const ATLAS_BASE = "https://atlas.ripe.net";
 
 const ALLOWED_TYPES = new Set(["ping", "traceroute", "dns"]);
 const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
 
-function json(body, status = 200) {
+function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      ...extraHeaders,
     },
   });
 }
@@ -360,7 +368,7 @@ async function atlasPost(path, payload, apiKey, signal) {
     err.retryAfter = retryAfterHeader
       ? retryAfterHeader
       : Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0
-        ? `${Math.ceil(rateLimitResetSec)}s`
+        ? `${Math.ceil(rateLimitResetSec)}`
         : undefined;
     err.data = data;
     throw err;
@@ -376,6 +384,12 @@ export async function onRequestPost(context) {
 
   const apiKey = extractAtlasKey(request, env);
   if (!apiKey) return badRequest("missing_atlas_api_key", "RIPE Atlas needs an API key.", { hint: "Paste it in Settings (Atlas API key) and retry." });
+
+  // Rate limit early (before Turnstile verification) to protect upstream APIs.
+  const rl = await applyRateLimit({ request, env, scope: "atlas_pair", limit: 20, windowSec: 600 });
+  if (rl.limited) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfterSec }, 429, rl.headers);
+  }
 
   let body;
   try {
@@ -398,9 +412,12 @@ export async function onRequestPost(context) {
   if (!ALLOWED_TYPES.has(base.type)) {
     return badRequest("unsupported_type", `Unsupported measurement type for RIPE Atlas: ${String(base.type)}.`, { type: base.type, allowed: Array.from(ALLOWED_TYPES) });
   }
-  if (typeof base.target !== "string" || !base.target.trim()) {
-    return badRequest("invalid_target", 'Invalid "target". Expected a non-empty hostname/IP/URL string.', { target: base.target });
-  }
+
+  const targetCheck = sanitizeTarget({ type: base.type, target: base.target, allowIp: false });
+  if (!targetCheck.ok) return badRequest(targetCheck.error || "invalid_target", targetCheck.message || "Invalid target.", { target: base.target });
+
+  const moCheck = sanitizeMeasurementOptions(base.type, measurementOptions, { backend: "atlas" });
+  if (!moCheck.ok) return badRequest(moCheck.error || "invalid_measurement_options", moCheck.message || "Invalid measurement options.", { measurementOptions });
 
   // Atlas needs a v6-first flow to enforce the same probes for v4/v6.
   // We'll still accept both values for compatibility with the current client.
@@ -426,7 +443,8 @@ export async function onRequestPost(context) {
     return json({ error: "turnstile_bad_hostname", hostname: verify.hostname }, 403);
   }
 
-  const { probes, warnings } = parseAtlasProbeRequest(base.locations?.[0] || {}, limit);
+  const locs = sanitizeLocations(base.locations);
+  const { probes, warnings } = parseAtlasProbeRequest(locs?.[0] || {}, limit);
   const probesDualStack = enforceDualStackProbes(probes, flow);
 
   if (flow !== "v6first") {
@@ -439,8 +457,8 @@ export async function onRequestPost(context) {
     // Create the IPv4+IPv6 pair in a *single* Atlas API request.
     // RIPE Atlas guarantees that measurements created in one request share the same allocated probes,
     // and the response "measurements" array matches the order in "definitions".
-    const def4 = atlasDefinitionFor(base.type, 4, String(base.target).trim(), measurementOptions);
-    const def6 = atlasDefinitionFor(base.type, 6, String(base.target).trim(), measurementOptions);
+    const def4 = atlasDefinitionFor(base.type, 4, targetCheck.value, moCheck.value);
+    const def6 = atlasDefinitionFor(base.type, 6, targetCheck.value, moCheck.value);
     const created = await atlasPost(
       "/api/v2/measurements/",
       { definitions: [def4, def6], probes: probesDualStack },
@@ -460,14 +478,18 @@ export async function onRequestPost(context) {
       m6: { id: String(msm6) },
     });
   } catch (e) {
+    const status = e.status || 500;
+    const retryAfter = e.retryAfter;
+    const headers = status === 429 && retryAfter ? { "retry-after": String(retryAfter) } : {};
     return json(
       {
         error: "atlas_failed",
-        status: e.status || 500,
-        retryAfter: e.retryAfter || undefined,
+        status,
+        retryAfter: retryAfter || undefined,
         details: e.data || {},
       },
-      e.status || 500
+      status,
+      headers
     );
   }
 }
