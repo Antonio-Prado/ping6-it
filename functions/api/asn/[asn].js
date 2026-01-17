@@ -1,5 +1,6 @@
 const RIPESTAT_AS_OVERVIEW = "https://stat.ripe.net/data/as-overview/data.json";
-const RIPESTAT_ANNOUNCED_PREFIXES = "https://stat.ripe.net/data/announced-prefixes/data.json";
+const RIPESTAT_PREFIX_SIZE_DISTRIBUTION = "https://stat.ripe.net/data/prefix-size-distribution/data.json";
+const RIPESTAT_RIS_PREFIXES = "https://stat.ripe.net/data/ris-prefixes/data.json";
 const RIPESTAT_RPKI_VALIDATION = "https://stat.ripe.net/data/rpki-validation/data.json";
 
 // Server-side caching (prefer KV if available; fallback to the Cloudflare Cache API).
@@ -11,6 +12,9 @@ const ASN_META_TTL_FRESH_SECONDS = 24 * 60 * 60;
 const ASN_META_TTL_STALE_SECONDS = 7 * 24 * 60 * 60;
 // Keep cached records for the whole stale window.
 const ASN_META_TTL_TOTAL_SECONDS = ASN_META_TTL_STALE_SECONDS;
+
+// Bump this when the payload structure changes, so old cached records are refreshed.
+const ASN_META_SCHEMA_VERSION = 2;
 
 const ASN_META_CACHE_PREFIX = "https://ping6.it/_cache/asn/meta/";
 
@@ -59,6 +63,7 @@ function coerceRecord(rec) {
   const fetchedAt = Number(rec.fetchedAt);
   const payload = rec.payload && typeof rec.payload === "object" ? rec.payload : null;
   if (!Number.isFinite(fetchedAt) || !payload) return null;
+  if (payload.schemaVersion !== ASN_META_SCHEMA_VERSION) return null;
   return { fetchedAt, payload };
 }
 
@@ -126,40 +131,69 @@ function buildResponsePayload(payload, fetchedAtMs, cacheStatus, opts = {}) {
   };
 }
 
-async function fetchRipestatJson(url) {
-  const resp = await fetch(url, {
-    method: "GET",
-    headers: { accept: "application/json" },
-  });
-
-  if (!resp.ok) {
-    const err = new Error("RIPEstat returned an error");
-    err.status = resp.status;
-    throw err;
-  }
-
-  return await resp.json();
-}
-
-function extractPrefixStrings(raw) {
-  const arr = Array.isArray(raw) ? raw : [];
-  const out = [];
-  for (const item of arr) {
-    if (!item) continue;
-    if (typeof item === "string") {
-      const s = item.trim();
-      if (s) out.push(s);
-      continue;
-    }
-    if (typeof item === "object") {
-      const p = item.prefix;
-      if (typeof p === "string") {
-        const s = p.trim();
-        if (s) out.push(s);
-      }
-    }
+function concatUint8Arrays(chunks, totalLen) {
+  const out = new Uint8Array(totalLen);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
   }
   return out;
+}
+
+async function fetchRipestatJson(url, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 8000;
+  const maxBytes = Number.isFinite(opts.maxBytes) ? Number(opts.maxBytes) : null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    try {
+      controller.abort("timeout");
+    } catch {
+      // ignore
+    }
+  }, timeoutMs);
+
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const err = new Error("RIPEstat returned an error");
+      err.status = resp.status;
+      throw err;
+    }
+
+    // Default path: let the runtime parse JSON.
+    if (!maxBytes || !resp.body) {
+      return await resp.json();
+    }
+
+    // Bounded read to avoid huge responses (some ASNs can have *a lot* of prefixes).
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > maxBytes) {
+        const err = new Error("RIPEstat response too large");
+        err.code = "BODY_TOO_LARGE";
+        throw err;
+      }
+      chunks.push(value);
+    }
+
+    const bytes = concatUint8Arrays(chunks, received);
+    const text = new TextDecoder("utf-8").decode(bytes);
+    return JSON.parse(text);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeRpkiStatus(v) {
@@ -188,11 +222,36 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+function sumCounts(rows) {
+  const arr = Array.isArray(rows) ? rows : [];
+  let total = 0;
+  for (const r of arr) {
+    const n = Number(r?.count);
+    if (Number.isFinite(n) && n > 0) total += n;
+  }
+  return total;
+}
+
+function uniqPrefixSample(list, maxN) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    if (typeof raw !== "string") continue;
+    const p = raw.trim();
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+    if (out.length >= maxN) break;
+  }
+  return out;
+}
+
 async function fetchAsOverview(asn) {
   const upstream = new URL(RIPESTAT_AS_OVERVIEW);
-  upstream.searchParams.set("resource", asn);
+  upstream.searchParams.set("resource", `AS${asn}`);
 
-  const body = await fetchRipestatJson(upstream.toString());
+  const body = await fetchRipestatJson(upstream.toString(), { timeoutMs: 8000, maxBytes: 500_000 });
   const data = body && typeof body === "object" ? body.data : null;
   const block = data && typeof data === "object" ? data.block : null;
 
@@ -218,28 +277,52 @@ async function fetchAsOverview(asn) {
   };
 }
 
-async function fetchAnnouncedPrefixes(asn) {
-  const upstream = new URL(RIPESTAT_ANNOUNCED_PREFIXES);
+async function fetchPrefixSizeDistribution(asn) {
+  const upstream = new URL(RIPESTAT_PREFIX_SIZE_DISTRIBUTION);
   upstream.searchParams.set("resource", `AS${asn}`);
   upstream.searchParams.set("min_peers_seeing", "0");
 
-  const body = await fetchRipestatJson(upstream.toString());
+  const body = await fetchRipestatJson(upstream.toString(), { timeoutMs: 8000, maxBytes: 750_000 });
   const data = body && typeof body === "object" ? body.data : null;
 
-  const prefixes = extractPrefixStrings(data?.prefixes);
-  const v4 = prefixes.filter((p) => !String(p).includes(":"));
-  const v6 = prefixes.filter((p) => String(p).includes(":"));
+  const v4 = sumCounts(data?.ipv4);
+  const v6 = sumCounts(data?.ipv6);
 
   return {
-    total: prefixes.length,
-    v4: v4.length,
-    v6: v6.length,
-    sample: {
-      v4: v4.slice(0, 10),
-      v6: v6.slice(0, 10),
-    },
-    source: "ripestat-announced-prefixes",
+    total: v4 + v6,
+    v4,
+    v6,
+    source: "ripestat-prefix-size-distribution",
   };
+}
+
+async function fetchRisPrefixSamples(asn) {
+  // Much lighter than "announced-prefixes" (no timelines), but can still be big.
+  const base = new URL(RIPESTAT_RIS_PREFIXES);
+  base.searchParams.set("resource", `AS${asn}`);
+  base.searchParams.set("list_prefixes", "true");
+  base.searchParams.set("types", "o");
+  base.searchParams.set("noise", "filter");
+
+  async function fetchAf(af) {
+    const u = new URL(base.toString());
+    u.searchParams.set("af", af);
+    const body = await fetchRipestatJson(u.toString(), { timeoutMs: 9000, maxBytes: 5_000_000 });
+    const data = body && typeof body === "object" ? body.data : null;
+
+    // Common shape (observed in the wild): data.prefixes.v4.originating[] / data.prefixes.v6.originating[]
+    const prefixes = data?.prefixes;
+    const fam = af === "v6" ? prefixes?.v6 : prefixes?.v4;
+    const list = fam?.originating;
+    return uniqPrefixSample(list, 10);
+  }
+
+  try {
+    const [v4, v6] = await Promise.all([fetchAf("v4"), fetchAf("v6")]);
+    return { v4, v6, source: "ripestat-ris-prefixes" };
+  } catch {
+    return { v4: [], v6: [], source: "ripestat-ris-prefixes" };
+  }
 }
 
 async function fetchRpkiValidation(asn, prefix) {
@@ -247,7 +330,7 @@ async function fetchRpkiValidation(asn, prefix) {
   upstream.searchParams.set("resource", `AS${asn}`);
   upstream.searchParams.set("prefix", prefix);
 
-  const body = await fetchRipestatJson(upstream.toString());
+  const body = await fetchRipestatJson(upstream.toString(), { timeoutMs: 6000, maxBytes: 250_000 });
   const data = body && typeof body === "object" ? body.data : null;
 
   // RIPEstat has used different field names over time; handle common shapes.
@@ -259,7 +342,7 @@ async function fetchRpkiSample(asn, prefixes) {
   const list = Array.isArray(prefixes) ? prefixes.filter(Boolean) : [];
   if (!list.length) return null;
 
-  const v4n = list.filter((p) => !String(p).includes(":")).length;
+  const v4n = list.filter((p) => !String(p).includes(":")) .length;
   const v6n = list.length - v4n;
 
   const results = await mapLimit(list, 4, async (pfx) => {
@@ -293,33 +376,44 @@ async function fetchRpkiSample(asn, prefixes) {
 async function fetchRipestat(asn) {
   const base = await fetchAsOverview(asn);
 
+  // Keep this endpoint responsive: avoid "announced-prefixes" (can be huge for large ASNs).
   let announcedPrefixes = null;
   let rpkiSample = null;
 
   try {
-    announcedPrefixes = await fetchAnnouncedPrefixes(asn);
+    const [counts, samples] = await Promise.all([
+      fetchPrefixSizeDistribution(asn),
+      fetchRisPrefixSamples(asn),
+    ]);
+
+    announcedPrefixes = {
+      ...counts,
+      sample: {
+        v4: samples?.v4 || [],
+        v6: samples?.v6 || [],
+      },
+      sources: {
+        counts: counts?.source,
+        sample: samples?.source,
+      },
+    };
+
+    const sampleList = [];
+    if (Array.isArray(announcedPrefixes.sample.v4)) sampleList.push(...announcedPrefixes.sample.v4);
+    if (Array.isArray(announcedPrefixes.sample.v6)) sampleList.push(...announcedPrefixes.sample.v6);
+    rpkiSample = await fetchRpkiSample(asn, sampleList);
   } catch {
     announcedPrefixes = null;
-  }
-
-  try {
-    const sample = [];
-    const v4 = announcedPrefixes?.sample?.v4;
-    const v6 = announcedPrefixes?.sample?.v6;
-    if (Array.isArray(v4)) sample.push(...v4);
-    if (Array.isArray(v6)) sample.push(...v6);
-    rpkiSample = await fetchRpkiSample(asn, sample);
-  } catch {
     rpkiSample = null;
   }
 
   return {
+    schemaVersion: ASN_META_SCHEMA_VERSION,
     ...base,
     announcedPrefixes,
     rpkiSample,
   };
 }
-
 
 async function refreshRecord({ kv, cache, asn }) {
   const payload = await fetchRipestat(asn);
