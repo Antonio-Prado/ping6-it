@@ -18,7 +18,10 @@ const ASN_META_SCHEMA_VERSION = 2;
 
 const ASN_META_CACHE_PREFIX = "https://ping6.it/_cache/asn/meta/";
 
-function json(body, status = 200, cacheControl = "public, max-age=600, stale-while-revalidate=43200") {
+// NOTE: We do server-side caching (KV/Cache API) and we want the UI to observe the *current*
+// cache status (hit/stale/miss). If we allow CDN/browser caching of the API response itself,
+// the client may keep seeing the very first "miss" payload for minutes/hours.
+function json(body, status = 200, cacheControl = "no-store") {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -127,6 +130,7 @@ function buildResponsePayload(payload, fetchedAtMs, cacheStatus, opts = {}) {
       freshTtlSec: ASN_META_TTL_FRESH_SECONDS,
       staleTtlSec: ASN_META_TTL_STALE_SECONDS,
       revalidating: Boolean(opts.revalidating),
+      source: opts.source || null,
     },
   };
 }
@@ -434,16 +438,18 @@ export async function onRequest(context) {
 
   // 1) Try KV (preferred)
   let rec = await readFromKv(kv, asn);
+  let cacheSource = rec ? "kv" : null;
   if (!rec) {
     // 2) Fallback to edge cache
     rec = await readFromEdgeCache(cache, asn);
+    cacheSource = rec ? "edge" : null;
   }
 
   if (rec) {
     const ageSec = Math.max(0, Math.floor((now - rec.fetchedAt) / 1000));
 
     if (ageSec <= ASN_META_TTL_FRESH_SECONDS) {
-      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "hit"));
+      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "hit", { source: cacheSource }));
     }
 
     // Stale-but-serveable: return it, and revalidate in the background.
@@ -455,15 +461,15 @@ export async function onRequest(context) {
       } catch {
         // ignore
       }
-      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale", { revalidating }));
+      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale", { revalidating, source: cacheSource }));
     }
 
     // Too old: try to refresh synchronously. If upstream fails, fall back to the expired record.
     try {
       const freshRec = await refreshRecord({ kv, cache, asn });
-      return json(buildResponsePayload(freshRec.payload, freshRec.fetchedAt, "miss"));
+      return json(buildResponsePayload(freshRec.payload, freshRec.fetchedAt, "miss", { source: "refresh" }));
     } catch {
-      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale-expired", { revalidating: false }));
+      return json(buildResponsePayload(rec.payload, rec.fetchedAt, "stale-expired", { revalidating: false, source: cacheSource }));
     }
   }
 
@@ -478,5 +484,5 @@ export async function onRequest(context) {
   const record = { fetchedAt: Date.now(), payload };
   await Promise.all([writeToKv(kv, asn, record), writeToEdgeCache(cache, asn, record)]);
 
-  return json(buildResponsePayload(payload, record.fetchedAt, "miss"));
+  return json(buildResponsePayload(payload, record.fetchedAt, "miss", { source: "origin" }));
 }
