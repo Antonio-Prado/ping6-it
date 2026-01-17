@@ -298,6 +298,17 @@ const COPY = {
     asnMetaRegistry: "Registry",
     asnMetaIana: "IANA block",
     asnMetaAnnounced: "Announced",
+    asnMetaAnnouncedPrefixes: "Announced prefixes",
+    asnMetaAnnouncedPrefixesTotal: "total",
+    asnMetaAnnouncedPrefixesV4: "v4",
+    asnMetaAnnouncedPrefixesV6: "v6",
+    asnMetaRpkiTitle: "RPKI validation (sample)",
+    asnMetaRpkiValid: "valid",
+    asnMetaRpkiInvalid: "invalid",
+    asnMetaRpkiUnknown: "unknown",
+    asnMetaRpkiPrefix: "prefix",
+    asnMetaRpkiStatus: "status",
+    asnMetaRpkiSampleNote: ({ n, v4, v6 }) => `Sample: ${n} prefix(es) (${v4} v4, ${v6} v6).`,
     asnMetaProvenance: ({ source, cache, refreshing, age, fetchedAt }) => {
       const parts = [];
       if (source) parts.push(`source: ${source}`);
@@ -4449,6 +4460,89 @@ ${paramLines}` : header;
                         ) : null}
                       </>
                     )}
+
+                        {!isError && (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              display: 'grid',
+                            gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
+                            gap: 10,
+                            fontSize: 13,
+                          }}
+                        >
+                          <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaAnnouncedPrefixes')}</div>
+                            {isLoading ? (
+                              <div style={{ display: 'grid', gap: 6 }}>
+                                <SkeletonLine width="40%" />
+                                <SkeletonLine width="65%" />
+                              </div>
+                            ) : meta?.announcedPrefixes ? (
+                              <div style={{ display: 'grid', gap: 4 }}>
+                                <div>
+                                  {t('asnMetaAnnouncedPrefixesTotal')}: {Number.isFinite(meta.announcedPrefixes?.total) ? meta.announcedPrefixes.total : '-'}
+                                </div>
+                                <div>
+                                  {t('asnMetaAnnouncedPrefixesV4')}: {Number.isFinite(meta.announcedPrefixes?.v4) ? meta.announcedPrefixes.v4 : '-'} · {t('asnMetaAnnouncedPrefixesV6')}: {Number.isFinite(meta.announcedPrefixes?.v6) ? meta.announcedPrefixes.v6 : '-'}
+                                </div>
+                              </div>
+                            ) : (
+                              <div>-</div>
+                            )}
+                          </div>
+
+                          <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaRpkiTitle')}</div>
+                            {isLoading ? (
+                              <div style={{ display: 'grid', gap: 6 }}>
+                                <SkeletonLine width="55%" />
+                                <SkeletonLine width="70%" />
+                              </div>
+                            ) : meta?.rpkiSample ? (
+                              <div>
+                                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                  <span>{t('asnMetaRpkiValid')}: {Number.isFinite(meta.rpkiSample?.counts?.valid) ? meta.rpkiSample.counts.valid : 0}</span>
+                                  <span>{t('asnMetaRpkiInvalid')}: {Number.isFinite(meta.rpkiSample?.counts?.invalid) ? meta.rpkiSample.counts.invalid : 0}</span>
+                                  <span>{t('asnMetaRpkiUnknown')}: {Number.isFinite(meta.rpkiSample?.counts?.unknown) ? meta.rpkiSample.counts.unknown : 0}</span>
+                                </div>
+                                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+                                  {t('asnMetaRpkiSampleNote', {
+                                    n: Number.isFinite(meta.rpkiSample?.n) ? meta.rpkiSample.n : (Array.isArray(meta.rpkiSample?.sample) ? meta.rpkiSample.sample.length : 0),
+                                    v4: Number.isFinite(meta.rpkiSample?.v4) ? meta.rpkiSample.v4 : '-',
+                                    v6: Number.isFinite(meta.rpkiSample?.v6) ? meta.rpkiSample.v6 : '-',
+                                  })}
+                                </div>
+                                {Array.isArray(meta.rpkiSample?.sample) && meta.rpkiSample.sample.length ? (
+                                  <div style={{ marginTop: 8, maxHeight: 160, overflow: 'auto', border: '1px solid #f3f4f6', borderRadius: 10 }}>
+                                    <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+                                      <thead>
+                                        <tr>
+                                          <th style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{t('asnMetaRpkiPrefix')}</th>
+                                          <th style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{t('asnMetaRpkiStatus')}</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {meta.rpkiSample.sample.slice(0, 20).map((row, idx) => (
+                                          <tr key={`${row.prefix || ''}-${idx}`}>
+                                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}>
+                                              {row.prefix}
+                                            </td>
+                                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{row.status || '-'}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <div>-</div>
+                            )}
+                          </div>
+                          </div>
+                        )}
+
                   </>
                 );
               })()}
