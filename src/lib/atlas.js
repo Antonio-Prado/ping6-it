@@ -4,6 +4,48 @@ const DEFAULT_POLL_MAX_MS = 12000;
 const DEFAULT_STABLE_POLLS = 3;
 const DEFAULT_SETTLE_AFTER_MS = 15000;
 
+const ATLAS_KEY_MASK = "ping6-atlas-mask-v1";
+
+function xorMaskBytes(bytes, mask) {
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) {
+    out[i] = bytes[i] ^ mask.charCodeAt(i % mask.length);
+  }
+  return out;
+}
+
+function encryptAtlasKey(plain) {
+  if (!plain) return "";
+  try {
+    const enc = new TextEncoder();
+    const bytes = enc.encode(String(plain));
+    const masked = xorMaskBytes(bytes, ATLAS_KEY_MASK);
+    let binary = "";
+    for (let i = 0; i < masked.length; i++) {
+      binary += String.fromCharCode(masked[i]);
+    }
+    return btoa(binary);
+  } catch {
+    return "";
+  }
+}
+
+function decryptAtlasKey(stored) {
+  if (!stored) return "";
+  try {
+    const binary = atob(String(stored));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const unmasked = xorMaskBytes(bytes, ATLAS_KEY_MASK);
+    const dec = new TextDecoder();
+    return String(dec.decode(unmasked) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 async function readTextSafe(resp) {
   try {
     return await resp.text();
@@ -35,7 +77,9 @@ function sleep(ms) {
 function getStoredAtlasKey() {
   if (typeof window === "undefined") return "";
   try {
-    return String(window.localStorage.getItem("PING6_ATLAS_API_KEY") || "").trim();
+    const stored = window.localStorage.getItem("PING6_ATLAS_API_KEY");
+    const decrypted = decryptAtlasKey(stored || "");
+    return String(decrypted || "").trim();
   } catch {
     return "";
   }
@@ -52,8 +96,16 @@ export function setStoredAtlasKey(key) {
   if (typeof window === "undefined") return;
   try {
     const clean = String(key || "").trim();
-    if (clean) window.localStorage.setItem("PING6_ATLAS_API_KEY", clean);
-    else window.localStorage.removeItem("PING6_ATLAS_API_KEY");
+    if (clean) {
+      const encrypted = encryptAtlasKey(clean);
+      if (encrypted) {
+        window.localStorage.setItem("PING6_ATLAS_API_KEY", encrypted);
+      } else {
+        window.localStorage.removeItem("PING6_ATLAS_API_KEY");
+      }
+    } else {
+      window.localStorage.removeItem("PING6_ATLAS_API_KEY");
+    }
   } catch {
     // ignore
   }

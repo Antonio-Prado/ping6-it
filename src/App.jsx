@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
-import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
+import { getStoredAtlasKey, setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
@@ -1544,7 +1544,7 @@ export default function App() {
     try {
       const b = String(window.localStorage.getItem("PING6_BACKEND") || "").trim();
       if (b === "atlas" || b === "globalping") setBackend(b);
-      const k = String(window.localStorage.getItem("PING6_ATLAS_API_KEY") || "").trim();
+      const k = getStoredAtlasKey();
       if (k) setAtlasApiKey(k);
     } catch {}
   }, []);
