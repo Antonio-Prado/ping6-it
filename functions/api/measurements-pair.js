@@ -1,15 +1,23 @@
+import { applyRateLimit } from "./_lib/rateLimit.js";
+import {
+  sanitizeLocations,
+  sanitizeMeasurementOptions,
+  sanitizeTarget,
+} from "./_lib/guardrails.js";
+
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const GLOBALPING_URL = "https://api.globalping.io/v1/measurements";
 
 const ALLOWED_TYPES = new Set(["ping", "traceroute", "mtr", "dns", "http"]);
 const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
 
-function json(body, status = 200) {
+function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      ...extraHeaders,
     },
   });
 }
@@ -44,7 +52,7 @@ async function postJson(url, payload, signal) {
     err.retryAfter = retryAfterHeader
       ? retryAfterHeader
       : Number.isFinite(rateLimitResetSec) && rateLimitResetSec > 0
-        ? `${Math.ceil(rateLimitResetSec)}s`
+        ? `${Math.ceil(rateLimitResetSec)}`
         : undefined;
     err.data = data;
     throw err;
@@ -57,6 +65,12 @@ export async function onRequestPost(context) {
 
   const secret = env.TURNSTILE_SECRET;
   if (!secret) return json({ error: "TURNSTILE_SECRET not set" }, 500);
+
+  // Rate limit early (before Turnstile verification) to protect upstream APIs.
+  const rl = await applyRateLimit({ request, env, scope: "gp_pair", limit: 30, windowSec: 600 });
+  if (rl.limited) {
+    return json({ error: "rate_limited", retryAfter: rl.retryAfterSec }, 429, rl.headers);
+  }
 
   let body;
   try {
@@ -88,6 +102,12 @@ export async function onRequestPost(context) {
     return badRequest("invalid_target", 'Invalid "target". Expected a non-empty hostname/IP/URL string.', { target: base.target });
   }
 
+  const targetCheck = sanitizeTarget({ type: base.type, target: base.target, allowIp: base.type === "dns" });
+  if (!targetCheck.ok) return badRequest(targetCheck.error || "invalid_target", targetCheck.message || "Invalid target.", { target: base.target });
+
+  const moCheck = sanitizeMeasurementOptions(base.type, measurementOptions, { backend: "globalping" });
+  if (!moCheck.ok) return badRequest(moCheck.error || "invalid_measurement_options", moCheck.message || "Invalid measurement options.", { measurementOptions });
+
   const limit = Math.max(1, Math.min(10, Number(base.limit) || 3));
 
   const warnings = [];
@@ -106,7 +126,7 @@ export async function onRequestPost(context) {
   fd.append("response", turnstileToken);
   if (remoteip) fd.append("remoteip", remoteip);
 
-  const verifyRes = await fetch(SITEVERIFY_URL, { method: "POST", body: fd });
+  const verifyRes = await fetch(SITEVERIFY_URL, { method: "POST", body: fd, signal: request.signal });
   const verify = await verifyRes.json();
 
   if (!verify?.success) {
@@ -122,10 +142,11 @@ export async function onRequestPost(context) {
   }
 
   // 2) Create the IPv4/IPv6 pair (same probes) server-side.
+  const locations = sanitizeLocations(base.locations);
   const baseSanitized = {
     type: base.type,
-    target: String(base.target).trim(),
-    locations: base.locations,
+    target: targetCheck.value,
+    locations,
     limit,
     inProgressUpdates: true,
   };
@@ -136,7 +157,7 @@ export async function onRequestPost(context) {
     if (flow === "v6first") {
       m6 = await postJson(
         GLOBALPING_URL,
-        { ...baseSanitized, measurementOptions: { ...measurementOptions, ipVersion: 6 } },
+        { ...baseSanitized, measurementOptions: { ...moCheck.value, ipVersion: 6 } },
         request.signal
       );
 
@@ -145,14 +166,14 @@ export async function onRequestPost(context) {
         {
           ...baseSanitized,
           locations: m6.id,
-          measurementOptions: { ...measurementOptions, ipVersion: 4 },
+          measurementOptions: { ...moCheck.value, ipVersion: 4 },
         },
         request.signal
       );
     } else {
       m4 = await postJson(
         GLOBALPING_URL,
-        { ...baseSanitized, measurementOptions: { ...measurementOptions, ipVersion: 4 } },
+        { ...baseSanitized, measurementOptions: { ...moCheck.value, ipVersion: 4 } },
         request.signal
       );
 
@@ -161,7 +182,7 @@ export async function onRequestPost(context) {
         {
           ...baseSanitized,
           locations: m4.id,
-          measurementOptions: { ...measurementOptions, ipVersion: 6 },
+          measurementOptions: { ...moCheck.value, ipVersion: 6 },
         },
         request.signal
       );
@@ -169,6 +190,9 @@ export async function onRequestPost(context) {
 
     return json({ m4, m6, warnings });
   } catch (e) {
-    return json({ error: "globalping_failed", status: e.status || 500, retryAfter: e.retryAfter || undefined, details: e.data || {}, warnings }, e.status || 500);
+    const status = e.status || 500;
+    const retryAfter = e.retryAfter;
+    const headers = status === 429 && retryAfter ? { "retry-after": String(retryAfter) } : {};
+    return json({ error: "globalping_failed", status, retryAfter: retryAfter || undefined, details: e.data || {}, warnings }, status, headers);
   }
 }
