@@ -1,4 +1,6 @@
 const RIPESTAT_AS_OVERVIEW = "https://stat.ripe.net/data/as-overview/data.json";
+const RIPESTAT_ANNOUNCED_PREFIXES = "https://stat.ripe.net/data/announced-prefixes/data.json";
+const RIPESTAT_RPKI_VALIDATION = "https://stat.ripe.net/data/rpki-validation/data.json";
 
 // Server-side caching (prefer KV if available; fallback to the Cloudflare Cache API).
 // KV binding name (recommended): ASN_META_KV
@@ -124,11 +126,8 @@ function buildResponsePayload(payload, fetchedAtMs, cacheStatus, opts = {}) {
   };
 }
 
-async function fetchRipestat(asn) {
-  const upstream = new URL(RIPESTAT_AS_OVERVIEW);
-  upstream.searchParams.set("resource", asn);
-
-  const resp = await fetch(upstream.toString(), {
+async function fetchRipestatJson(url) {
+  const resp = await fetch(url, {
     method: "GET",
     headers: { accept: "application/json" },
   });
@@ -139,7 +138,61 @@ async function fetchRipestat(asn) {
     throw err;
   }
 
-  const body = await resp.json();
+  return await resp.json();
+}
+
+function extractPrefixStrings(raw) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const item of arr) {
+    if (!item) continue;
+    if (typeof item === "string") {
+      const s = item.trim();
+      if (s) out.push(s);
+      continue;
+    }
+    if (typeof item === "object") {
+      const p = item.prefix;
+      if (typeof p === "string") {
+        const s = p.trim();
+        if (s) out.push(s);
+      }
+    }
+  }
+  return out;
+}
+
+function normalizeRpkiStatus(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "valid") return "valid";
+  if (s === "invalid") return "invalid";
+  if (s === "unknown" || s === "not_found" || s === "notfound" || s === "unverified") return "unknown";
+  return s ? s : "unknown";
+}
+
+async function mapLimit(items, limit, fn) {
+  const arr = Array.isArray(items) ? items : [];
+  const out = new Array(arr.length);
+  let next = 0;
+  const n = Math.max(1, Math.min(Number(limit) || 4, 12, arr.length || 1));
+
+  async function worker() {
+    while (true) {
+      const idx = next++;
+      if (idx >= arr.length) return;
+      out[idx] = await fn(arr[idx], idx);
+    }
+  }
+
+  await Promise.all(Array.from({ length: n }, worker));
+  return out;
+}
+
+async function fetchAsOverview(asn) {
+  const upstream = new URL(RIPESTAT_AS_OVERVIEW);
+  upstream.searchParams.set("resource", asn);
+
+  const body = await fetchRipestatJson(upstream.toString());
   const data = body && typeof body === "object" ? body.data : null;
   const block = data && typeof data === "object" ? data.block : null;
 
@@ -153,16 +206,120 @@ async function fetchRipestat(asn) {
     asn: Number(asn),
     holder,
     announced: typeof data?.announced === "boolean" ? data.announced : null,
-    registry: regName || regDesc || regResource
-      ? {
-          name: regName,
-          desc: regDesc,
-          resource: regResource,
-        }
-      : null,
+    registry:
+      regName || regDesc || regResource
+        ? {
+            name: regName,
+            desc: regDesc,
+            resource: regResource,
+          }
+        : null,
     source: "ripestat-as-overview",
   };
 }
+
+async function fetchAnnouncedPrefixes(asn) {
+  const upstream = new URL(RIPESTAT_ANNOUNCED_PREFIXES);
+  upstream.searchParams.set("resource", `AS${asn}`);
+  upstream.searchParams.set("min_peers_seeing", "0");
+
+  const body = await fetchRipestatJson(upstream.toString());
+  const data = body && typeof body === "object" ? body.data : null;
+
+  const prefixes = extractPrefixStrings(data?.prefixes);
+  const v4 = prefixes.filter((p) => !String(p).includes(":"));
+  const v6 = prefixes.filter((p) => String(p).includes(":"));
+
+  return {
+    total: prefixes.length,
+    v4: v4.length,
+    v6: v6.length,
+    sample: {
+      v4: v4.slice(0, 10),
+      v6: v6.slice(0, 10),
+    },
+    source: "ripestat-announced-prefixes",
+  };
+}
+
+async function fetchRpkiValidation(asn, prefix) {
+  const upstream = new URL(RIPESTAT_RPKI_VALIDATION);
+  upstream.searchParams.set("resource", `AS${asn}`);
+  upstream.searchParams.set("prefix", prefix);
+
+  const body = await fetchRipestatJson(upstream.toString());
+  const data = body && typeof body === "object" ? body.data : null;
+
+  // RIPEstat has used different field names over time; handle common shapes.
+  const status = data?.status ?? data?.validation_status ?? data?.validity ?? data?.rpki_status;
+  return normalizeRpkiStatus(status);
+}
+
+async function fetchRpkiSample(asn, prefixes) {
+  const list = Array.isArray(prefixes) ? prefixes.filter(Boolean) : [];
+  if (!list.length) return null;
+
+  const v4n = list.filter((p) => !String(p).includes(":")).length;
+  const v6n = list.length - v4n;
+
+  const results = await mapLimit(list, 4, async (pfx) => {
+    try {
+      const status = await fetchRpkiValidation(asn, pfx);
+      return { prefix: pfx, status };
+    } catch {
+      return { prefix: pfx, status: "unknown" };
+    }
+  });
+
+  const counts = { valid: 0, invalid: 0, unknown: 0 };
+  for (const r of results) {
+    const s = normalizeRpkiStatus(r?.status);
+    if (s === "valid") counts.valid += 1;
+    else if (s === "invalid") counts.invalid += 1;
+    else counts.unknown += 1;
+    if (r) r.status = s;
+  }
+
+  return {
+    n: list.length,
+    v4: v4n,
+    v6: v6n,
+    counts,
+    sample: results,
+    source: "ripestat-rpki-validation",
+  };
+}
+
+async function fetchRipestat(asn) {
+  const base = await fetchAsOverview(asn);
+
+  let announcedPrefixes = null;
+  let rpkiSample = null;
+
+  try {
+    announcedPrefixes = await fetchAnnouncedPrefixes(asn);
+  } catch {
+    announcedPrefixes = null;
+  }
+
+  try {
+    const sample = [];
+    const v4 = announcedPrefixes?.sample?.v4;
+    const v6 = announcedPrefixes?.sample?.v6;
+    if (Array.isArray(v4)) sample.push(...v4);
+    if (Array.isArray(v6)) sample.push(...v6);
+    rpkiSample = await fetchRpkiSample(asn, sample);
+  } catch {
+    rpkiSample = null;
+  }
+
+  return {
+    ...base,
+    announcedPrefixes,
+    rpkiSample,
+  };
+}
+
 
 async function refreshRecord({ kv, cache, asn }) {
   const payload = await fetchRipestat(asn);
