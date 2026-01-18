@@ -258,6 +258,13 @@ const COPY = {
     metric: "Metric",
     report: "Report",
     exitReportMode: "Exit report mode",
+    reportLinkShort: "Short report link",
+    reportExpires: "Expires",
+    reportLoading: "Loading report…",
+    reportCreateFailed: "Short report link unavailable. Falling back to an encoded URL.",
+    reportNotFound: "Report not found or expired.",
+    reportAll: "Report all",
+    tipReportAll: "Generate a short report link for the whole multi-target run.",
     generated: "Generated",
     ipv6OnlyYes: "yes",
     ipv6OnlyNo: "no",
@@ -798,6 +805,9 @@ function decodeReportPayload(raw) {
     return null;
   }
 }
+
+
+const REPORT_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 function applyUrlSettings(params, setters) {
   const {
@@ -2019,6 +2029,9 @@ export default function App() {
   const [historyCompareB, setHistoryCompareB] = useState("");
   const [reportMode, setReportMode] = useState(false);
   const [reportData, setReportData] = useState(null);
+  const [reportMeta, setReportMeta] = useState(null);
+  const [reportNotice, setReportNotice] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
 
   const [running, setRunning] = useState(false);
@@ -2095,6 +2108,48 @@ export default function App() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+
+    // Short report links: /r/<id>
+    const path = window.location.pathname || "/";
+    const m = path.match(/^\/r\/([A-Za-z0-9_-]{8,64})\/?$/);
+    if (m) {
+      const id = m[1];
+      const ac = new AbortController();
+
+      setReportMode(true);
+      setReportData(null);
+      setReportMeta({ id, createdAt: null, expiresAt: null });
+      setReportNotice("");
+      setShareUrl(window.location.href);
+
+      (async () => {
+        try {
+          const data = await loadShortReport(id, ac.signal);
+          if (data?.payload) {
+            setReportMode(true);
+            setReportData(data.payload);
+            setReportMeta({
+              id: String(data?.id || id),
+              createdAt: data?.createdAt || null,
+              expiresAt: data?.expiresAt || null,
+            });
+          } else {
+            setErr(t("reportNotFound"));
+          }
+        } catch (e) {
+          const status = e?.status;
+          if (status === 404) setErr(t("reportNotFound"));
+          else setErr(String(e?.message || e || "report_load_failed"));
+        }
+      })();
+
+      return () => {
+        try {
+          ac.abort();
+        } catch {}
+      };
+    }
+
     const params = new URLSearchParams(window.location.search);
     applyUrlSettings(params, {
       setCmd,
@@ -2134,6 +2189,8 @@ export default function App() {
       if (decoded) {
         setReportMode(true);
         setReportData(decoded);
+        setReportMeta(null);
+        setReportNotice("");
       }
     }
   }, []);
@@ -3162,6 +3219,65 @@ ${paramLines}` : header;
     };
   }
 
+  function buildMultiReportPayload() {
+    const arr = Array.isArray(multiRunResults) ? multiRunResults : [];
+    if (!arr.length) return null;
+
+    const entries = arr
+      .map((e) => {
+        const summary = normalizeHistorySummary(e?.cmd, e?.v4, e?.v6, { strict: strictCompare });
+        if (!summary) return null;
+        return {
+          id: e?.id,
+          cmd: e?.cmd,
+          target: e?.target || "",
+          effectiveTarget: e?.effectiveTarget || "",
+          summary,
+        };
+      })
+      .filter(Boolean);
+
+    if (!entries.length) return null;
+
+    const cmds = Array.from(new Set(entries.map((x) => x?.cmd).filter(Boolean)));
+    const cmdLabel = cmds.length === 1 ? cmds[0] : "mixed";
+
+    return {
+      v: SHARE_VERSION,
+      ts: Date.now(),
+      mode: "multiTarget",
+      backend,
+      cmd: cmdLabel,
+      from,
+      net: gpTag,
+      limit,
+      v6only: requireV6Capable,
+      filters: {
+        asn: probeAsn,
+        isp: probeIsp,
+        deltaThreshold,
+      },
+      options: {
+        packets,
+        trProto,
+        trPort,
+        dnsQuery,
+        dnsProto,
+        dnsPort,
+        dnsResolver,
+        dnsTrace,
+        httpMethod,
+        httpProto,
+        httpPath,
+        httpQuery,
+        httpPort,
+        httpResolver,
+      },
+      entries,
+    };
+  }
+
+
   function isDualStackRowForExport(kind, r) {
     if (!r) return false;
     if (kind === "ping") return Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg);
@@ -3643,19 +3759,154 @@ ${paramLines}` : header;
     return url.toString();
   }
 
-  function enterReportMode() {
+  async function createShortReport(payload, signal) {
+    const token = await getTurnstileToken(signal);
+
+    const res = await fetch("/api/report", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ turnstileToken: token, payload }),
+      signal,
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      const err = new Error(data?.error || "report_create_failed");
+      err.status = res.status;
+      err.data = data;
+      const ra = res.headers.get("retry-after") || "";
+      err.retryAfter = ra ? Number(ra) : 0;
+      throw err;
+    }
+
+    return data;
+  }
+
+  async function loadShortReport(id, signal) {
+    const res = await fetch(`/api/report/${encodeURIComponent(id)}`, { signal });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      const err = new Error(data?.error || "report_load_failed");
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+
+    return data;
+  }
+
+  function setLocationToShortReport(id) {
+    const url = new URL(window.location.href);
+    url.pathname = `/r/${id}`;
+    url.search = "";
+    url.hash = "";
+    window.history.replaceState({}, "", url.toString());
+    setShareUrl(url.toString());
+  }
+
+  function setLocationToShareParams() {
+    const params = buildShareParams();
+    const url = new URL(window.location.href);
+    url.pathname = "/";
+    url.search = params.toString();
+    url.hash = "";
+    window.history.replaceState({}, "", url.toString());
+    setShareUrl(url.toString());
+  }
+
+  async function enterReportMode() {
     if (typeof window === "undefined") return;
     const payload = buildReportPayload();
     if (!payload) return;
-    const encoded = encodeReportPayload(payload);
-    const url = new URL(window.location.href);
-    url.searchParams.set("report", "1");
-    url.searchParams.set("data", encoded);
-    window.history.replaceState({}, "", url.toString());
-    setReportMode(true);
-    setReportData(payload);
-    setShareUrl(url.toString());
+
+    setErr("");
+    setReportNotice("");
+    setReportBusy(true);
+
+    const ac = new AbortController();
+
+    try {
+      const created = await createShortReport(payload, ac.signal);
+      const id = String(created?.id || "");
+      if (!REPORT_ID_RE.test(id)) throw new Error("invalid_report_id");
+
+      setLocationToShortReport(id);
+      setReportMode(true);
+      setReportData(payload);
+      setReportMeta({ id, createdAt: created?.createdAt || null, expiresAt: created?.expiresAt || null });
+    } catch (e) {
+      if (e?.status === 429 && e?.retryAfter) {
+        const ra = Number(e.retryAfter) || 0;
+        if (ra > 0) setRateLimitUntil(Date.now() + ra * 1000);
+      }
+
+      // Fallback to URL-encoded report (keeps the previous behavior working without KV).
+      const encoded = encodeReportPayload(payload);
+      if (!encoded) {
+        setErr(String(e?.message || e || "report_create_failed"));
+        return;
+      }
+
+      const url = new URL(window.location.href);
+      url.searchParams.set("report", "1");
+      url.searchParams.set("data", encoded);
+      window.history.replaceState({}, "", url.toString());
+      setReportMode(true);
+      setReportData(payload);
+      setReportMeta(null);
+      setShareUrl(url.toString());
+      setReportNotice(t("reportCreateFailed"));
+    } finally {
+      setReportBusy(false);
+    }
   }
+
+  async function enterMultiReportMode() {
+    if (typeof window === "undefined") return;
+    const payload = buildMultiReportPayload();
+    if (!payload) return;
+
+    setErr("");
+    setReportNotice("");
+    setReportBusy(true);
+
+    const ac = new AbortController();
+
+    try {
+      const created = await createShortReport(payload, ac.signal);
+      const id = String(created?.id || "");
+      if (!REPORT_ID_RE.test(id)) throw new Error("invalid_report_id");
+
+      setLocationToShortReport(id);
+      setReportMode(true);
+      setReportData(payload);
+      setReportMeta({ id, createdAt: created?.createdAt || null, expiresAt: created?.expiresAt || null });
+    } catch (e) {
+      if (e?.status === 429 && e?.retryAfter) {
+        const ra = Number(e.retryAfter) || 0;
+        if (ra > 0) setRateLimitUntil(Date.now() + ra * 1000);
+      }
+      setErr(String(e?.message || e || "report_create_failed"));
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
 
   function copyToClipboard(value) {
     if (typeof navigator === "undefined") return;
@@ -3667,14 +3918,13 @@ ${paramLines}` : header;
 
   function exitReportMode() {
     if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("report");
-    url.searchParams.delete("data");
-    window.history.replaceState({}, "", url.toString());
     setReportMode(false);
     setReportData(null);
-    updateShareLink();
+    setReportMeta(null);
+    setReportNotice("");
+    setLocationToShareParams();
   }
+
 
 
   const handleSelectMultiEntry = useCallback((entry) => {
@@ -5037,7 +5287,7 @@ ${paramLines}` : header;
           </button>
         </Tip>
         <Tip text={t("tipReportMode")}>
-          <button onClick={enterReportMode} disabled={!v4 || !v6} style={{ padding: "8px 12px" }}>
+          <button onClick={enterReportMode} disabled={!v4 || !v6 || reportBusy} style={{ padding: "8px 12px" }}>
             {t("reportMode")}
           </button>
         </Tip>
@@ -5280,6 +5530,11 @@ ${paramLines}` : header;
               )}
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <Tip text={t("tipReportAll")}>
+                <button onClick={enterMultiReportMode} disabled={!multiRunResults.length || reportBusy} style={{ padding: "6px 10px" }}>
+                  {t("reportAll")}
+                </button>
+              </Tip>
               <Tip text={t("tipExportAllJson")}>
                 <button onClick={downloadMultiJson} disabled={!multiRunResults.length} style={{ padding: "6px 10px" }}>
                   {t("exportAllJson")}
@@ -5448,7 +5703,7 @@ ${paramLines}` : header;
       </div>
       )}
 
-      {reportMode && reportData && (
+      {reportMode && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #dbeafe", borderRadius: 10, background: "#eff6ff" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 700 }}>{t("report")}</div>
@@ -5456,36 +5711,104 @@ ${paramLines}` : header;
               {t("exitReportMode")}
             </button>
           </div>
-          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
-            {t("generated")} {new Date(reportData.ts).toLocaleString(dateLocale)} · {reportData.cmd} · {reportData.target}
-          </div>
-          <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
-            {t("from")} {reportData.from} · {t("probes").toLowerCase()} {reportData.limit} · {t("net").toLowerCase()} {reportData.net} ·{" "}
-            {t("ipv6OnlyShort")} {reportData.v6only ? t("ipv6OnlyYes") : t("ipv6OnlyNo")}
-            {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.deltaThreshold) && (
-              <>
-                {" · "}{t("filters")} {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
-                {reportData.filters.isp ? `${reportData.filters.asn ? ", " : ""}ISP ${reportData.filters.isp}` : ""}
-                {reportData.filters.deltaThreshold
-                  ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}Δ>${reportData.filters.deltaThreshold}ms`
-                  : ""}
-              </>
-            )}
-          </div>
-          {reportData.summary && (
-            <div style={{ fontSize: 13, marginTop: 6 }}>
-              {t("summaryMedianV4")} {ms(reportData.summary.medianV4)} · {t("summaryMedianV6")} {ms(reportData.summary.medianV6)} ·{" "}
-              {t("summaryMedianDelta")} {ms(reportData.summary.medianDelta)}
-              {(reportData.summary.kind === "ping" || reportData.summary.kind === "mtr") && (
+
+          {reportNotice && (
+            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }} role="note">
+              {reportNotice}
+            </div>
+          )}
+
+          {shareUrl && (
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+              {t("reportLinkShort")}: <a href={shareUrl}>{shareUrl}</a>
+              {reportMeta?.expiresAt && (
                 <>
-                  {" · "}
-                  {t("v4LossShort")} {pct(reportData.summary.medianLossV4)} · {t("v6LossShort")} {pct(reportData.summary.medianLossV6)}
+                  {" · "}{t("reportExpires")}: {new Date(reportMeta.expiresAt).toLocaleString(dateLocale)}
                 </>
               )}
             </div>
           )}
+
+          {!reportData && (
+            <div style={{ fontSize: 13, opacity: 0.8, marginTop: 8 }} role="status" aria-live="polite">
+              {t("reportLoading")}
+            </div>
+          )}
+
+          {reportData && reportData.mode === "multiTarget" && (
+            <>
+              <div style={{ fontSize: 13, opacity: 0.8, marginTop: 8 }}>
+                {t("generated")} {new Date(reportData.ts).toLocaleString(dateLocale)} · {String(reportData.backend || "")} · {reportData.cmd} · {(reportData.entries || []).length} targets
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+                {t("from")} {reportData.from} · {t("probes").toLowerCase()} {reportData.limit} · {t("net").toLowerCase()} {reportData.net} · {t("ipv6OnlyShort")} {reportData.v6only ? t("ipv6OnlyYes") : t("ipv6OnlyNo")}
+              </div>
+              <div style={{ overflowX: "auto", marginTop: 10 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("target")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("command")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("summaryMedianV4")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("summaryMedianV6")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("summaryMedianDelta")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("summaryMedianLossV4")}</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: "6px 4px" }}>{t("summaryMedianLossV6")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(reportData.entries || []).map((e) => (
+                      <tr key={String(e.id || e.target)}>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6", wordBreak: "break-all" }}>{e.target}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{e.cmd}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{ms(e.summary?.medianV4)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{ms(e.summary?.medianV6)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{ms(e.summary?.medianDelta)}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{Number.isFinite(e.summary?.medianLossV4) ? pct(e.summary.medianLossV4) : "—"}</td>
+                        <td style={{ padding: "6px 4px", borderBottom: "1px solid #f3f4f6" }}>{Number.isFinite(e.summary?.medianLossV6) ? pct(e.summary.medianLossV6) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {reportData && reportData.mode !== "multiTarget" && (
+            <>
+              <div style={{ fontSize: 13, opacity: 0.8, marginTop: 8 }}>
+                {t("generated")} {new Date(reportData.ts).toLocaleString(dateLocale)} · {reportData.cmd} · {reportData.target}
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>
+                {t("from")} {reportData.from} · {t("probes").toLowerCase()} {reportData.limit} · {t("net").toLowerCase()} {reportData.net} ·{" "}
+                {t("ipv6OnlyShort")} {reportData.v6only ? t("ipv6OnlyYes") : t("ipv6OnlyNo")}
+                {reportData.filters && (reportData.filters.asn || reportData.filters.isp || reportData.filters.deltaThreshold) && (
+                  <>
+                    {" · "}{t("filters")} {reportData.filters.asn ? `ASN ${reportData.filters.asn}` : ""}
+                    {reportData.filters.isp ? `${reportData.filters.asn ? ", " : ""}ISP ${reportData.filters.isp}` : ""}
+                    {reportData.filters.deltaThreshold
+                      ? `${reportData.filters.asn || reportData.filters.isp ? ", " : ""}Δ>${reportData.filters.deltaThreshold}ms`
+                      : ""}
+                  </>
+                )}
+              </div>
+              {reportData.summary && (
+                <div style={{ fontSize: 13, marginTop: 6 }}>
+                  {t("summaryMedianV4")} {ms(reportData.summary.medianV4)} · {t("summaryMedianV6")} {ms(reportData.summary.medianV6)} ·{" "}
+                  {t("summaryMedianDelta")} {ms(reportData.summary.medianDelta)}
+                  {(reportData.summary.kind === "ping" || reportData.summary.kind === "mtr") && (
+                    <>
+                      {" · "}
+                      {t("v4LossShort")} {pct(reportData.summary.medianLossV4)} · {t("v6LossShort")} {pct(reportData.summary.medianLossV6)}
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
+
 
       {deltaAlert && (
         <div style={{ background: "#fef3c7", color: "#111", border: "1px solid #f59e0b", padding: 12, marginBottom: 12 }} role="alert">
