@@ -139,7 +139,7 @@ Choose the measurement network backend:
 
 When using RIPE Atlas, you must provide an **Atlas API key** in the Settings panel.
 
-**Privacy note:** the Atlas API key is stored locally in your browser and is **never included in share links**.
+**Privacy note:** the Atlas API key is not stored locally in your browser and is **never included in share links**.
 
 ### Target / Multi-target
 - **Single target:** one hostname (or IP literal for DNS on Globalping).
