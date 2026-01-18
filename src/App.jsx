@@ -274,6 +274,17 @@ const COPY = {
     pingTitle: "Ping RTT (v4 vs v6)",
     tracerouteTitle: "Traceroute to destination (v4 vs v6)",
     traceroutePathsTitle: "Traceroute paths (v4 vs v6)",
+    pathDiff: "diff",
+    showHops: "hops",
+    hideHops: "hide",
+    perHopDiffTitle: "Per-hop diff",
+    hop: "hop",
+    pathDivergeAt: ({ n }) => `diverge @ hop ${n}`,
+    pathNoDivergence: ({ n }) => `no divergence in first ${n} hop(s)`,
+    pathMissingCounts: ({ v4, v6 }) => `missing: v4 ${v4}, v6 ${v6}`,
+    pathNoHopData: "No hop data.",
+    pathShowingFirstHops: ({ n }) => `Showing first ${n} hops.`,
+
     mtrTitle: "MTR to destination (v4 vs v6)",
     mtrPathsTitle: "MTR paths (v4 vs v6)",
     dnsTitle: "DNS timings (v4 vs v6)",
@@ -358,6 +369,8 @@ const COPY = {
     asnMetaRegistry: "Registry",
     asnMetaIana: "IANA block",
     asnMetaAnnounced: "Announced",
+    asnMetaAnnouncedHelpAria: "What does Announced mean?",
+    asnMetaAnnouncedHelp: "Seen announcing at least one prefix in BGP (per RIPEstat). Useful as a quick signal that the ASN is currently active in the global routing table.",
     asnMetaAnnouncedPrefixes: "Announced prefixes",
     asnMetaAnnouncedPrefixesTotal: "total",
     asnMetaAnnouncedPrefixesV4: "v4",
@@ -839,6 +852,93 @@ function formatHopPath(result, maxHops = 12) {
   const sliced = labels.slice(0, maxHops);
   return labels.length > maxHops ? `${sliced.join(" → ")} → …` : sliced.join(" → ");
 }
+
+
+function hopLabelFromHop(h) {
+  const s = h?.resolvedHostname || h?.resolvedAddress || h?.address || h?.hostname || h?.ip || "";
+  const v = String(s || "").trim();
+  return v;
+}
+
+function buildHopIndexMap(result) {
+  const hops = Array.isArray(result?.result?.hops) ? result.result.hops : [];
+  const map = new Map();
+  let maxHop = 0;
+  let hasHopNumbers = false;
+
+  hops.forEach((h, idx) => {
+    const hopNoRaw = Number(h?.hop);
+    const hopNo = Number.isFinite(hopNoRaw) && hopNoRaw > 0 ? hopNoRaw : null;
+    if (hopNo !== null) hasHopNumbers = true;
+
+    const label = hopLabelFromHop(h);
+    const key = hopNo !== null ? hopNo : idx + 1;
+    if (key > maxHop) maxHop = key;
+    if (!map.has(key)) map.set(key, label);
+  });
+
+  // Fallback when we have hops but no explicit hop numbers.
+  if (!maxHop && hops.length) maxHop = hops.length;
+
+  return { map, maxHop, hasHopNumbers };
+}
+
+function computeHopDiffSummary(v4res, v6res, maxHops = 30) {
+  const a = buildHopIndexMap(v4res);
+  const b = buildHopIndexMap(v6res);
+  const maxOriginal = Math.max(a.maxHop || 0, b.maxHop || 0);
+  const maxHop = Math.min(maxHops, maxOriginal);
+
+  let firstDiffHop = null;
+  let diffCount = 0;
+  let missingV4 = 0;
+  let missingV6 = 0;
+
+  for (let i = 1; i <= maxHop; i += 1) {
+    const ha = String(a.map.get(i) || "").trim();
+    const hb = String(b.map.get(i) || "").trim();
+
+    const va = ha || "*";
+    const vb = hb || "*";
+
+    if (va !== vb) {
+      diffCount += 1;
+      if (firstDiffHop === null) firstDiffHop = i;
+    }
+
+    if (va === "*" && vb !== "*") missingV4 += 1;
+    if (vb === "*" && va !== "*") missingV6 += 1;
+  }
+
+  return {
+    maxHop,
+    maxOriginal,
+    truncated: maxOriginal > maxHop,
+    firstDiffHop,
+    diffCount,
+    missingV4,
+    missingV6,
+  };
+}
+
+function buildHopAlignment(v4res, v6res, maxHops = 30) {
+  const summary = computeHopDiffSummary(v4res, v6res, maxHops);
+  const a = buildHopIndexMap(v4res);
+  const b = buildHopIndexMap(v6res);
+
+  const rows = [];
+  for (let i = 1; i <= summary.maxHop; i += 1) {
+    const ha = String(a.map.get(i) || "").trim();
+    const hb = String(b.map.get(i) || "").trim();
+    const v4 = ha || "*";
+    const v6 = hb || "*";
+    const diff = v4 !== v6;
+    rows.push({ hop: i, v4, v6, diff, isFirstDiff: summary.firstDiffHop === i });
+  }
+
+  return { rows, summary };
+}
+
 
 function pickPingStats(x) {
   const r = x?.result;
@@ -1398,6 +1498,9 @@ export default function App() {
       return { table, key, dir: defaultDir };
     });
   }, []);
+
+  // Paths (traceroute/mtr): per-hop diff expander
+  const [expandedPathKey, setExpandedPathKey] = useState(null);
 
 
   // ASN details (in-app)
@@ -3006,6 +3109,10 @@ ${paramLines}` : header;
   const showTracerouteTable = cmd === "traceroute" && v4 && v6;
   const showMtrTable = cmd === "mtr" && v4 && v6;
 
+  useEffect(() => {
+    setExpandedPathKey(null);
+  }, [cmd, v4?.id, v6?.id]);
+
   const showDnsTable = cmd === "dns" && v4 && v6;
   const showHttpTable = cmd === "http" && v4 && v6;
 
@@ -3064,6 +3171,9 @@ ${paramLines}` : header;
         probe: p,
         v4path: formatHopPath(x),
         v6path: formatHopPath(y),
+        v4res: x,
+        v6res: y,
+        hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
   }, [showTracerouteTable, v4, v6, strictCompare]);
@@ -3081,6 +3191,9 @@ ${paramLines}` : header;
         probe: p,
         v4path: formatHopPath(x),
         v6path: formatHopPath(y),
+        v4res: x,
+        v6res: y,
+        hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
   }, [showMtrTable, v4, v6, strictCompare]);
@@ -3194,6 +3307,60 @@ ${paramLines}` : header;
 
     return { v4got, v4exp, v6got, v6exp, both, expected };
   }, [running, v4, v6, backend, limit]);
+
+
+  function renderPerHopDiff(v4res, v6res) {
+    const aligned = buildHopAlignment(v4res, v6res, 30);
+    const rows = aligned.rows || [];
+    const s = aligned.summary || {};
+
+    if (!rows.length) {
+      return <div style={{ fontSize: 12, opacity: 0.8 }}>{t('pathNoHopData')}</div>;
+    }
+
+    return (
+      <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 10, background: '#fafafa' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+          <div style={{ fontWeight: 800 }}>{t('perHopDiffTitle')}</div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            {Number.isFinite(Number(s.maxHop)) && Number(s.maxHop) > 0
+              ? s.firstDiffHop
+                ? t('pathDivergeAt', { n: s.firstDiffHop })
+                : t('pathNoDivergence', { n: s.maxHop })
+              : '-'}
+            {s.truncated ? <span style={{ marginLeft: 10 }}>{t('pathShowingFirstHops', { n: s.maxHop })}</span> : null}
+          </div>
+        </div>
+
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+          <thead>
+            <tr>
+              {[t('hop'), 'v4', 'v6'].map((h) => (
+                <th
+                  key={h}
+                  style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const bg = r.isFirstDiff ? '#fee2e2' : r.diff ? '#ffedd5' : 'transparent';
+              return (
+                <tr key={r.hop} style={{ background: bg }}>
+                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', width: 60 }}>{r.hop}</td>
+                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', wordBreak: 'break-word' }}>{r.v4}</td>
+                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', wordBreak: 'break-word' }}>{r.v6}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
 
   const preStyle = {
     padding: 12,
@@ -4435,6 +4602,7 @@ ${paramLines}` : header;
         </div>
       )}
 
+      
       {showTracerouteTable && traceroutePaths.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <h3 style={{ margin: "0 0 6px 0" }}>{t("traceroutePathsTitle")}</h3>
@@ -4442,24 +4610,76 @@ ${paramLines}` : header;
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["#", t("probe"), t("v4Path"), t("v6Path")].map((h) => (
-                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                  {["#", t("probe"), t("pathDiff"), t("v4Path"), t("v6Path"), ""].map((h, i) => (
+                    <th
+                      key={h || `actions-${i}`}
+                      style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}
+                    >
                       {h}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {traceroutePaths.map((row, idx) => (
-                  <tr key={row.key}>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                      {formatProbeLocation(row.probe)}
-                    </td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
-                  </tr>
-                ))}
+                {traceroutePaths.map((row, idx) => {
+                  const expKey = `tr|${row.key}`;
+                  const expanded = expandedPathKey === expKey;
+
+                  const sum = row?.hopDiff || {};
+                  const maxHop = Number(sum.maxHop || 0);
+                  const first = Number(sum.firstDiffHop || 0);
+                  const diffText =
+                    maxHop > 0
+                      ? first > 0
+                        ? t("pathDivergeAt", { n: first })
+                        : t("pathNoDivergence", { n: maxHop })
+                      : "-";
+
+                  const missV4 = Number(sum.missingV4 || 0);
+                  const missV6 = Number(sum.missingV6 || 0);
+                  const showMiss = missV4 > 0 || missV6 > 0;
+
+                  return [
+                    <tr key={row.key}>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(row.probe)}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                        <div style={{ fontWeight: 700 }}>{diffText}</div>
+                        {showMiss ? (
+                          <div style={{ marginTop: 2, fontSize: 11, opacity: 0.8 }}>
+                            {t("pathMissingCounts", { v4: missV4, v6: missV6 })}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v4path}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v6path}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedPathKey((prev) => (prev === expKey ? null : expKey))}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 10,
+                            border: "1px solid #e5e7eb",
+                            background: "#fff",
+                            cursor: "pointer",
+                            font: "inherit",
+                            fontSize: 12,
+                          }}
+                        >
+                          {expanded ? t("hideHops") : t("showHops")}
+                        </button>
+                      </td>
+                    </tr>,
+                    expanded ? (
+                      <tr key={`${row.key}-details`}>
+                        <td colSpan={6} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                          {renderPerHopDiff(row.v4res, row.v6res)}
+                        </td>
+                      </tr>
+                    ) : null,
+                  ];
+                })}
               </tbody>
             </table>
           </div>
@@ -4537,6 +4757,7 @@ ${paramLines}` : header;
         </div>
       )}
 
+      
       {showMtrTable && mtrPaths.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrPathsTitle")}</h3>
@@ -4544,24 +4765,76 @@ ${paramLines}` : header;
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["#", t("probe"), t("v4Path"), t("v6Path")].map((h) => (
-                    <th key={h} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                  {["#", t("probe"), t("pathDiff"), t("v4Path"), t("v6Path"), ""].map((h, i) => (
+                    <th
+                      key={h || `actions-${i}`}
+                      style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}
+                    >
                       {h}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {mtrPaths.map((row, idx) => (
-                  <tr key={row.key}>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                      {formatProbeLocation(row.probe)}
-                    </td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v4path}</td>
-                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{row.v6path}</td>
-                  </tr>
-                ))}
+                {mtrPaths.map((row, idx) => {
+                  const expKey = `mtr|${row.key}`;
+                  const expanded = expandedPathKey === expKey;
+
+                  const sum = row?.hopDiff || {};
+                  const maxHop = Number(sum.maxHop || 0);
+                  const first = Number(sum.firstDiffHop || 0);
+                  const diffText =
+                    maxHop > 0
+                      ? first > 0
+                        ? t("pathDivergeAt", { n: first })
+                        : t("pathNoDivergence", { n: maxHop })
+                      : "-";
+
+                  const missV4 = Number(sum.missingV4 || 0);
+                  const missV6 = Number(sum.missingV6 || 0);
+                  const showMiss = missV4 > 0 || missV6 > 0;
+
+                  return [
+                    <tr key={row.key}>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(row.probe)}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                        <div style={{ fontWeight: 700 }}>{diffText}</div>
+                        {showMiss ? (
+                          <div style={{ marginTop: 2, fontSize: 11, opacity: 0.8 }}>
+                            {t("pathMissingCounts", { v4: missV4, v6: missV6 })}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v4path}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v6path}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedPathKey((prev) => (prev === expKey ? null : expKey))}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 10,
+                            border: "1px solid #e5e7eb",
+                            background: "#fff",
+                            cursor: "pointer",
+                            font: "inherit",
+                            fontSize: 12,
+                          }}
+                        >
+                          {expanded ? t("hideHops") : t("showHops")}
+                        </button>
+                      </td>
+                    </tr>,
+                    expanded ? (
+                      <tr key={`${row.key}-details`}>
+                        <td colSpan={6} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                          {renderPerHopDiff(row.v4res, row.v6res)}
+                        </td>
+                      </tr>
+                    ) : null,
+                  ];
+                })}
               </tbody>
             </table>
           </div>
@@ -4879,7 +5152,7 @@ ${paramLines}` : header;
                           </div>
 
                           <div style={{ padding: 10, border: '1px solid #e5e7eb', borderRadius: 12 }}>
-                            <div style={{ fontWeight: 800, marginBottom: 6 }}>{t('asnMetaAnnounced')}</div>
+                            <div style={{ fontWeight: 800, marginBottom: 6 }}><span className="tt">{t('asnMetaAnnounced')}<span className="tt-info" tabIndex={0} aria-label={t('asnMetaAnnouncedHelpAria')}>i</span><span className="tt-bubble">{t('asnMetaAnnouncedHelp')}</span></span></div>
                             {isLoading ? <SkeletonLine width="40%" /> : <div>{announced}</div>}
                           </div>
                         </div>
