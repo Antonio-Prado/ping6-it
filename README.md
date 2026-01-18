@@ -384,6 +384,8 @@ ping6.it is designed to run on **Cloudflare Pages** with Pages Functions.
 - KV binding **`ASN_META_KV`** (recommended)
   - Used for ASN metadata caching
   - Can also be used for rate limiting storage (zero-config)
+- KV binding `REPORT_KV` (recommended)
+  - Enables short report links (`/r/<id>`) by storing report bundles with a TTL (default: 7 days).
 - KV binding `RATE_LIMIT_KV` (optional separate storage for rate limiting)
 
 ## Contributing
