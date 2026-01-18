@@ -177,30 +177,105 @@ function uniqueIds(ids) {
 }
 
 function extractProbeIdsFromProbeListPayload(payload) {
-  const results = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload) ? payload : [];
+  if (!payload) return [];
+
+  // Common shapes used by Atlas endpoints.
+  const results =
+    Array.isArray(payload?.results)
+      ? payload.results
+      : Array.isArray(payload?.probes)
+        ? payload.probes
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload)
+            ? payload
+            : [];
+
+  // Some endpoints may return an object keyed by probe id.
+  if (!results.length && payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const keys = Object.keys(payload);
+    const maybeIds = keys.map((k) => normalizeProbeId(k)).filter(Boolean);
+    if (maybeIds.length) return uniqueIds(maybeIds);
+  }
+
   const ids = results
-    .map((p) => normalizeProbeId(p?.id ?? p?.prb_id ?? p))
+    .map((p) => normalizeProbeId(p?.id ?? p?.prb_id ?? p?.probe_id ?? p?.probeId ?? p))
     .filter(Boolean);
   return uniqueIds(ids);
 }
 
+function extractProbeIdsFromMeasurementInfoPayload(info) {
+  if (!info || typeof info !== "object") return [];
+
+  // 1) Direct fields sometimes appear in certain API versions.
+  const direct =
+    (Array.isArray(info?.probe_ids) ? info.probe_ids : null) ||
+    (Array.isArray(info?.probes_responded) ? info.probes_responded : null) ||
+    (Array.isArray(info?.probes_requested) ? info.probes_requested : null) ||
+    (Array.isArray(info?.probes) ? info.probes : null);
+  if (Array.isArray(direct)) {
+    const ids = direct.map((x) => normalizeProbeId(x?.id ?? x?.prb_id ?? x)).filter(Boolean);
+    if (ids.length) return uniqueIds(ids);
+  }
+
+  // 2) The canonical measurement payload usually has a `probes` selection array.
+  // If the selection type is "probes", `value` is typically a comma-separated list of probe IDs.
+  const selection = Array.isArray(info?.probes) ? info.probes : [];
+  for (const sel of selection) {
+    const type = String(sel?.type || "").toLowerCase();
+    const value = String(sel?.value || "").trim();
+    if (type === "probes" && value) {
+      const ids = value
+        .split(/[\s,]+/)
+        .map((x) => normalizeProbeId(x))
+        .filter(Boolean);
+      if (ids.length) return uniqueIds(ids);
+    }
+  }
+
+  // 3) Best-effort: some payloads include a nested probe list.
+  const nested =
+    (Array.isArray(info?.probes_detail) ? info.probes_detail : null) ||
+    (Array.isArray(info?.probes_details) ? info.probes_details : null);
+  if (Array.isArray(nested)) {
+    const ids = nested.map((x) => normalizeProbeId(x?.id ?? x?.prb_id ?? x)).filter(Boolean);
+    if (ids.length) return uniqueIds(ids);
+  }
+
+  return [];
+}
+
 async function fetchAllocatedProbeIds(measurementId, apiKey, signal) {
   const id = String(measurementId || "").trim();
-  if (!id) return [];
+  if (!id) return { ids: [], warnings: [], source: "none" };
 
-  // 1) Preferred: explicit probes endpoint.
+  const warnings = [];
+
+  // 1) Preferred: explicit probes endpoint (should include all allocated probes).
   try {
     const probesPayload = await atlasGetJson(`/api/v2/measurements/${encodeURIComponent(id)}/probes/`, apiKey, signal);
     const ids = extractProbeIdsFromProbeListPayload(probesPayload);
-    if (ids.length) return ids;
+    if (ids.length) return { ids, warnings, source: "probes_endpoint" };
   } catch {
     // ignore
   }
 
-  // 2) Best-effort fallback: derive from results (only probes that produced a result).
+  // 2) Fallback: measurement info. If the original selection was `type=probes`, this contains the full list.
+  try {
+    const info = await atlasGetJson(`/api/v2/measurements/${encodeURIComponent(id)}/`, apiKey, signal);
+    const ids = extractProbeIdsFromMeasurementInfoPayload(info);
+    if (ids.length) {
+      warnings.push("Probe list derived from measurement metadata (fallback).");
+      return { ids, warnings, source: "measurement_info" };
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) Best-effort fallback: derive from results (only probes that produced a result).
   try {
     const now = Math.floor(Date.now() / 1000);
-    const start = now - 3600;
+    const start = now - 7 * 24 * 3600;
     const rows = await atlasGetJson(
       `/api/v2/measurements/${encodeURIComponent(id)}/results/?format=json&start=${start}`,
       apiKey,
@@ -208,10 +283,16 @@ async function fetchAllocatedProbeIds(measurementId, apiKey, signal) {
     );
     const list = Array.isArray(rows) ? rows : [];
     const ids = list.map((r) => normalizeProbeId(r?.prb_id)).filter(Boolean);
-    return uniqueIds(ids);
+    const uniq = uniqueIds(ids);
+    if (uniq.length) {
+      warnings.push("Probe list derived from results only (responding probes). Missing probes may not be retried.");
+      return { ids: uniq, warnings, source: "results" };
+    }
   } catch {
-    return [];
+    // ignore
   }
+
+  return { ids: [], warnings, source: "none" };
 }
 
 export async function onRequestPost(context) {
@@ -296,19 +377,33 @@ export async function onRequestPost(context) {
   }
 
   const warnings = [];
-  let probeIds;
+
+  let probeDerivation;
   try {
-    probeIds = await fetchAllocatedProbeIds(String(sameProbesAs || ""), apiKey, request.signal);
+    probeDerivation = await fetchAllocatedProbeIds(String(sameProbesAs || ""), apiKey, request.signal);
   } catch {
-    probeIds = [];
+    probeDerivation = { ids: [], warnings: [], source: "none" };
   }
 
-  if (!Array.isArray(probeIds) || probeIds.length === 0) {
+  if (Array.isArray(probeDerivation?.warnings) && probeDerivation.warnings.length) {
+    warnings.push(...probeDerivation.warnings);
+  }
+
+  let probeIds = Array.isArray(probeDerivation?.ids) ? probeDerivation.ids : [];
+
+  // Keep probe ordering stable across retries.
+  probeIds = probeIds
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => Number(a) - Number(b));
+
+  if (!probeIds.length) {
     return json(
       {
         error: "atlas_probe_list_failed",
         message: "Unable to derive the probe list from the reference measurement.",
         sameProbesAs,
+        probeListSource: probeDerivation?.source || "none",
       },
       502
     );
@@ -317,7 +412,9 @@ export async function onRequestPost(context) {
   // Atlas probe selection requests can be large; keep it bounded.
   const MAX_PROBES = 50;
   if (probeIds.length > MAX_PROBES) {
-    warnings.push(`Reference measurement used ${probeIds.length} probes; retry is limited to ${MAX_PROBES}.`);
+    warnings.push(
+      `Reference measurement used ${probeIds.length} probes; retry is limited to ${MAX_PROBES} (lowest probe IDs).`
+    );
     probeIds = probeIds.slice(0, MAX_PROBES);
   }
 

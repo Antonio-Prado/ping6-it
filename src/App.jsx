@@ -2147,6 +2147,16 @@ Codes: ${codes.join(", ")}` : t("errorHumanVerification");
       return "RIPE Atlas needs an API key. Paste it in the Settings panel and retry.";
     }
 
+
+    if (code === "atlas_probe_list_failed") {
+      const header = data?.message || "Unable to derive the probe list from the reference RIPE Atlas measurement.";
+      const hint = "Hint: run a fresh measurement (or reduce the probe count) and retry.";
+      const source = data?.probeListSource ? "Probe list source: " + String(data.probeListSource) : "";
+      const parts = [header, hint];
+      if (source) parts.push(source);
+      return parts.join("\n");
+    }
+
     if (
       code === "invalid_json" ||
       code === "missing_fields" ||
