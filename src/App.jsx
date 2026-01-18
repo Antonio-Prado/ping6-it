@@ -452,10 +452,10 @@ const COPY = {
     retryIpv4: "Retry IPv4",
     retryIpv6: "Retry IPv6",
     retryNotice: ({ v4, v6 }) => `Missing/failed probe results — IPv4: ${v4}, IPv6: ${v6}.`,
-    tipRetryIpv4: "Re-run the IPv4 measurement only, keeping the same probes (Globalping only).",
-    tipRetryIpv6: "Re-run the IPv6 measurement only, keeping the same probes (Globalping only).",
+    tipRetryIpv4: "Re-run the IPv4 measurement only, keeping the same probes (Globalping/Atlas).",
+    tipRetryIpv6: "Re-run the IPv6 measurement only, keeping the same probes (Globalping/Atlas).",
     retryHint: ({ v4, v6 }) => `Missing/failed rows: IPv4 ${v4}, IPv6 ${v6}.`,
-    retryNotAvailable: "Retry is currently available only for Globalping single-target runs.",
+    retryNotAvailable: "Retry is currently available only for Globalping and RIPE Atlas single-target runs.",
     errorTargetRequired: "Please enter a target hostname or URL.",
     errorHttpTarget: "For HTTP, enter a valid URL or hostname.",
     errorHostnameRequired: "For the IPv4/IPv6 comparison, enter a hostname (not an IP).",
@@ -2268,15 +2268,22 @@ ${paramLines}` : header;
   }
 
   async function createMeasurementSingle({ turnstileToken, base, measurementOptions, ipVersion, sameProbesAs }, signal) {
-    if (backend !== "globalping") {
+    const isAtlas = backend === "atlas";
+    const isGp = backend === "globalping";
+
+    if (!isAtlas && !isGp) {
       const err = new Error(t("retryNotAvailable"));
       err.kind = "api";
       err.status = 400;
       throw err;
     }
 
-    const url = "/api/measurements-single";
+    const url = isAtlas ? "/api/atlas/measurements-single" : "/api/measurements-single";
     const headers = { "content-type": "application/json" };
+    if (isAtlas && String(atlasApiKey || "").trim()) {
+      headers["X-Atlas-Key"] = String(atlasApiKey || "").trim();
+    }
+
     const res = await fetch(url, {
       method: "POST",
       headers,
@@ -2667,7 +2674,11 @@ ${paramLines}` : header;
 
   async function retryFailedFamily(ipVersion) {
     if (running) return;
-    if (backend !== "globalping" || multiTargetMode) {
+
+    const isAtlas = backend === "atlas";
+    const isGp = backend === "globalping";
+
+    if (multiTargetMode || (!isAtlas && !isGp)) {
       setErr(t("retryNotAvailable"));
       return;
     }
@@ -2679,6 +2690,17 @@ ${paramLines}` : header;
     if (!sameProbesAs) {
       setErr(t("retryNotAvailable"));
       return;
+    }
+
+    if (isAtlas) {
+      if (!String(atlasApiKey || "").trim()) {
+        setErr("RIPE Atlas API key is required when retrying Atlas measurements.");
+        return;
+      }
+      if (!["ping", "traceroute", "dns"].includes(cmd)) {
+        setErr("RIPE Atlas backend currently supports ping, traceroute and dns only.");
+        return;
+      }
     }
 
     setErr("");
@@ -2705,6 +2727,9 @@ ${paramLines}` : header;
       if (isIpLiteral(effectiveTarget) && cmd !== "dns") {
         throw new Error(t("errorHostnameRequired"));
       }
+      if (isAtlas && isIpLiteral(effectiveTarget)) {
+        throw new Error("RIPE Atlas backend requires a hostname target (not an IP literal) for IPv4/IPv6 comparison.");
+      }
 
       const base = {
         type: cmd,
@@ -2729,29 +2754,85 @@ ${paramLines}` : header;
       );
       if (Array.isArray(warnings) && warnings.length) setRunWarnings(warnings);
 
-      const gpStartedAt = Date.now();
-      setGpRunStartedAt(gpStartedAt);
-      setGpUiNow(gpStartedAt);
-      setGpLastUpdateAt(0);
+      if (isAtlas) {
+        const atlasStartedAt = Date.now();
+        setAtlasRunStartedAt(atlasStartedAt);
+        setAtlasUiNow(atlasStartedAt);
 
-      // Replace only the family we're retrying.
-      const init = { backend: "globalping", id: String(m?.id || ""), status: "in-progress", results: [] };
-      if (ipVer === 4) setV4(init);
-      else setV6(init);
+        if (ipVer === 4) {
+          setAtlasPollV4({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
+        } else {
+          setAtlasPollV6({ startedAt: atlasStartedAt, checks: 0, lastPollAt: null, nextPollAt: null });
+        }
 
-      const r = await waitForMeasurement(String(m?.id || ""), {
-        signal: ac.signal,
-        pollMs: 750,
-        timeoutMs: 120000,
-        onUpdate: (next) => {
-          setGpLastUpdateAt(Date.now());
-          if (ipVer === 4) setV4(next);
-          else setV6(next);
-        },
-      });
+        // Replace only the family we're retrying.
+        const init = { backend: "atlas", id: String(m?.id || ""), status: "in-progress", results: [] };
+        if (ipVer === 4) setV4(init);
+        else setV6(init);
 
-      if (ipVer === 4) setV4(r);
-      else setV6(r);
+        const r = await waitForAtlasMeasurement(String(m?.id || ""), {
+          signal: ac.signal,
+          atlasKey: atlasApiKey,
+          onUpdate: (next) => {
+            if (ipVer === 4) setV4(next);
+            else setV6(next);
+          },
+          onMeta: (meta) => {
+            const polledAt = meta?.polledAt || Date.now();
+            const nextPollAt = Number.isFinite(Number(meta?.nextPollInMs)) ? polledAt + Number(meta.nextPollInMs) : null;
+            if (ipVer === 4) {
+              setAtlasPollV4((prev) => ({
+                ...(prev || { startedAt: atlasStartedAt }),
+                startedAt: prev?.startedAt || atlasStartedAt,
+                checks: (prev?.checks || 0) + 1,
+                lastPollAt: polledAt,
+                nextPollAt,
+                lastStatus: meta?.status,
+                expectedTotal: meta?.expectedTotal ?? null,
+                lastResultsLen: meta?.resultsLen ?? null,
+              }));
+            } else {
+              setAtlasPollV6((prev) => ({
+                ...(prev || { startedAt: atlasStartedAt }),
+                startedAt: prev?.startedAt || atlasStartedAt,
+                checks: (prev?.checks || 0) + 1,
+                lastPollAt: polledAt,
+                nextPollAt,
+                lastStatus: meta?.status,
+                expectedTotal: meta?.expectedTotal ?? null,
+                lastResultsLen: meta?.resultsLen ?? null,
+              }));
+            }
+          },
+        });
+
+        if (ipVer === 4) setV4(r);
+        else setV6(r);
+      } else {
+        const gpStartedAt = Date.now();
+        setGpRunStartedAt(gpStartedAt);
+        setGpUiNow(gpStartedAt);
+        setGpLastUpdateAt(0);
+
+        // Replace only the family we're retrying.
+        const init = { backend: "globalping", id: String(m?.id || ""), status: "in-progress", results: [] };
+        if (ipVer === 4) setV4(init);
+        else setV6(init);
+
+        const r = await waitForMeasurement(String(m?.id || ""), {
+          signal: ac.signal,
+          pollMs: 750,
+          timeoutMs: 120000,
+          onUpdate: (next) => {
+            setGpLastUpdateAt(Date.now());
+            if (ipVer === 4) setV4(next);
+            else setV6(next);
+          },
+        });
+
+        if (ipVer === 4) setV4(r);
+        else setV6(r);
+      }
     } catch (e) {
       if (e?.status === 429) {
         const seconds = extractRetryAfterSeconds(e);
@@ -3638,14 +3719,16 @@ ${paramLines}` : header;
   }, [v4, v6]);
 
   const showRetryControls =
-    backend === "globalping" &&
+    (backend === "globalping" || backend === "atlas") &&
     !multiTargetMode &&
     !running &&
     v4 &&
     v6 &&
-    (Number(familyIssues?.badV4) > 0 || Number(familyIssues?.badV6) > 0);
+    (Number(familyIssues?.badV4) > 0 || Number(familyIssues?.badV6) > 0) &&
+    (backend !== "atlas" || Boolean(String(atlasApiKey || "").trim()));
   const canRetryV4 = showRetryControls && Number(familyIssues?.badV4) > 0 && Boolean(v6?.id);
   const canRetryV6 = showRetryControls && Number(familyIssues?.badV6) > 0 && Boolean(v4?.id);
+
 
 
   function renderPerHopDiff(v4res, v6res) {
@@ -4377,7 +4460,11 @@ ${paramLines}` : header;
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
                 <span className="p6-dots" aria-hidden="true"><span /><span /><span /></span>
-                <span>RIPE Atlas: measurement in progress…</span>
+                <span>
+                  {retryingFamily
+                    ? `RIPE Atlas: retrying ${retryingFamily === "v4" ? "IPv4" : "IPv6"}…`
+                    : "RIPE Atlas: measurement in progress…"}
+                </span>
               </div>
               <div className="p6-spin" aria-hidden="true" />
             </div>
