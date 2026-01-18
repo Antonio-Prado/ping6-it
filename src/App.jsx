@@ -448,6 +448,14 @@ const COPY = {
     placeholderTargetDefault: "hostname (e.g. example.com)",
     statusPreparing: "Preparing measurement...",
     statusWaitingVerification: ({ stepLabel }) => `Waiting for human verification${stepLabel}...`,
+    statusWaitingVerificationRetry: ({ ip }) => `Waiting for human verification (retry ${ip})...`,
+    retryIpv4: "Retry IPv4",
+    retryIpv6: "Retry IPv6",
+    retryNotice: ({ v4, v6 }) => `Missing/failed probe results — IPv4: ${v4}, IPv6: ${v6}.`,
+    tipRetryIpv4: "Re-run the IPv4 measurement only, keeping the same probes (Globalping only).",
+    tipRetryIpv6: "Re-run the IPv6 measurement only, keeping the same probes (Globalping only).",
+    retryHint: ({ v4, v6 }) => `Missing/failed rows: IPv4 ${v4}, IPv6 ${v6}.`,
+    retryNotAvailable: "Retry is currently available only for Globalping single-target runs.",
     errorTargetRequired: "Please enter a target hostname or URL.",
     errorHttpTarget: "For HTTP, enter a valid URL or hostname.",
     errorHostnameRequired: "For the IPv4/IPv6 comparison, enter a hostname (not an IP).",
@@ -863,6 +871,42 @@ function resultState(x) {
   if (s === "finished" || s === "completed") return "ok";
   if (s === "failed") return "failed";
   return s || "unknown";
+}
+
+function isRetryableState(state) {
+  const s = String(state || "").toLowerCase();
+  return s === "missing" || s === "error" || s === "failed" || s === "timeout";
+}
+
+function measurementLooksFailed(m) {
+  const s = String(m?.status || "").toLowerCase();
+  const r = String(m?.statusReason || "").toLowerCase();
+  if (s === "failed" || s === "error") return true;
+  if (r === "timeout") return true;
+  return false;
+}
+
+function computeFamilyIssues(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
+
+  let badV4 = 0;
+  let badV6 = 0;
+  keys.forEach((k) => {
+    const s4 = resultState(aMap.get(k) ?? null);
+    const s6 = resultState(bMap.get(k) ?? null);
+    if (isRetryableState(s4)) badV4 += 1;
+    if (isRetryableState(s6)) badV6 += 1;
+  });
+
+  // If the measurement itself looks failed (and results may be empty), expose that too.
+  if (measurementLooksFailed(v4) && badV4 === 0) badV4 = Math.max(1, badV4);
+  if (measurementLooksFailed(v6) && badV6 === 0) badV6 = Math.max(1, badV6);
+
+  return { badV4, badV6 };
 }
 
 function stateTitle(prefix, state) {
@@ -1798,6 +1842,7 @@ export default function App() {
   const [shareUrl, setShareUrl] = useState("");
 
   const [running, setRunning] = useState(false);
+  const [retryingFamily, setRetryingFamily] = useState(""); // "v4" | "v6" | ""
   const [err, setErr] = useState("");
   const [rateLimitUntil, setRateLimitUntil] = useState(0);
   const [rateLimitLeft, setRateLimitLeft] = useState(0);
@@ -2222,6 +2267,55 @@ ${paramLines}` : header;
     return data;
   }
 
+  async function createMeasurementSingle({ turnstileToken, base, measurementOptions, ipVersion, sameProbesAs }, signal) {
+    if (backend !== "globalping") {
+      const err = new Error(t("retryNotAvailable"));
+      err.kind = "api";
+      err.status = 400;
+      throw err;
+    }
+
+    const url = "/api/measurements-single";
+    const headers = { "content-type": "application/json" };
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ turnstileToken, base, measurementOptions, ipVersion, sameProbesAs }),
+      signal,
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      const retryAfterHeader = res.headers.get("retry-after") || "";
+      const rateLimitResetHeader = res.headers.get("x-ratelimit-reset") || "";
+      const resetSec = Number(rateLimitResetHeader);
+      const retryAfter = retryAfterHeader
+        ? retryAfterHeader
+        : Number.isFinite(resetSec) && resetSec > 0
+          ? `${Math.ceil(resetSec)}s`
+          : undefined;
+
+      const msg = buildPairErrorMessage({ status: res.status, data, retryAfter });
+      const err = new Error(msg);
+      err.kind = "api";
+      err.status = res.status;
+      err.code = data?.error;
+      err.retryAfter = retryAfter || data?.retryAfter;
+      err.rateLimitReset = rateLimitResetHeader || data?.rateLimitReset;
+      err.details = data;
+      throw err;
+    }
+
+    return data;
+  }
+
   function buildMeasurementRequest(rawTarget, { syncHttpFields = true } = {}) {
     const trimmedTarget = String(rawTarget || "").trim();
     if (!trimmedTarget) {
@@ -2571,6 +2665,111 @@ ${paramLines}` : header;
     }
   }
 
+  async function retryFailedFamily(ipVersion) {
+    if (running) return;
+    if (backend !== "globalping" || multiTargetMode) {
+      setErr(t("retryNotAvailable"));
+      return;
+    }
+    if (!v4 || !v6) return;
+
+    const ipVer = Number(ipVersion);
+    if (ipVer !== 4 && ipVer !== 6) return;
+    const sameProbesAs = ipVer === 4 ? v6?.id : v4?.id;
+    if (!sameProbesAs) {
+      setErr(t("retryNotAvailable"));
+      return;
+    }
+
+    setErr("");
+    setRunWarnings([]);
+    setRetryingFamily(ipVer === 4 ? "v4" : "v6");
+    setTurnstileStatus(t("statusWaitingVerificationRetry", { ip: ipVer === 4 ? "IPv4" : "IPv6" }));
+    setRunning(true);
+    let turnstileTimedOut = false;
+
+    try {
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+
+      const probes = Math.max(1, Math.min(maxProbes, Number(limit) || 3));
+      const fromWithTag = applyGpTag(from, gpTag);
+      const location = { magic: fromWithTag || "world" };
+      const parsedAsn = Number(probeAsn);
+      if (Number.isFinite(parsedAsn) && parsedAsn > 0) location.asn = parsedAsn;
+      if (probeIsp.trim()) location.isp = probeIsp.trim();
+
+      const { effectiveTarget, measurementOptions } = buildMeasurementRequest(target, { syncHttpFields: false });
+
+      if (isIpLiteral(effectiveTarget) && cmd !== "dns") {
+        throw new Error(t("errorHostnameRequired"));
+      }
+
+      const base = {
+        type: cmd,
+        target: effectiveTarget,
+        locations: [location],
+        limit: probes,
+        inProgressUpdates: true,
+      };
+
+      // Human verification (Turnstile) is mandatory before creating measurements.
+      const turnstileTimeoutId = setTimeout(() => {
+        turnstileTimedOut = true;
+        ac.abort();
+      }, TURNSTILE_EXEC_TIMEOUT_MS);
+      const turnstileToken = await getTurnstileToken(ac.signal);
+      clearTimeout(turnstileTimeoutId);
+      setTurnstileStatus("");
+
+      const { m, warnings } = await createMeasurementSingle(
+        { turnstileToken, base, measurementOptions, ipVersion: ipVer, sameProbesAs },
+        ac.signal
+      );
+      if (Array.isArray(warnings) && warnings.length) setRunWarnings(warnings);
+
+      const gpStartedAt = Date.now();
+      setGpRunStartedAt(gpStartedAt);
+      setGpUiNow(gpStartedAt);
+      setGpLastUpdateAt(0);
+
+      // Replace only the family we're retrying.
+      const init = { backend: "globalping", id: String(m?.id || ""), status: "in-progress", results: [] };
+      if (ipVer === 4) setV4(init);
+      else setV6(init);
+
+      const r = await waitForMeasurement(String(m?.id || ""), {
+        signal: ac.signal,
+        pollMs: 750,
+        timeoutMs: 120000,
+        onUpdate: (next) => {
+          setGpLastUpdateAt(Date.now());
+          if (ipVer === 4) setV4(next);
+          else setV6(next);
+        },
+      });
+
+      if (ipVer === 4) setV4(r);
+      else setV6(r);
+    } catch (e) {
+      if (e?.status === 429) {
+        const seconds = extractRetryAfterSeconds(e);
+        if (seconds) setRateLimitUntil(Date.now() + seconds * 1000);
+      }
+      const message = toUserFacingError(e);
+      if (message === t("errorCancelled") && turnstileTimedOut) {
+        setErr(t("errorHumanVerificationTimeout"));
+      } else {
+        setErr(message);
+      }
+    } finally {
+      setRunning(false);
+      setTurnstileStatus("");
+      setRetryingFamily("");
+    }
+  }
+
   function cancel() {
     abortRef.current?.abort();
 
@@ -2590,6 +2789,7 @@ ${paramLines}` : header;
     setShowTurnstile(false);
     setTurnstileStatus("");
     setMultiRunStatus(null);
+    setRetryingFamily("");
 
     setRunning(false);
   }
@@ -3432,6 +3632,21 @@ ${paramLines}` : header;
     return { v4: fmt(s4, v4), v6: fmt(s6, v6) };
   }, [running, v4, v6]);
 
+  const familyIssues = useMemo(() => {
+    if (!v4 || !v6) return { badV4: 0, badV6: 0 };
+    return computeFamilyIssues(v4, v6);
+  }, [v4, v6]);
+
+  const showRetryControls =
+    backend === "globalping" &&
+    !multiTargetMode &&
+    !running &&
+    v4 &&
+    v6 &&
+    (Number(familyIssues?.badV4) > 0 || Number(familyIssues?.badV6) > 0);
+  const canRetryV4 = showRetryControls && Number(familyIssues?.badV4) > 0 && Boolean(v6?.id);
+  const canRetryV6 = showRetryControls && Number(familyIssues?.badV6) > 0 && Boolean(v4?.id);
+
 
   function renderPerHopDiff(v4res, v6res) {
     const aligned = buildHopAlignment(v4res, v6res, 30);
@@ -4092,6 +4307,26 @@ ${paramLines}` : header;
           </button>
         </Tip>
         </div>
+
+        {showRetryControls && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", width: "100%", fontSize: 12, opacity: 0.9 }}>
+            <span>{t("retryNotice", { v4: Number(familyIssues?.badV4) || 0, v6: Number(familyIssues?.badV6) || 0 })}</span>
+            {canRetryV4 && (
+              <Tip text={t("tipRetryIpv4")}>
+                <button onClick={() => retryFailedFamily(4)} disabled={running || rateLimitLeft > 0} style={{ padding: "6px 10px" }}>
+                  {t("retryIpv4")}
+                </button>
+              </Tip>
+            )}
+            {canRetryV6 && (
+              <Tip text={t("tipRetryIpv6")}>
+                <button onClick={() => retryFailedFamily(6)} disabled={running || rateLimitLeft > 0} style={{ padding: "6px 10px" }}>
+                  {t("retryIpv6")}
+                </button>
+              </Tip>
+            )}
+          </div>
+        )}
         {shareUrl && (
           <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }} role="status" aria-live="polite">
             {t("linkReady")} <a href={shareUrl}>{shareUrl}</a>
@@ -4191,7 +4426,11 @@ ${paramLines}` : header;
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
                 <span className="p6-dots" aria-hidden="true"><span /><span /><span /></span>
-                <span>Globalping: measurement in progress…</span>
+                <span>
+                  {retryingFamily
+                    ? `Globalping: retrying ${retryingFamily === "v4" ? "IPv4" : "IPv6"}…`
+                    : "Globalping: measurement in progress…"}
+                </span>
               </div>
               <div className="p6-spin" aria-hidden="true" />
             </div>
