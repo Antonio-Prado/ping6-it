@@ -111,16 +111,89 @@ export async function getMeasurement(id, { etag, signal } = {}) {
   return { notModified: false, etag: newEtag, json };
 }
 
-export async function waitForMeasurement(id, { onUpdate, signal } = {}) {
+export async function waitForMeasurement(
+  id,
+  { onUpdate, onMeta, signal, pollMs = 500, timeoutMs = 120000 } = {}
+) {
   let etag;
+  let lastJson = null;
+  let consecutiveErrors = 0;
+  const start = Date.now();
+
+  const transientHttp = new Set([408, 425, 500, 502, 503, 504, 520, 521, 522, 524]);
+
+  function isTransientError(err, elapsedMs) {
+    const status = Number(err?.status);
+    if (!Number.isFinite(status)) return true; // network / CORS / fetch aborted, etc.
+    if (status == 404 && elapsedMs < 5000) return true; // eventual consistency
+    return transientHttp.has(status);
+  }
 
   while (true) {
-    const res = await getMeasurement(id, { etag, signal });
-    if (!res.notModified) {
-      etag = res.etag;
-      onUpdate?.(res.json);
-      if (res.json.status !== "in-progress") return res.json;
+    if (signal?.aborted) throw new Error("Aborted");
+
+    const now = Date.now();
+    const elapsedMs = now - start;
+    if (elapsedMs > timeoutMs) {
+      if (lastJson) return { ...lastJson, status: lastJson.status || "unknown", statusReason: "timeout" };
+      const err = new Error("Timed out while waiting for measurement");
+      err.kind = "timeout";
+      throw err;
     }
-    await sleep(500);
+
+    try {
+      const res = await getMeasurement(id, { etag, signal });
+      consecutiveErrors = 0;
+      if (!res.notModified) {
+        etag = res.etag;
+        lastJson = res.json;
+        onUpdate?.(res.json);
+        if (res.json?.status !== "in-progress") return res.json;
+      }
+
+      if (onMeta) {
+        try {
+          onMeta({
+            polledAt: Date.now(),
+            status: String(lastJson?.status || "").toLowerCase() || "unknown",
+            etag,
+            elapsedMs,
+            timeoutMs,
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      await sleep(Math.max(250, Number(pollMs) || 500));
+    } catch (err) {
+      consecutiveErrors += 1;
+
+      const transient = isTransientError(err, elapsedMs);
+      if (!transient || consecutiveErrors >= 6) throw err;
+
+      // Back off on transient failures.
+      const backoffMs = Math.min(5000, 300 * Math.pow(2, Math.min(6, consecutiveErrors)));
+
+      if (onMeta) {
+        try {
+          onMeta({
+            polledAt: Date.now(),
+            status: String(lastJson?.status || "").toLowerCase() || "unknown",
+            etag,
+            elapsedMs,
+            timeoutMs,
+            error: String(err?.message || "request failed"),
+            consecutiveErrors,
+            nextPollInMs: backoffMs,
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      await sleep(backoffMs);
+    }
   }
 }
+

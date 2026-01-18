@@ -137,6 +137,7 @@ export async function waitForAtlasMeasurement(
     if (onUpdate) onUpdate(m);
 
     const status = String(m?.status || "").toLowerCase();
+    if (status === "failed" || status === "error") return { ...m, status, statusReason: m?.statusReason || "failed" };
     const resultsLen = Array.isArray(m?.results) ? m.results.length : 0;
     const total = expectedTotal(m);
 

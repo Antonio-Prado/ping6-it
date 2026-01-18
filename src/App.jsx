@@ -267,6 +267,8 @@ const COPY = {
     probeMapAlt: "Map of probe locations",
     noProbeCoordinates: "No coordinates available for these probes.",
     coverageTitle: "Probe coverage",
+    measurementStatusTitle: "Measurement status",
+    measurementStatusBody: ({ v4, v6 }) => `IPv4: ${v4} · IPv6: ${v6}. Some rows may be missing or incomplete.`,
     coverageV4: "IPv4 responses",
     coverageV6: "IPv6 responses",
     coverageBoth: "Both (v4+v6)",
@@ -815,6 +817,59 @@ function probeKey(x) {
   return p.id ?? `${p.city ?? ""}|${p.country ?? ""}|${p.asn ?? ""}|${p.network ?? ""}`;
 }
 
+function rowKeyFromResult(x, idx, side) {
+  const k = probeKey(x);
+  const s = k === null || k === undefined ? "" : String(k);
+  if (s && s !== "|||") return s;
+  return `${side}-${idx}`;
+}
+
+function buildProbeUnionKeys(v4Results, v6Results) {
+  const keys = [];
+  const seen = new Set();
+
+  (Array.isArray(v4Results) ? v4Results : []).forEach((x, i) => {
+    const k = rowKeyFromResult(x, i, "v4");
+    if (seen.has(k)) return;
+    seen.add(k);
+    keys.push(k);
+  });
+
+  (Array.isArray(v6Results) ? v6Results : []).forEach((x, i) => {
+    const k = rowKeyFromResult(x, i, "v6");
+    if (seen.has(k)) return;
+    seen.add(k);
+    keys.push(k);
+  });
+
+  return keys;
+}
+
+function buildResultMap(results, side) {
+  const map = new Map();
+  (Array.isArray(results) ? results : []).forEach((x, i) => {
+    const k = rowKeyFromResult(x, i, side);
+    if (!map.has(k)) map.set(k, x);
+  });
+  return map;
+}
+
+function resultState(x) {
+  if (!x) return "missing";
+  const r = x?.result;
+  if (!r) return "missing";
+  if (r?.error) return "error";
+  const s = String(r?.status || "").toLowerCase();
+  if (s === "finished" || s === "completed") return "ok";
+  if (s === "failed") return "failed";
+  return s || "unknown";
+}
+
+function stateTitle(prefix, state) {
+  if (!state || state === "ok") return "";
+  return `${prefix}: ${state}`;
+}
+
 function probeCoords(p) {
   if (!p) return null;
   const lat = Number(p.latitude ?? p.lat);
@@ -958,10 +1013,13 @@ function pickPingStats(x) {
 function buildPingCompare(v4, v6, { strict = false } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
 
-  const rows = a.map((x, i) => {
-    const y = bMap.get(probeKey(x)) ?? b[i];
+  const rows = keys.map((k, i) => {
+    const x = aMap.get(k) ?? null;
+    const y = bMap.get(k) ?? null;
     const p = x?.probe || y?.probe || {};
 
     const s4 = pickPingStats(x);
@@ -978,9 +1036,11 @@ function buildPingCompare(v4, v6, { strict = false } = {}) {
     }
 
     return {
-      key: probeKey(x) || String(i),
+      key: k,
       idx: i,
       probe: p,
+      v4state: resultState(x),
+      v6state: resultState(y),
       v4avg: s4.avgMs,
       v4loss: s4.lossPct,
       v6avg: s6.avgMs,
@@ -990,6 +1050,7 @@ function buildPingCompare(v4, v6, { strict = false } = {}) {
       winner,
     };
   });
+
   const avgBase = strict ? rows.filter((r) => Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)) : rows;
   const lossBase = strict ? rows.filter((r) => Number.isFinite(r.v4loss) && Number.isFinite(r.v6loss)) : rows;
 
@@ -1030,10 +1091,13 @@ function pickDnsTotalMs(x) {
 function buildDnsCompare(v4, v6, { strict = false } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
 
-  const rows = a.map((x, i) => {
-    const y = bMap.get(probeKey(x)) ?? b[i];
+  const rows = keys.map((k, i) => {
+    const x = aMap.get(k) ?? null;
+    const y = bMap.get(k) ?? null;
     const p = x?.probe || y?.probe || {};
 
     const v4ms = pickDnsTotalMs(x);
@@ -1043,9 +1107,11 @@ function buildDnsCompare(v4, v6, { strict = false } = {}) {
     const ratio = Number.isFinite(v4ms) && Number.isFinite(v6ms) && v4ms > 0 ? v6ms / v4ms : null;
 
     return {
-      key: probeKey(x) || String(i),
+      key: k,
       idx: i,
       probe: p,
+      v4state: resultState(x),
+      v6state: resultState(y),
       v4ms,
       v6ms,
       delta,
@@ -1060,6 +1126,7 @@ function buildDnsCompare(v4, v6, { strict = false } = {}) {
           : "-",
     };
   });
+
   const baseRows = strict ? rows.filter((r) => Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)) : rows;
 
   const v4msArr = baseRows.map((r) => r.v4ms).filter(Number.isFinite);
@@ -1117,10 +1184,13 @@ function pickHttpStatusCode(x) {
 function buildHttpCompare(v4, v6, { strict = false } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
 
-  const rows = a.map((x, i) => {
-    const y = bMap.get(probeKey(x)) ?? b[i];
+  const rows = keys.map((k, i) => {
+    const x = aMap.get(k) ?? null;
+    const y = bMap.get(k) ?? null;
     const p = x?.probe || y?.probe || {};
 
     const v4ms = pickHttpTotalMs(x);
@@ -1133,9 +1203,11 @@ function buildHttpCompare(v4, v6, { strict = false } = {}) {
     const ratio = Number.isFinite(v4ms) && Number.isFinite(v6ms) && v4ms > 0 ? v6ms / v4ms : null;
 
     return {
-      key: probeKey(x) || String(i),
+      key: k,
       idx: i,
       probe: p,
+      v4state: resultState(x),
+      v6state: resultState(y),
       v4ms,
       v6ms,
       v4sc,
@@ -1152,6 +1224,7 @@ function buildHttpCompare(v4, v6, { strict = false } = {}) {
           : "-",
     };
   });
+
   const baseRows = strict ? rows.filter((r) => Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)) : rows;
 
   const v4msArr = baseRows.map((r) => r.v4ms).filter(Number.isFinite);
@@ -1174,8 +1247,8 @@ function buildHttpCompare(v4, v6, { strict = false } = {}) {
 
 function pickTracerouteDstMs(x) {
   const r = x?.result;
-  if (!r || (r.status && r.status !== "finished")) return { reached: false, hops: null, dstMs: null };
-  if (r.error) return { reached: false, hops: null, dstMs: null };
+  if (!r || (r.status && r.status !== "finished")) return { reached: null, hops: null, dstMs: null };
+  if (r.error) return { reached: null, hops: null, dstMs: null };
 
   const hops = Array.isArray(r.hops) ? r.hops : [];
   const hopCount = hops.length;
@@ -1196,8 +1269,8 @@ function pickTracerouteDstMs(x) {
 
 function pickMtrDstStats(x) {
   const r = x?.result;
-  if (!r || (r.status && r.status !== "finished")) return { reached: false, hops: null, avgMs: null, lossPct: null };
-  if (r.error) return { reached: false, hops: null, avgMs: null, lossPct: null };
+  if (!r || (r.status && r.status !== "finished")) return { reached: null, hops: null, avgMs: null, lossPct: null };
+  if (r.error) return { reached: null, hops: null, avgMs: null, lossPct: null };
 
   const hops = Array.isArray(r.hops) ? r.hops : [];
   const hopCount = hops.length;
@@ -1222,10 +1295,13 @@ function pickMtrDstStats(x) {
 function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
 
-  const rows = a.map((x, i) => {
-    const y = bMap.get(probeKey(x)) ?? b[i];
+  const rows = keys.map((k, i) => {
+    const x = aMap.get(k) ?? null;
+    const y = bMap.get(k) ?? null;
     const p = x?.probe || y?.probe || {};
 
     const s4 = pickTracerouteDstMs(x);
@@ -1234,16 +1310,18 @@ function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
     const delta = Number.isFinite(s4.dstMs) && Number.isFinite(s6.dstMs) ? s6.dstMs - s4.dstMs : null;
 
     let winner = "-";
-    if (s4.reached && !s6.reached) winner = "v4";
-    else if (!s4.reached && s6.reached) winner = "v6";
-    else if (s4.reached && s6.reached && Number.isFinite(s4.dstMs) && Number.isFinite(s6.dstMs)) {
+    if (s4.reached === true && s6.reached === false) winner = "v4";
+    else if (s4.reached === false && s6.reached === true) winner = "v6";
+    else if (s4.reached === true && s6.reached === true && Number.isFinite(s4.dstMs) && Number.isFinite(s6.dstMs)) {
       winner = s4.dstMs < s6.dstMs ? "v4" : s6.dstMs < s4.dstMs ? "v6" : "tie";
     }
 
     return {
-      key: probeKey(x) || String(i),
+      key: k,
       idx: i,
       probe: p,
+      v4state: resultState(x),
+      v6state: resultState(y),
       v4reached: s4.reached,
       v4hops: s4.hops,
       v4dst: s4.dstMs,
@@ -1273,13 +1351,17 @@ function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
   return { rows, summary };
 }
 
+
 function buildMtrCompare(v4, v6, { strict = false } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const bMap = new Map(b.map((x) => [probeKey(x), x]));
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
 
-  const rows = a.map((x, i) => {
-    const y = bMap.get(probeKey(x)) ?? b[i];
+  const rows = keys.map((k, i) => {
+    const x = aMap.get(k) ?? null;
+    const y = bMap.get(k) ?? null;
     const p = x?.probe || y?.probe || {};
 
     const s4 = pickMtrDstStats(x);
@@ -1289,9 +1371,9 @@ function buildMtrCompare(v4, v6, { strict = false } = {}) {
     const deltaLoss = Number.isFinite(s4.lossPct) && Number.isFinite(s6.lossPct) ? s6.lossPct - s4.lossPct : null;
 
     let winner = "-";
-    if (s4.reached && !s6.reached) winner = "v4";
-    else if (!s4.reached && s6.reached) winner = "v6";
-    else if (s4.reached && s6.reached) {
+    if (s4.reached === true && s6.reached === false) winner = "v4";
+    else if (s4.reached === false && s6.reached === true) winner = "v6";
+    else if (s4.reached === true && s6.reached === true) {
       if (Number.isFinite(s4.lossPct) && Number.isFinite(s6.lossPct) && Math.abs(s4.lossPct - s6.lossPct) >= 0.1) {
         winner = s4.lossPct < s6.lossPct ? "v4" : "v6";
       } else if (Number.isFinite(s4.avgMs) && Number.isFinite(s6.avgMs)) {
@@ -1300,9 +1382,11 @@ function buildMtrCompare(v4, v6, { strict = false } = {}) {
     }
 
     return {
-      key: probeKey(x) || String(i),
+      key: k,
       idx: i,
       probe: p,
+      v4state: resultState(x),
+      v6state: resultState(y),
       v4reached: s4.reached,
       v4hops: s4.hops,
       v4loss: s4.lossPct,
@@ -1340,6 +1424,7 @@ function buildMtrCompare(v4, v6, { strict = false } = {}) {
 
   return { rows, summary };
 }
+
 
 function normalizeAsn(x) {
   const n = Number(x);
@@ -2657,7 +2742,7 @@ ${paramLines}` : header;
     let lines = [];
 
     if (cmd === "ping") {
-      headers = ["idx", "city", "country", "asn", "network", "v4_avg_ms", "v4_loss_pct", "v6_avg_ms", "v6_loss_pct", "delta_avg_ms", "delta_loss_pct", "winner", "excluded"];
+      headers = ["idx", "city", "country", "asn", "network", "v4_avg_ms", "v4_loss_pct", "v6_avg_ms", "v6_loss_pct", "delta_avg_ms", "delta_loss_pct", "winner", "v4_state", "v6_state", "excluded"];
       lines = rows.map((r) => [
         r.idx + 1,
         r.probe?.city ?? "",
@@ -2671,49 +2756,55 @@ ${paramLines}` : header;
         r.deltaAvg,
         r.deltaLoss,
         r.winner,
+        r.v4state,
+        r.v6state,
         r.excluded ? "yes" : "no",
       ]);
     } else if (cmd === "traceroute") {
-      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_dst_ms", "v6_reached", "v6_hops", "v6_dst_ms", "delta_ms", "winner", "excluded"];
+      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_dst_ms", "v6_reached", "v6_hops", "v6_dst_ms", "delta_ms", "winner", "v4_state", "v6_state", "excluded"];
       lines = rows.map((r) => [
         r.idx + 1,
         r.probe?.city ?? "",
         r.probe?.country ?? "",
         r.probe?.asn ?? "",
         r.probe?.network ?? "",
-        r.v4reached ? "yes" : "no",
+        r.v4reached === null ? "" : r.v4reached ? "yes" : "no",
         r.v4hops,
         r.v4dst,
-        r.v6reached ? "yes" : "no",
+        r.v6reached === null ? "" : r.v6reached ? "yes" : "no",
         r.v6hops,
         r.v6dst,
         r.delta,
         r.winner,
+        r.v4state,
+        r.v6state,
         r.excluded ? "yes" : "no",
       ]);
     } else if (cmd === "mtr") {
-      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_loss_pct", "v4_avg_ms", "v6_reached", "v6_hops", "v6_loss_pct", "v6_avg_ms", "delta_avg_ms", "delta_loss_pct", "winner", "excluded"];
+      headers = ["idx", "city", "country", "asn", "network", "v4_reached", "v4_hops", "v4_loss_pct", "v4_avg_ms", "v6_reached", "v6_hops", "v6_loss_pct", "v6_avg_ms", "delta_avg_ms", "delta_loss_pct", "winner", "v4_state", "v6_state", "excluded"];
       lines = rows.map((r) => [
         r.idx + 1,
         r.probe?.city ?? "",
         r.probe?.country ?? "",
         r.probe?.asn ?? "",
         r.probe?.network ?? "",
-        r.v4reached ? "yes" : "no",
+        r.v4reached === null ? "" : r.v4reached ? "yes" : "no",
         r.v4hops,
         r.v4loss,
         r.v4avg,
-        r.v6reached ? "yes" : "no",
+        r.v6reached === null ? "" : r.v6reached ? "yes" : "no",
         r.v6hops,
         r.v6loss,
         r.v6avg,
         r.deltaAvg,
         r.deltaLoss,
         r.winner,
+        r.v4state,
+        r.v6state,
         r.excluded ? "yes" : "no",
       ]);
     } else if (cmd === "dns") {
-      headers = ["idx", "city", "country", "asn", "network", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner", "excluded"];
+      headers = ["idx", "city", "country", "asn", "network", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner", "v4_state", "v6_state", "excluded"];
       lines = rows.map((r) => [
         r.idx + 1,
         r.probe?.city ?? "",
@@ -2725,10 +2816,12 @@ ${paramLines}` : header;
         r.delta,
         r.ratio,
         r.winner,
+        r.v4state,
+        r.v6state,
         r.excluded ? "yes" : "no",
       ]);
     } else if (cmd === "http") {
-      headers = ["idx", "city", "country", "asn", "network", "v4_status", "v6_status", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner", "excluded"];
+      headers = ["idx", "city", "country", "asn", "network", "v4_status", "v6_status", "v4_total_ms", "v6_total_ms", "delta_ms", "ratio", "winner", "v4_state", "v6_state", "excluded"];
       lines = rows.map((r) => [
         r.idx + 1,
         r.probe?.city ?? "",
@@ -2742,6 +2835,8 @@ ${paramLines}` : header;
         r.delta,
         r.ratio,
         r.winner,
+        r.v4state,
+        r.v6state,
         r.excluded ? "yes" : "no",
       ]);
     }
@@ -3162,12 +3257,16 @@ ${paramLines}` : header;
     if (!showTracerouteTable || !v4 || !v6) return [];
     const a = v4?.results ?? [];
     const b = v6?.results ?? [];
-    const bMap = new Map(b.map((x) => [probeKey(x), x]));
-    return a.map((x, i) => {
-      const y = bMap.get(probeKey(x)) ?? b[i];
+    const keys = buildProbeUnionKeys(a, b);
+    const aMap = buildResultMap(a, "v4");
+    const bMap = buildResultMap(b, "v6");
+
+    return keys.map((k, i) => {
+      const x = aMap.get(k) ?? null;
+      const y = bMap.get(k) ?? null;
       const p = x?.probe || y?.probe || {};
       return {
-        key: probeKey(x) || String(i),
+        key: k,
         probe: p,
         v4path: formatHopPath(x),
         v6path: formatHopPath(y),
@@ -3182,12 +3281,16 @@ ${paramLines}` : header;
     if (!showMtrTable || !v4 || !v6) return [];
     const a = v4?.results ?? [];
     const b = v6?.results ?? [];
-    const bMap = new Map(b.map((x) => [probeKey(x), x]));
-    return a.map((x, i) => {
-      const y = bMap.get(probeKey(x)) ?? b[i];
+    const keys = buildProbeUnionKeys(a, b);
+    const aMap = buildResultMap(a, "v4");
+    const bMap = buildResultMap(b, "v6");
+
+    return keys.map((k, i) => {
+      const x = aMap.get(k) ?? null;
+      const y = bMap.get(k) ?? null;
       const p = x?.probe || y?.probe || {};
       return {
-        key: probeKey(x) || String(i),
+        key: k,
         probe: p,
         v4path: formatHopPath(x),
         v6path: formatHopPath(y),
@@ -3307,6 +3410,27 @@ ${paramLines}` : header;
 
     return { v4got, v4exp, v6got, v6exp, both, expected };
   }, [running, v4, v6, backend, limit]);
+
+  const measurementStatusNotice = useMemo(() => {
+    if (running) return null;
+    if (!v4 || !v6) return null;
+
+    const s4 = String(v4?.status || "").toLowerCase();
+    const s6 = String(v6?.status || "").toLowerCase();
+
+    const bad4 = s4 && s4 !== "finished";
+    const bad6 = s6 && s6 !== "finished";
+    if (!bad4 && !bad6) return null;
+
+    const fmt = (s, m) => {
+      const base = s || "unknown";
+      const reason = m?.statusReason ? ` (${m.statusReason})` : "";
+      const name = m?.statusName ? ` – ${m.statusName}` : "";
+      return `${base}${reason}${name}`;
+    };
+
+    return { v4: fmt(s4, v4), v6: fmt(s6, v6) };
+  }, [running, v4, v6]);
 
 
   function renderPerHopDiff(v4res, v6res) {
@@ -4441,6 +4565,13 @@ ${paramLines}` : header;
         </div>
       )}
 
+      {measurementStatusNotice && (
+        <div style={{ marginTop: 10, padding: 10, border: "1px solid #f59e0b", borderRadius: 10, background: "#fffbeb", fontSize: 13 }}>
+          <div style={{ fontWeight: 700 }}>{t("measurementStatusTitle")}</div>
+          <div style={{ opacity: 0.85, marginTop: 4 }}>{t("measurementStatusBody", measurementStatusNotice)}</div>
+        </div>
+      )}
+
       {coverageNotice && (
         <div style={{ background: "#ecfeff", color: "#111", border: "1px solid #06b6d4", padding: 12, marginBottom: 12, borderRadius: 10 }} role="note">
           <div style={{ fontWeight: 700 }}>{t("coverageTitle")}</div>
@@ -4496,10 +4627,10 @@ ${paramLines}` : header;
                   </td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "ping", pingCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4avg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v4loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6avg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v6loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{pct(r.v4loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{pct(r.v6loss)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
                   </tr>
@@ -4584,13 +4715,13 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "traceroute", trCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? t("yes") : t("no")}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached === null ? "-" : r.v4reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4dst)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4dst)}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? t("yes") : t("no")}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached === null ? "-" : r.v6reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6dst)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6dst)}</td>
 
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
@@ -4736,15 +4867,15 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "mtr", mtrCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached ? t("yes") : t("no")}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached === null ? "-" : r.v4reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v4loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{pct(r.v4loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4avg)}</td>
 
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached ? t("yes") : t("no")}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached === null ? "-" : r.v6reached ? t("yes") : t("no")}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.v6loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{pct(r.v6loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6avg)}</td>
 
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.deltaLoss)}</td>
@@ -4884,8 +5015,8 @@ ${paramLines}` : header;
                   </td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "dns", dnsCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4ms)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6ms)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
                     {Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}
@@ -4942,10 +5073,10 @@ ${paramLines}` : header;
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "http", httpCompare.rows)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4sc ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6sc ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v4ms)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.v6ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{r.v4sc ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{r.v6sc ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6ms)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}</td>
                   <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
