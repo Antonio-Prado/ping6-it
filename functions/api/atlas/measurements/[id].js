@@ -344,16 +344,32 @@ function normalizeDnsResult(r, probe) {
 }
 
 function deriveStatus(meta, resultsLen) {
-  const name = String(meta?.status?.name || meta?.status_name || meta?.status || "").toLowerCase();
+  const rawName = meta?.status?.name ?? meta?.status_name ?? meta?.status ?? "";
+  const name = String(rawName || "").toLowerCase();
+
+  // Atlas can label terminal errors in various ways.
+  if (
+    name.includes("failed") ||
+    name.includes("error") ||
+    name.includes("abandoned") ||
+    name.includes("no suitable") ||
+    name.includes("no probes") ||
+    name.includes("unsupported") ||
+    name.includes("unschedul")
+  ) {
+    return "failed";
+  }
+
   if (name.includes("stopped") || name.includes("finished") || name.includes("completed")) return "finished";
 
   const now = Math.floor(Date.now() / 1000);
   const stop = toNumber(meta?.stop_time);
-  if (stop && stop <= now) return "finished";
+  if (stop && stop <= now) return resultsLen > 0 ? "finished" : "failed";
 
-  if (resultsLen > 0 && meta?.is_oneoff) {
+  // One-off measurements can report stop_time late; fall back to a time window.
+  if (meta?.is_oneoff) {
     const start = toNumber(meta?.start_time);
-    if (start && now - start > 120) return "finished";
+    if (start && now - start > 120) return resultsLen > 0 ? "finished" : "failed";
   }
 
   return "in-progress";
