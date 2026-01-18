@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { waitForMeasurement } from "./lib/globalping";
 import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
@@ -543,6 +543,136 @@ function SortTh({ table, colKey, label, sort, onToggle, defaultDir = "asc" }) {
     </th>
   );
 }
+
+
+const VirtualList = memo(function VirtualList({
+  items,
+  height = 420,
+  itemHeight = 118,
+  overscan = 3,
+  renderItem,
+  style,
+}) {
+  const scrollerRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  const onScroll = useCallback((e) => {
+    setScrollTop(e.currentTarget.scrollTop || 0);
+  }, []);
+
+  const total = Array.isArray(items) ? items.length : 0;
+  const viewportHeight = Math.max(1, Number(height) || 1);
+  const rowH = Math.max(1, Number(itemHeight) || 1);
+
+  const start = Math.max(0, Math.floor(scrollTop / rowH) - overscan);
+  const end = Math.min(total, Math.ceil((scrollTop + viewportHeight) / rowH) + overscan);
+
+  const offsetY = start * rowH;
+  const visible = total ? items.slice(start, end) : [];
+
+  return (
+    <div
+      ref={scrollerRef}
+      onScroll={onScroll}
+      style={{
+        height: viewportHeight,
+        overflowY: "auto",
+        overflowX: "hidden",
+        position: "relative",
+        borderRadius: 10,
+        ...style,
+      }}
+    >
+      <div style={{ height: total * rowH, position: "relative" }}>
+        <div style={{ transform: `translateY(${offsetY}px)` }}>
+          {visible.map((item, i) => renderItem(item, start + i))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const MultiRunResultsList = memo(function MultiRunResultsList({ items, activeId, onSelect, t }) {
+  const entries = Array.isArray(items) ? items : [];
+  const useVirtual = entries.length > 35;
+
+  const renderEntry = useCallback(
+    (entry) => {
+      const isActive = entry.id === activeId;
+      return (
+        <div
+          key={entry.id}
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: 10,
+            background: isActive ? "#f8fafc" : "transparent",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <strong>{entry.target}</strong>
+            <span style={{ opacity: 0.8 }}>{entry.cmd}</span>
+          </div>
+          {entry.summary && (
+            <div
+              style={{
+                fontSize: 13,
+                marginTop: 4,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title={`${t("summaryMedianV4")} ${ms(entry.summary.medianV4)} · ${t("summaryMedianV6")} ${ms(
+                entry.summary.medianV6
+              )} · ${t("summaryMedianDelta")} ${ms(entry.summary.medianDelta)}`}
+            >
+              {t("summaryMedianV4")} {ms(entry.summary.medianV4)} · {t("summaryMedianV6")} {ms(entry.summary.medianV6)} ·{" "}
+              {t("summaryMedianDelta")} {ms(entry.summary.medianDelta)}
+              {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
+                <>
+                  {" · "}
+                  {t("v4LossShort")} {pct(entry.summary.medianLossV4)} · {t("v6LossShort")} {pct(entry.summary.medianLossV6)}
+                </>
+              )}
+            </div>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <button
+              onClick={() => onSelect?.(entry)}
+              style={{ padding: "6px 10px" }}
+              aria-current={isActive ? "true" : "false"}
+            >
+              {isActive ? t("viewing") : t("viewResults")}
+            </button>
+          </div>
+        </div>
+      );
+    },
+    [activeId, onSelect, t]
+  );
+
+  if (!entries.length) return <div style={{ fontSize: 13, opacity: 0.7 }}>{t("waitingFirstResult")}</div>;
+
+  if (!useVirtual) {
+    return <div style={{ display: "grid", gap: 10, marginTop: 12 }}>{entries.map(renderEntry)}</div>;
+  }
+
+  const ITEM_HEIGHT = 118;
+  const height = typeof window === "undefined" ? 420 : Math.min(520, Math.max(260, Math.round(window.innerHeight * 0.45 || 420)));
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <VirtualList
+        items={entries}
+        height={height}
+        itemHeight={ITEM_HEIGHT}
+        overscan={3}
+        style={{ border: "1px solid #e5e7eb" }}
+        renderItem={(entry) => <div style={{ height: ITEM_HEIGHT, paddingBottom: 10, boxSizing: "border-box" }}>{renderEntry(entry)}</div>}
+      />
+    </div>
+  );
+});
 
 function loadHistory() {
   if (typeof window === "undefined") return [];
@@ -1620,11 +1750,13 @@ export default function App() {
   // Compare table sorting
   const [tableSort, setTableSort] = useState({ table: "", key: "", dir: "asc" });
   const toggleTableSort = useCallback((table, key, defaultDir = "asc") => {
-    setTableSort((prev) => {
-      if (prev.table === table && prev.key === key) {
-        return { table, key, dir: prev.dir === "asc" ? "desc" : "asc" };
-      }
-      return { table, key, dir: defaultDir };
+    startTransition(() => {
+      setTableSort((prev) => {
+        if (prev.table === table && prev.key === key) {
+          return { table, key, dir: prev.dir === "asc" ? "desc" : "asc" };
+        }
+        return { table, key, dir: defaultDir };
+      });
     });
   }, []);
 
@@ -1848,6 +1980,12 @@ export default function App() {
   const [rateLimitLeft, setRateLimitLeft] = useState(0);
   const [v4, setV4] = useState(null);
   const [v6, setV6] = useState(null);
+  // Defer heavy compare computations while results stream in (keeps inputs responsive).
+  const deferredV4 = useDeferredValue(v4);
+  const deferredV6 = useDeferredValue(v6);
+  const v4ForCompute = running ? deferredV4 : v4;
+  const v6ForCompute = running ? deferredV6 : v6;
+
   const [atlasUiNow, setAtlasUiNow] = useState(() => Date.now());
   const [atlasPollV4, setAtlasPollV4] = useState(null);
   const [atlasPollV6, setAtlasPollV6] = useState(null);
@@ -3491,16 +3629,28 @@ ${paramLines}` : header;
   }
 
 
-  const showPingTable = cmd === "ping" && v4 && v6;
-  const showTracerouteTable = cmd === "traceroute" && v4 && v6;
-  const showMtrTable = cmd === "mtr" && v4 && v6;
+  const handleSelectMultiEntry = useCallback((entry) => {
+    if (!entry) return;
+    startTransition(() => {
+      setV4(entry.v4);
+      setV6(entry.v6);
+      setTarget(entry.target);
+      setShowRaw(false);
+      setMultiActiveId(entry.id);
+    });
+  }, []);
+
+
+  const showPingTable = cmd === "ping" && v4ForCompute && v6ForCompute;
+  const showTracerouteTable = cmd === "traceroute" && v4ForCompute && v6ForCompute;
+  const showMtrTable = cmd === "mtr" && v4ForCompute && v6ForCompute;
 
   useEffect(() => {
     setExpandedPathKey(null);
   }, [cmd, v4?.id, v6?.id]);
 
-  const showDnsTable = cmd === "dns" && v4 && v6;
-  const showHttpTable = cmd === "http" && v4 && v6;
+  const showDnsTable = cmd === "dns" && v4ForCompute && v6ForCompute;
+  const showHttpTable = cmd === "http" && v4ForCompute && v6ForCompute;
 
   const historyEntryA = useMemo(() => history.find((h) => h.id === historyCompareA) || null, [history, historyCompareA]);
   const historyEntryB = useMemo(() => history.find((h) => h.id === historyCompareB) || null, [history, historyCompareB]);
@@ -3527,7 +3677,7 @@ ${paramLines}` : header;
   }, [historyEntryA, historyEntryB, t]);
 
   const probePoints = useMemo(() => {
-    const results = v4?.results || v6?.results || [];
+    const results = v4ForCompute?.results || v6ForCompute?.results || [];
     const seen = new Set();
     const points = [];
     results.forEach((x) => {
@@ -3540,14 +3690,14 @@ ${paramLines}` : header;
       points.push({ ...coords, label: `${p.city || ""} ${p.country || ""}`.trim() });
     });
     return points;
-  }, [v4, v6]);
+  }, [v4ForCompute, v6ForCompute]);
 
   const probeMapUrl = useMemo(() => buildStaticMapUrl(probePoints.slice(0, 40)), [probePoints]);
 
   const traceroutePaths = useMemo(() => {
-    if (!showTracerouteTable || !v4 || !v6) return [];
-    const a = v4?.results ?? [];
-    const b = v6?.results ?? [];
+    if (!showTracerouteTable || !v4ForCompute || !v6ForCompute) return [];
+    const a = v4ForCompute?.results ?? [];
+    const b = v6ForCompute?.results ?? [];
     const keys = buildProbeUnionKeys(a, b);
     const aMap = buildResultMap(a, "v4");
     const bMap = buildResultMap(b, "v6");
@@ -3566,12 +3716,12 @@ ${paramLines}` : header;
         hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
-  }, [showTracerouteTable, v4, v6, strictCompare]);
+  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare]);
 
   const mtrPaths = useMemo(() => {
-    if (!showMtrTable || !v4 || !v6) return [];
-    const a = v4?.results ?? [];
-    const b = v6?.results ?? [];
+    if (!showMtrTable || !v4ForCompute || !v6ForCompute) return [];
+    const a = v4ForCompute?.results ?? [];
+    const b = v6ForCompute?.results ?? [];
     const keys = buildProbeUnionKeys(a, b);
     const aMap = buildResultMap(a, "v4");
     const bMap = buildResultMap(b, "v6");
@@ -3590,33 +3740,33 @@ ${paramLines}` : header;
         hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
-  }, [showMtrTable, v4, v6, strictCompare]);
+  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare]);
 
   const pingCompare = useMemo(() => {
     if (!showPingTable) return null;
-    return buildPingCompare(v4, v6, { strict: strictCompare });
-  }, [showPingTable, v4, v6, strictCompare]);
+    return buildPingCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
+  }, [showPingTable, v4ForCompute, v6ForCompute, strictCompare]);
 
   const dnsCompare = useMemo(() => {
     if (!showDnsTable) return null;
-    return buildDnsCompare(v4, v6, { strict: strictCompare });
-  }, [showDnsTable, v4, v6, strictCompare]);
+    return buildDnsCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
+  }, [showDnsTable, v4ForCompute, v6ForCompute, strictCompare]);
 
   const httpCompare = useMemo(() => {
     if (!showHttpTable) return null;
-    return buildHttpCompare(v4, v6, { strict: strictCompare });
-  }, [showHttpTable, v4, v6, strictCompare]);
+    return buildHttpCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
+  }, [showHttpTable, v4ForCompute, v6ForCompute, strictCompare]);
 
 
   const trCompare = useMemo(() => {
     if (!showTracerouteTable) return null;
-    return buildTracerouteCompare(v4, v6, { strict: strictCompare });
-  }, [showTracerouteTable, v4, v6, strictCompare]);
+    return buildTracerouteCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
+  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare]);
 
   const mtrCompare = useMemo(() => {
     if (!showMtrTable) return null;
-    return buildMtrCompare(v4, v6, { strict: strictCompare });
-  }, [showMtrTable, v4, v6, strictCompare]);
+    return buildMtrCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
+  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare]);
 
   const pingRows = useMemo(() => (pingCompare ? sortCompareRows(pingCompare.rows, "ping", tableSort) : []), [pingCompare, tableSort]);
   const tracerouteRows = useMemo(() => (trCompare ? sortCompareRows(trCompare.rows, "traceroute", tableSort) : []), [trCompare, tableSort]);
@@ -4672,57 +4822,7 @@ ${paramLines}` : header;
               : t("completedTargets", { done: multiRunResults.length })}
           </div>
           <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>{t("clickTargetToLoad")}</div>
-          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            {multiRunResults.length ? (
-              multiRunResults.map((entry) => {
-                const isActive = entry.id === multiActiveId;
-                return (
-                  <div
-                    key={entry.id}
-                    style={{
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 8,
-                      padding: 10,
-                      background: isActive ? "#f8fafc" : "transparent",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                      <strong>{entry.target}</strong>
-                      <span style={{ opacity: 0.8 }}>{entry.cmd}</span>
-                    </div>
-                    {entry.summary && (
-                      <div style={{ fontSize: 13, marginTop: 4 }}>
-                        {t("summaryMedianV4")} {ms(entry.summary.medianV4)} · {t("summaryMedianV6")} {ms(entry.summary.medianV6)} ·{" "}
-                        {t("summaryMedianDelta")} {ms(entry.summary.medianDelta)}
-                        {(entry.summary.kind === "ping" || entry.summary.kind === "mtr") && (
-                          <>
-                            {" · "}
-                            {t("v4LossShort")} {pct(entry.summary.medianLossV4)} · {t("v6LossShort")} {pct(entry.summary.medianLossV6)}
-                          </>
-                        )}
-                      </div>
-                    )}
-                    <div style={{ marginTop: 8 }}>
-                      <button
-                        onClick={() => {
-                          setV4(entry.v4);
-                          setV6(entry.v6);
-                          setTarget(entry.target);
-                          setShowRaw(false);
-                          setMultiActiveId(entry.id);
-                        }}
-                        style={{ padding: "6px 10px" }}
-                      >
-                        {isActive ? t("viewing") : t("viewResults")}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div style={{ fontSize: 13, opacity: 0.7 }}>{t("waitingFirstResult")}</div>
-            )}
-          </div>
+          <MultiRunResultsList items={multiRunResults} activeId={multiActiveId} onSelect={handleSelectMultiEntry} t={t} />
         </div>
       )}
 
