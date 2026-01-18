@@ -131,9 +131,6 @@ For `http`, the UI accepts a full URL (e.g. `https://example.com/path?x=1`) and 
 
 ## Common controls
 
-### Language
-The UI supports English and Italian. Language is stored locally in your browser.
-
 ### Backend
 Choose the measurement network backend:
 
