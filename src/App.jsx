@@ -492,6 +492,18 @@ const HISTORY_STORAGE_KEY = "ping6_history_v1";
 const HISTORY_LIMIT = 10;
 const SHARE_VERSION = 1;
 
+const EXCLUDED_ROW_STYLE = { opacity: 0.55 };
+const EXCLUDED_BADGE_STYLE = {
+  display: "inline-block",
+  padding: "1px 6px",
+  border: "1px solid #d1d5db",
+  borderRadius: 999,
+  fontSize: 11,
+  marginRight: 6,
+  verticalAlign: "baseline",
+  opacity: 0.85,
+};
+
 function Tip({ text, children }) {
   return (
     <span className="tt">
@@ -1768,6 +1780,8 @@ export default function App() {
   const [asnCard, setAsnCard] = useState(null);
   const [asnCardFromUrl, setAsnCardFromUrl] = useState(null);
 
+
+
   // Geo presets UI (macro + sub-regions)
   const [macroId, setMacroId] = useState("eu");
   const [subId, setSubId] = useState("eu-w");
@@ -1776,6 +1790,40 @@ export default function App() {
     if (typeof entry === "function") return entry(vars);
     return entry ?? key;
   }, []);
+
+
+  const openAsnCard = useCallback((asnValue, kind, rows) => {
+    const asn = normalizeAsn(asnValue);
+    if (!asn) return;
+    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'loading', metaError: null, metaReqId: 0, metaAutoRefreshLeft: 2, metaMissRetryLeft: 1, metaMissRetryPending: false });
+  }, []);
+
+  const renderAsnCell = useCallback((asnValue, kind, rows) => {
+    const asn = normalizeAsn(asnValue);
+    if (!asn) return '-';
+    return (
+      <span className="tt">
+        <button
+          type="button"
+          onClick={() => openAsnCard(asn, kind, rows)}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            padding: 0,
+            margin: 0,
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            color: '#2563eb',
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+          }}
+        >
+          {asn}
+        </button>
+        <span className="tt-bubble">{t('asnCellHint')}</span>
+      </span>
+    );
+  }, [openAsnCard, t]);
 
   const dateLocale = "en-US";
   useEffect(() => {
@@ -3889,9 +3937,7 @@ ${paramLines}` : header;
   const canRetryV4 = showRetryControls && Number(familyIssues?.badV4) > 0 && Boolean(v6?.id);
   const canRetryV6 = showRetryControls && Number(familyIssues?.badV6) > 0 && Boolean(v4?.id);
 
-
-
-  function renderPerHopDiff(v4res, v6res) {
+  const renderPerHopDiff = useCallback((v4res, v6res) => {
     const aligned = buildHopAlignment(v4res, v6res, 30);
     const rows = aligned.rows || [];
     const s = aligned.summary || {};
@@ -3942,7 +3988,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }
+  }, [t]);
 
   const preStyle = {
     padding: 12,
@@ -3955,18 +4001,6 @@ ${paramLines}` : header;
     boxSizing: "border-box",
     overflowX: "auto",
     lineHeight: 1.35,
-  };
-
-  const excludedRowStyle = { opacity: 0.55 };
-  const excludedBadgeStyle = {
-    display: "inline-block",
-    padding: "1px 6px",
-    border: "1px solid #d1d5db",
-    borderRadius: 999,
-    fontSize: 11,
-    marginRight: 6,
-    verticalAlign: "baseline",
-    opacity: 0.85,
   };
 
   // Licensing (AGPL) and build provenance (Cloudflare Pages commit SHA -> VITE_COMMIT_SHA)
@@ -4001,38 +4035,496 @@ ${paramLines}` : header;
     return `checks: ${checks} · last: ${last} · ${next}`;
   }
 
-  function openAsnCard(asnValue, kind, rows) {
-    const asn = normalizeAsn(asnValue);
-    if (!asn) return;
-    setAsnCard({ asn, kind, rows, meta: null, metaStatus: 'loading', metaError: null, metaReqId: 0, metaAutoRefreshLeft: 2, metaMissRetryLeft: 1, metaMissRetryPending: false });
-  }
+  const toggleExpandedPath = useCallback((key) => {
+    setExpandedPathKey((prev) => (prev === key ? null : key));
+  }, []);
 
-  function renderAsnCell(asnValue, kind, rows) {
-    const asn = normalizeAsn(asnValue);
-    if (!asn) return '-';
+  const pingSection = useMemo(() => {
+    if (!(showPingTable && pingCompare)) return null;
     return (
-      <span className="tt">
-        <button
-          type="button"
-          onClick={() => openAsnCard(asn, kind, rows)}
-          style={{
-            border: 'none',
-            background: 'transparent',
-            padding: 0,
-            margin: 0,
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            color: '#2563eb',
-            fontFamily: 'inherit',
-            fontSize: 'inherit',
-          }}
-        >
-          {asn}
-        </button>
-        <span className="tt-bubble">{t('asnCellHint')}</span>
-      </span>
+      <div style={{ overflowX: "auto", marginBottom: 16 }}>
+        <div style={{ margin: "0 0 8px 0" }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>{t("pingTitle")}</h3>
+          <div style={{ opacity: 0.85 }}>
+            {t("summaryBoth")}: {pingCompare.summary.both}/{pingCompare.summary.n} · {t("summaryMedianAvgV4")} {" "}
+            {ms(pingCompare.summary.median_avg_v4)} · {t("summaryMedianAvgV6")} {ms(pingCompare.summary.median_avg_v6)} · {" "}
+            {t("summaryMedianDelta")} {ms(pingCompare.summary.median_delta_avg)}
+            <br />
+            {t("summaryP95AvgV4")} {ms(pingCompare.summary.p95_avg_v4)} · {t("summaryP95AvgV6")} {ms(pingCompare.summary.p95_avg_v6)} · {" "}
+            {t("summaryMedianLossV4")} {pct(pingCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")} {" "}
+            {pct(pingCompare.summary.median_loss_v6)}
+          </div>
+          {strictCompare && (
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+              {t("comparedOnDualStack", { both: pingCompare.summary.both, n: pingCompare.summary.n })}
+            </div>
+          )}
+        </div>
+
+        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead>
+            <tr>
+              <SortTh table="ping" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="ping" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="ping" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="ping" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="ping" colKey="v4avg" label={t("v4Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="ping" colKey="v4loss" label={t("v4Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="ping" colKey="v6avg" label={t("v6Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="ping" colKey="v6loss" label={t("v6Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="ping" colKey="deltaAvg" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="ping" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+            </tr>
+          </thead>
+          <tbody>
+            {pingRows.map((r, i) => {
+              const excluded = strictCompare && !(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg));
+              return (
+                <tr key={r.key} style={excluded ? EXCLUDED_ROW_STYLE : undefined}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "ping", pingCompare.rows)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{pct(r.v4loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6avg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{pct(r.v6loss)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={EXCLUDED_BADGE_STYLE}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     );
-  }
+  }, [showPingTable, pingCompare, pingRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t]);
+
+  const traceroutePathsSection = useMemo(() => {
+    if (!(showTracerouteTable && traceroutePaths.length > 0)) return null;
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ margin: "0 0 6px 0" }}>{t("traceroutePathsTitle")}</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr>
+                {["#", t("probe"), t("pathDiff"), t("v4Path"), t("v6Path"), ""].map((h, i) => (
+                  <th key={h || `actions-${i}`} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {traceroutePaths.map((row, idx) => {
+                const expKey = `tr|${row.key}`;
+                const expanded = expandedPathKey === expKey;
+
+                const sum = row?.hopDiff || {};
+                const maxHop = Number(sum.maxHop || 0);
+                const first = Number(sum.firstDiffHop || 0);
+                const diffText =
+                  maxHop > 0
+                    ? first > 0
+                      ? t("pathDivergeAt", { n: first })
+                      : t("pathNoDivergence", { n: maxHop })
+                    : "-";
+
+                const missV4 = Number(sum.missingV4 || 0);
+                const missV6 = Number(sum.missingV6 || 0);
+                const showMiss = missV4 > 0 || missV6 > 0;
+
+                return [
+                  <tr key={row.key}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(row.probe)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                      <div style={{ fontWeight: 700 }}>{diffText}</div>
+                      {showMiss ? (
+                        <div style={{ marginTop: 2, fontSize: 11, opacity: 0.8 }}>{t("pathMissingCounts", { v4: missV4, v6: missV6 })}</div>
+                      ) : null}
+                    </td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v4path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v6path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpandedPath(expKey)}
+                        style={{
+                          padding: "4px 8px",
+                          borderRadius: 10,
+                          border: "1px solid #e5e7eb",
+                          background: "#fff",
+                          cursor: "pointer",
+                          font: "inherit",
+                          fontSize: 12,
+                        }}
+                      >
+                        {expanded ? t("hideHops") : t("showHops")}
+                      </button>
+                    </td>
+                  </tr>,
+                  expanded ? (
+                    <tr key={`${row.key}-details`}>
+                      <td colSpan={6} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                        {renderPerHopDiff(row.v4res, row.v6res)}
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }, [showTracerouteTable, traceroutePaths, expandedPathKey, toggleExpandedPath, renderPerHopDiff, t]);
+
+
+  const tracerouteSection = useMemo(() => {
+    if (!(showTracerouteTable && trCompare)) return null;
+    return (
+      <>
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("tracerouteTitle")}</h3>
+            <div style={{ opacity: 0.85 }}>
+              {t("summaryBoth")}: {trCompare.summary.both}/{trCompare.summary.n} · {t("summaryMedianV4")} {ms(trCompare.summary.median_v4)} ·{" "}
+              {t("summaryMedianV6")} {ms(trCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(trCompare.summary.median_delta)}
+              <br />
+              {t("summaryP95V4")} {ms(trCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(trCompare.summary.p95_v6)}
+            </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: trCompare.summary.both, n: trCompare.summary.n })}
+              </div>
+            )}
+          </div>
+
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <SortTh table="traceroute" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="traceroute" colKey="v4reached" label={t("v4Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v4hops" label={t("v4Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v4dst" label={t("v4Dst")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v6reached" label={t("v6Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v6hops" label={t("v6Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="v6dst" label={t("v6Dst")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="traceroute" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              </tr>
+            </thead>
+            <tbody>
+              {tracerouteRows.map((r, i) => {
+                const excluded = strictCompare && !(Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst));
+                return (
+                  <tr key={r.key} style={excluded ? EXCLUDED_ROW_STYLE : undefined}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "traceroute", trCompare.rows)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached === null ? "-" : r.v4reached ? t("yes") : t("no")}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4dst)}</td>
+
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached === null ? "-" : r.v6reached ? t("yes") : t("no")}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6dst)}</td>
+
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={EXCLUDED_BADGE_STYLE}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {traceroutePathsSection}
+      </>
+    );
+  }, [showTracerouteTable, trCompare, tracerouteRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, traceroutePathsSection]);
+
+  const mtrPathsSection = useMemo(() => {
+    if (!(showMtrTable && mtrPaths.length > 0)) return null;
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrPathsTitle")}</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr>
+                {["#", t("probe"), t("pathDiff"), t("v4Path"), t("v6Path"), ""].map((h, i) => (
+                  <th key={h || `actions-${i}`} style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {mtrPaths.map((row, idx) => {
+                const expKey = `mtr|${row.key}`;
+                const expanded = expandedPathKey === expKey;
+
+                const sum = row?.hopDiff || {};
+                const maxHop = Number(sum.maxHop || 0);
+                const first = Number(sum.firstDiffHop || 0);
+                const diffText =
+                  maxHop > 0
+                    ? first > 0
+                      ? t("pathDivergeAt", { n: first })
+                      : t("pathNoDivergence", { n: maxHop })
+                    : "-";
+
+                const missV4 = Number(sum.missingV4 || 0);
+                const missV6 = Number(sum.missingV6 || 0);
+                const showMiss = missV4 > 0 || missV6 > 0;
+
+                return [
+                  <tr key={row.key}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(row.probe)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                      <div style={{ fontWeight: 700 }}>{diffText}</div>
+                      {showMiss ? (
+                        <div style={{ marginTop: 2, fontSize: 11, opacity: 0.8 }}>{t("pathMissingCounts", { v4: missV4, v6: missV6 })}</div>
+                      ) : null}
+                    </td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v4path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v6path}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpandedPath(expKey)}
+                        style={{
+                          padding: "4px 8px",
+                          borderRadius: 10,
+                          border: "1px solid #e5e7eb",
+                          background: "#fff",
+                          cursor: "pointer",
+                          font: "inherit",
+                          fontSize: 12,
+                        }}
+                      >
+                        {expanded ? t("hideHops") : t("showHops")}
+                      </button>
+                    </td>
+                  </tr>,
+                  expanded ? (
+                    <tr key={`${row.key}-details`}>
+                      <td colSpan={6} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                        {renderPerHopDiff(row.v4res, row.v6res)}
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }, [showMtrTable, mtrPaths, expandedPathKey, toggleExpandedPath, renderPerHopDiff, t]);
+
+
+  const mtrSection = useMemo(() => {
+    if (!(showMtrTable && mtrCompare)) return null;
+    return (
+      <>
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div style={{ margin: "0 0 8px 0" }}>
+            <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrTitle")}</h3>
+            <div style={{ opacity: 0.85 }}>
+              {t("summaryBoth")}: {mtrCompare.summary.both}/{mtrCompare.summary.n} · {t("summaryMedianAvgV4")} {" "}
+              {ms(mtrCompare.summary.median_avg_v4)} · {t("summaryMedianAvgV6")} {ms(mtrCompare.summary.median_avg_v6)} · {" "}
+              {t("summaryMedianDelta")} {ms(mtrCompare.summary.median_delta_avg)}
+              <br />
+              {t("summaryMedianLossV4")} {pct(mtrCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")} {" "}
+              {pct(mtrCompare.summary.median_loss_v6)} · {t("summaryDeltaLoss")} {pct(mtrCompare.summary.median_delta_loss)}
+            </div>
+            {strictCompare && (
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                {t("comparedOnDualStack", { both: mtrCompare.summary.both, n: mtrCompare.summary.n })}
+              </div>
+            )}
+          </div>
+
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                <SortTh table="mtr" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+                <SortTh table="mtr" colKey="v4reached" label={t("v4Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v4hops" label={t("v4Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v4loss" label={t("v4Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v4avg" label={t("v4Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6reached" label={t("v6Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6hops" label={t("v6Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6loss" label={t("v6Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="v6avg" label={t("v6Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="deltaAvg" label={t("deltaAvg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="deltaLoss" label={t("deltaLoss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+                <SortTh table="mtr" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              </tr>
+            </thead>
+            <tbody>
+              {mtrRows.map((r, i) => {
+                const excluded = strictCompare && !(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg));
+                return (
+                  <tr key={r.key} style={excluded ? EXCLUDED_ROW_STYLE : undefined}>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "mtr", mtrCompare.rows)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached === null ? "-" : r.v4reached ? t("yes") : t("no")}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{pct(r.v4loss)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4avg)}</td>
+
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached === null ? "-" : r.v6reached ? t("yes") : t("no")}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{pct(r.v6loss)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6avg)}</td>
+
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.deltaLoss)}</td>
+                    <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={EXCLUDED_BADGE_STYLE}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {mtrPathsSection}
+      </>
+    );
+  }, [showMtrTable, mtrCompare, mtrRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, mtrPathsSection]);
+
+  const dnsSection = useMemo(() => {
+    if (!(showDnsTable && dnsCompare)) return null;
+    return (
+      <div style={{ overflowX: "auto", marginBottom: 16 }}>
+        <div style={{ margin: "0 0 8px 0" }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>{t("dnsTitle")}</h3>
+          <div style={{ opacity: 0.85 }}>
+            {t("summaryBoth")}: {dnsCompare.summary.both}/{dnsCompare.summary.n} · {t("summaryMedianV4")} {ms(dnsCompare.summary.median_v4)} ·{" "}
+            {t("summaryMedianV6")} {ms(dnsCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(dnsCompare.summary.median_delta)}
+            <br />
+            {t("summaryP95V4")} {ms(dnsCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(dnsCompare.summary.p95_v6)}
+          </div>
+          {strictCompare && (
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+              {t("comparedOnDualStack", { both: dnsCompare.summary.both, n: dnsCompare.summary.n })}
+            </div>
+          )}
+        </div>
+
+        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead>
+            <tr>
+              <SortTh table="dns" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="dns" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="dns" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="dns" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="dns" colKey="v4ms" label={t("v4Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="dns" colKey="v6ms" label={t("v6Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="dns" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="dns" colKey="ratio" label={t("ratio")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="dns" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+            </tr>
+          </thead>
+          <tbody>
+            {dnsRows.map((r, i) => {
+              const excluded = strictCompare && !(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms));
+              return (
+                <tr key={r.key} style={excluded ? EXCLUDED_ROW_STYLE : undefined}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "dns", dnsCompare.rows)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={EXCLUDED_BADGE_STYLE}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }, [showDnsTable, dnsCompare, dnsRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t]);
+
+  const httpSection = useMemo(() => {
+    if (!(showHttpTable && httpCompare)) return null;
+    return (
+      <div style={{ overflowX: "auto", marginBottom: 16 }}>
+        <div style={{ margin: "0 0 8px 0" }}>
+          <h3 style={{ margin: "0 0 6px 0" }}>{t("httpTitle")}</h3>
+          <div style={{ opacity: 0.85 }}>
+            {t("summaryBoth")}: {httpCompare.summary.both}/{httpCompare.summary.n} · {t("summaryMedianV4")} {ms(httpCompare.summary.median_v4)} ·{" "}
+            {t("summaryMedianV6")} {ms(httpCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(httpCompare.summary.median_delta)}
+            <br />
+            {t("summaryP95V4")} {ms(httpCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(httpCompare.summary.p95_v6)}
+          </div>
+          {strictCompare && (
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+              {t("comparedOnDualStack", { both: httpCompare.summary.both, n: httpCompare.summary.n })}
+            </div>
+          )}
+        </div>
+
+        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead>
+            <tr>
+              <SortTh table="http" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="http" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="http" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="http" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="http" colKey="v4sc" label={t("v4Status")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="http" colKey="v6sc" label={t("v6Status")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+              <SortTh table="http" colKey="v4ms" label={t("v4Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="http" colKey="v6ms" label={t("v6Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="http" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="http" colKey="ratio" label={t("ratio")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
+              <SortTh table="http" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
+            </tr>
+          </thead>
+          <tbody>
+            {httpRows.map((r, i) => {
+              const excluded = strictCompare && !(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms));
+              return (
+                <tr key={r.key} style={excluded ? EXCLUDED_ROW_STYLE : undefined}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "http", httpCompare.rows)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{r.v4sc ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{r.v6sc ?? "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6ms)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}</td>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={EXCLUDED_BADGE_STYLE}>{t("excludedBadge")}</span> : null}{r.winner}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }, [showHttpTable, httpCompare, httpRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t]);
 
   async function copyAsnToClipboard(asn) {
     try {
@@ -5017,65 +5509,8 @@ ${paramLines}` : header;
           <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>{t("coverageHint")}</div>
         </div>
       )}
-      {showPingTable && pingCompare && (
-        <div style={{ overflowX: "auto", marginBottom: 16 }}>
-          <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>{t("pingTitle")}</h3>
-            <div style={{ opacity: 0.85 }}>
-              {t("summaryBoth")}: {pingCompare.summary.both}/{pingCompare.summary.n} · {t("summaryMedianAvgV4")}{" "}
-              {ms(pingCompare.summary.median_avg_v4)} · {t("summaryMedianAvgV6")} {ms(pingCompare.summary.median_avg_v6)} ·{" "}
-              {t("summaryMedianDelta")} {ms(pingCompare.summary.median_delta_avg)}
-              <br />
-              {t("summaryP95AvgV4")} {ms(pingCompare.summary.p95_avg_v4)} · {t("summaryP95AvgV6")} {ms(pingCompare.summary.p95_avg_v6)} ·{" "}
-              {t("summaryMedianLossV4")} {pct(pingCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")}{" "}
-              {pct(pingCompare.summary.median_loss_v6)}
-            </div>
-            {strictCompare && (
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                {t("comparedOnDualStack", { both: pingCompare.summary.both, n: pingCompare.summary.n })}
-              </div>
-            )}
-          </div>
 
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <SortTh table="ping" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="ping" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="ping" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="ping" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="ping" colKey="v4avg" label={t("v4Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="ping" colKey="v4loss" label={t("v4Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="ping" colKey="v6avg" label={t("v6Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="ping" colKey="v6loss" label={t("v6Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="ping" colKey="deltaAvg" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="ping" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-              </tr>
-            </thead>
-            <tbody>
-              {pingRows.map((r, i) => {
-                const excluded = strictCompare && (!(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)));
-                return (
-                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                    {formatProbeLocation(r.probe)}
-                  </td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "ping", pingCompare.rows)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4avg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{pct(r.v4loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6avg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{pct(r.v6loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {pingSection}
 
 
       {probePoints.length > 0 && (
@@ -5107,422 +5542,10 @@ ${paramLines}` : header;
       )}
 
       {/* Traceroute compare table */}
-      {showTracerouteTable && trCompare && (
-        <div style={{ overflowX: "auto", marginBottom: 16 }}>
-          <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>{t("tracerouteTitle")}</h3>
-            <div style={{ opacity: 0.85 }}>
-              {t("summaryBoth")}: {trCompare.summary.both}/{trCompare.summary.n} · {t("summaryMedianV4")} {ms(trCompare.summary.median_v4)} ·{" "}
-              {t("summaryMedianV6")} {ms(trCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(trCompare.summary.median_delta)}
-              <br />
-              {t("summaryP95V4")} {ms(trCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(trCompare.summary.p95_v6)}
-            </div>
-            {strictCompare && (
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                {t("comparedOnDualStack", { both: trCompare.summary.both, n: trCompare.summary.n })}
-              </div>
-            )}
-          </div>
-
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <SortTh table="traceroute" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="traceroute" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="traceroute" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="traceroute" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="traceroute" colKey="v4reached" label={t("v4Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="v4hops" label={t("v4Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="v4dst" label={t("v4Dst")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="v6reached" label={t("v6Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="v6hops" label={t("v6Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="v6dst" label={t("v6Dst")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="traceroute" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-              </tr>
-            </thead>
-            <tbody>
-              {tracerouteRows.map((r, i) => {
-                const excluded = strictCompare && (!(Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst)));
-                return (
-                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "traceroute", trCompare.rows)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached === null ? "-" : r.v4reached ? t("yes") : t("no")}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4dst)}</td>
-
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached === null ? "-" : r.v6reached ? t("yes") : t("no")}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6dst)}</td>
-
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      
-      {showTracerouteTable && traceroutePaths.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: "0 0 6px 0" }}>{t("traceroutePathsTitle")}</h3>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  {["#", t("probe"), t("pathDiff"), t("v4Path"), t("v6Path"), ""].map((h, i) => (
-                    <th
-                      key={h || `actions-${i}`}
-                      style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {traceroutePaths.map((row, idx) => {
-                  const expKey = `tr|${row.key}`;
-                  const expanded = expandedPathKey === expKey;
-
-                  const sum = row?.hopDiff || {};
-                  const maxHop = Number(sum.maxHop || 0);
-                  const first = Number(sum.firstDiffHop || 0);
-                  const diffText =
-                    maxHop > 0
-                      ? first > 0
-                        ? t("pathDivergeAt", { n: first })
-                        : t("pathNoDivergence", { n: maxHop })
-                      : "-";
-
-                  const missV4 = Number(sum.missingV4 || 0);
-                  const missV6 = Number(sum.missingV6 || 0);
-                  const showMiss = missV4 > 0 || missV6 > 0;
-
-                  return [
-                    <tr key={row.key}>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(row.probe)}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
-                        <div style={{ fontWeight: 700 }}>{diffText}</div>
-                        {showMiss ? (
-                          <div style={{ marginTop: 2, fontSize: 11, opacity: 0.8 }}>
-                            {t("pathMissingCounts", { v4: missV4, v6: missV6 })}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v4path}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v6path}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedPathKey((prev) => (prev === expKey ? null : expKey))}
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: 10,
-                            border: "1px solid #e5e7eb",
-                            background: "#fff",
-                            cursor: "pointer",
-                            font: "inherit",
-                            fontSize: 12,
-                          }}
-                        >
-                          {expanded ? t("hideHops") : t("showHops")}
-                        </button>
-                      </td>
-                    </tr>,
-                    expanded ? (
-                      <tr key={`${row.key}-details`}>
-                        <td colSpan={6} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
-                          {renderPerHopDiff(row.v4res, row.v6res)}
-                        </td>
-                      </tr>
-                    ) : null,
-                  ];
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* MTR compare table */}
-      {showMtrTable && mtrCompare && (
-        <div style={{ overflowX: "auto", marginBottom: 16 }}>
-          <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrTitle")}</h3>
-            <div style={{ opacity: 0.85 }}>
-              {t("summaryBoth")}: {mtrCompare.summary.both}/{mtrCompare.summary.n} · {t("summaryMedianAvgV4")}{" "}
-              {ms(mtrCompare.summary.median_avg_v4)} · {t("summaryMedianAvgV6")} {ms(mtrCompare.summary.median_avg_v6)} ·{" "}
-              {t("summaryMedianDelta")} {ms(mtrCompare.summary.median_delta_avg)}
-              <br />
-              {t("summaryMedianLossV4")} {pct(mtrCompare.summary.median_loss_v4)} · {t("summaryMedianLossV6")}{" "}
-              {pct(mtrCompare.summary.median_loss_v6)} · {t("summaryDeltaLoss")} {pct(mtrCompare.summary.median_delta_loss)}
-            </div>
-            {strictCompare && (
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                {t("comparedOnDualStack", { both: mtrCompare.summary.both, n: mtrCompare.summary.n })}
-              </div>
-            )}
-          </div>
-
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <SortTh table="mtr" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="mtr" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="mtr" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="mtr" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="mtr" colKey="v4reached" label={t("v4Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v4hops" label={t("v4Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v4loss" label={t("v4Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v4avg" label={t("v4Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v6reached" label={t("v6Reached")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v6hops" label={t("v6Hops")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v6loss" label={t("v6Loss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="v6avg" label={t("v6Avg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="deltaAvg" label={t("deltaAvg")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="deltaLoss" label={t("deltaLoss")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="mtr" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-              </tr>
-            </thead>
-            <tbody>
-              {mtrRows.map((r, i) => {
-                const excluded = strictCompare && (!(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)));
-                return (
-                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "mtr", mtrCompare.rows)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4reached === null ? "-" : r.v4reached ? t("yes") : t("no")}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v4hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{pct(r.v4loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4avg)}</td>
-
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6reached === null ? "-" : r.v6reached ? t("yes") : t("no")}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.v6hops ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{pct(r.v6loss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6avg)}</td>
-
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.deltaAvg)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{pct(r.deltaLoss)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      
-      {showMtrTable && mtrPaths.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: "0 0 6px 0" }}>{t("mtrPathsTitle")}</h3>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  {["#", t("probe"), t("pathDiff"), t("v4Path"), t("v6Path"), ""].map((h, i) => (
-                    <th
-                      key={h || `actions-${i}`}
-                      style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: "6px 8px" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {mtrPaths.map((row, idx) => {
-                  const expKey = `mtr|${row.key}`;
-                  const expanded = expandedPathKey === expKey;
-
-                  const sum = row?.hopDiff || {};
-                  const maxHop = Number(sum.maxHop || 0);
-                  const first = Number(sum.firstDiffHop || 0);
-                  const diffText =
-                    maxHop > 0
-                      ? first > 0
-                        ? t("pathDivergeAt", { n: first })
-                        : t("pathNoDivergence", { n: maxHop })
-                      : "-";
-
-                  const missV4 = Number(sum.missingV4 || 0);
-                  const missV6 = Number(sum.missingV6 || 0);
-                  const showMiss = missV4 > 0 || missV6 > 0;
-
-                  return [
-                    <tr key={row.key}>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{idx + 1}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(row.probe)}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
-                        <div style={{ fontWeight: 700 }}>{diffText}</div>
-                        {showMiss ? (
-                          <div style={{ marginTop: 2, fontSize: 11, opacity: 0.8 }}>
-                            {t("pathMissingCounts", { v4: missV4, v6: missV6 })}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v4path}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", wordBreak: "break-word" }}>{row.v6path}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedPathKey((prev) => (prev === expKey ? null : expKey))}
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: 10,
-                            border: "1px solid #e5e7eb",
-                            background: "#fff",
-                            cursor: "pointer",
-                            font: "inherit",
-                            fontSize: 12,
-                          }}
-                        >
-                          {expanded ? t("hideHops") : t("showHops")}
-                        </button>
-                      </td>
-                    </tr>,
-                    expanded ? (
-                      <tr key={`${row.key}-details`}>
-                        <td colSpan={6} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
-                          {renderPerHopDiff(row.v4res, row.v6res)}
-                        </td>
-                      </tr>
-                    ) : null,
-                  ];
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* DNS timing compare table */}
-      {showDnsTable && dnsCompare && (
-        <div style={{ overflowX: "auto", marginBottom: 16 }}>
-          <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>{t("dnsTitle")}</h3>
-            <div style={{ opacity: 0.85 }}>
-              {t("summaryBoth")}: {dnsCompare.summary.both}/{dnsCompare.summary.n} · {t("summaryMedianV4")} {ms(dnsCompare.summary.median_v4)} ·{" "}
-              {t("summaryMedianV6")} {ms(dnsCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(dnsCompare.summary.median_delta)}
-              <br />
-              {t("summaryP95V4")} {ms(dnsCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(dnsCompare.summary.p95_v6)}
-            </div>
-            {strictCompare && (
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                {t("comparedOnDualStack", { both: dnsCompare.summary.both, n: dnsCompare.summary.n })}
-              </div>
-            )}
-          </div>
-
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <SortTh table="dns" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="dns" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="dns" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="dns" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="dns" colKey="v4ms" label={t("v4Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="dns" colKey="v6ms" label={t("v6Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="dns" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="dns" colKey="ratio" label={t("ratio")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="dns" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-              </tr>
-            </thead>
-            <tbody>
-              {dnsRows.map((r, i) => {
-                const excluded = strictCompare && (!(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)));
-                return (
-                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                    {formatProbeLocation(r.probe)}
-                  </td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "dns", dnsCompare.rows)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4ms)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6ms)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>
-                    {Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}
-                  </td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* HTTP timing compare table */}
-      {showHttpTable && httpCompare && (
-        <div style={{ overflowX: "auto", marginBottom: 16 }}>
-          <div style={{ margin: "0 0 8px 0" }}>
-            <h3 style={{ margin: "0 0 6px 0" }}>{t("httpTitle")}</h3>
-            <div style={{ opacity: 0.85 }}>
-              {t("summaryBoth")}: {httpCompare.summary.both}/{httpCompare.summary.n} · {t("summaryMedianV4")} {ms(httpCompare.summary.median_v4)} ·{" "}
-              {t("summaryMedianV6")} {ms(httpCompare.summary.median_v6)} · {t("summaryMedianDelta")} {ms(httpCompare.summary.median_delta)}
-              <br />
-              {t("summaryP95V4")} {ms(httpCompare.summary.p95_v4)} · {t("summaryP95V6")} {ms(httpCompare.summary.p95_v6)}
-            </div>
-            {strictCompare && (
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                {t("comparedOnDualStack", { both: httpCompare.summary.both, n: httpCompare.summary.n })}
-              </div>
-            )}
-          </div>
-
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <SortTh table="http" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="http" colKey="location" label={t("location")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="http" colKey="asn" label="ASN" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="http" colKey="network" label={t("network")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="http" colKey="v4sc" label={t("v4Status")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="http" colKey="v6sc" label={t("v6Status")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-                <SortTh table="http" colKey="v4ms" label={t("v4Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="http" colKey="v6ms" label={t("v6Total")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="http" colKey="delta" label={t("deltaV6V4")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="http" colKey="ratio" label={t("ratio")} sort={tableSort} onToggle={toggleTableSort} defaultDir="desc" />
-                <SortTh table="http" colKey="winner" label={t("winner")} sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
-              </tr>
-            </thead>
-            <tbody>
-              {httpRows.map((r, i) => {
-                const excluded = strictCompare && (!(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)));
-                return (
-                  <tr key={r.key} style={excluded ? excludedRowStyle : undefined}>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{i + 1}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{formatProbeLocation(r.probe)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{renderAsnCell(r.probe?.asn, "http", httpCompare.rows)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{r.probe?.network ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{r.v4sc ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{r.v6sc ?? "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v4state, "IPv4")}>{ms(r.v4ms)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }} title={stateTitle(r.v6state, "IPv6")}>{ms(r.v6ms)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{ms(r.delta)}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{Number.isFinite(r.ratio) ? r.ratio.toFixed(2) : "-"}</td>
-                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee" }}>{excluded ? <span style={excludedBadgeStyle}>{t("excludedBadge")}</span> : null}{r.winner}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {tracerouteSection}
+      {mtrSection}
+      {dnsSection}
+      {httpSection}
 
 
       {asnCard && (() => {
