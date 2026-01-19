@@ -1620,6 +1620,56 @@ function buildHttpCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
 }
 
 
+function extractTracerouteHopRtts(hop) {
+  const out = [];
+  const push = (v) => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) out.push(n);
+  };
+
+  const addFromArray = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (const t of arr) {
+      if (typeof t === "number") {
+        push(t);
+        continue;
+      }
+      if (!t || typeof t !== "object") continue;
+      // Common field names seen across traceroute outputs
+      push(t.rtt);
+      push(t.time);
+      push(t.ms);
+      push(t.latency);
+      push(t.value);
+    }
+  };
+
+  // Globalping traceroute typically exposes hop.timings[].rtt
+  addFromArray(hop?.timings);
+
+  // Defensive fallbacks (shape variations)
+  addFromArray(hop?.times);
+  addFromArray(hop?.rtts);
+  addFromArray(hop?.responses);
+  addFromArray(hop?.packets);
+
+  if (!out.length) {
+    // Some implementations expose a scalar RTT
+    push(hop?.rtt);
+    push(hop?.time);
+    push(hop?.ms);
+  }
+
+  if (!out.length && hop?.stats && typeof hop.stats === "object") {
+    // Last-resort: stats summary (rare for traceroute, common for mtr)
+    push(hop.stats.min);
+    push(hop.stats.avg);
+    push(hop.stats.max);
+  }
+
+  return out;
+}
+
 function pickTracerouteHopSeries(x, maxHops = 30) {
   const r = x?.result;
   if (!r || (r.status && r.status !== "finished")) return [];
@@ -1627,7 +1677,7 @@ function pickTracerouteHopSeries(x, maxHops = 30) {
 
   const hops = Array.isArray(r.hops) ? r.hops : [];
   return hops.slice(0, maxHops).map((h) => {
-    const rtts = (h?.timings || []).map((t) => t?.rtt).filter((v) => Number.isFinite(v) && v > 0);
+    const rtts = extractTracerouteHopRtts(h);
     return rtts.length ? Math.min(...rtts) : null;
   });
 }
@@ -1640,18 +1690,50 @@ function pickTracerouteDstMs(x) {
   const hops = Array.isArray(r.hops) ? r.hops : [];
   const hopCount = hops.length;
 
-  const dstAddr = r.resolvedAddress || null;
-  const dstHost = r.resolvedHostname || null;
+  const dstAddr = r.resolvedAddress || r.address || null;
+  const dstHost = r.resolvedHostname || r.host || null;
 
   const dstHop =
     dstAddr || dstHost
-      ? hops.find((h) => (dstAddr && h?.resolvedAddress === dstAddr) || (dstHost && h?.resolvedHostname === dstHost))
+      ? hops.find((h) => {
+          const hopAddr = h?.resolvedAddress || h?.address || h?.ip || null;
+          const hopHost = h?.resolvedHostname || h?.hostname || null;
+          return (dstAddr && hopAddr === dstAddr) || (dstHost && hopHost === dstHost);
+        })
       : null;
 
-  const rtts = (dstHop?.timings || []).map((t) => t?.rtt).filter((v) => Number.isFinite(v) && v > 0);
+  const hopForRtt = dstHop || (hops.length ? hops[hops.length - 1] : null);
+  const rtts = hopForRtt ? extractTracerouteHopRtts(hopForRtt) : [];
   const dstMs = rtts.length ? Math.min(...rtts) : null;
 
-  return { reached: Boolean(dstHop), hops: hopCount, dstMs };
+  const reached =
+    typeof r.reached === "boolean"
+      ? r.reached
+      : dstHop
+        ? true
+        : Number.isFinite(dstMs)
+          ? true
+          : null;
+
+  return { reached, hops: hopCount, dstMs };
+}
+
+
+
+function pickMtrHopSeries(x, maxHops = 30) {
+  const r = x?.result;
+  if (!r || (r.status && r.status !== "finished")) return [];
+  if (r.error) return [];
+
+  const hops = Array.isArray(r.hops) ? r.hops : [];
+  return hops.slice(0, maxHops).map((h) => {
+    const stats = h?.stats || null;
+    const avg = Number.isFinite(stats?.avg) && stats.avg > 0 ? stats.avg : null;
+    const min = Number.isFinite(stats?.min) && stats.min > 0 ? stats.min : null;
+    const max = Number.isFinite(stats?.max) && stats.max > 0 ? stats.max : null;
+    // Prefer avg for MTR; fallback to min/max if needed.
+    return avg ?? min ?? max ?? null;
+  });
 }
 
 function pickMtrDstStats(x) {
@@ -1784,6 +1866,8 @@ function buildMtrCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
       v6hops: s6.hops,
       v6loss: s6.lossPct,
       v6avg: s6.avgMs,
+      v4series: pickMtrHopSeries(x, 30),
+      v6series: pickMtrHopSeries(y, 30),
       deltaAvg,
       deltaLoss,
       winner,
@@ -4467,6 +4551,8 @@ ${paramLines}` : header;
       v6: r.v6avg,
       v4loss: r.v4loss,
       v6loss: r.v6loss,
+      series4: r.v4series,
+      series6: r.v6series,
       excluded: strictCompare && !(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)),
     }));
   }, [pingCompare, strictCompare]);
@@ -4497,6 +4583,8 @@ ${paramLines}` : header;
       v6: r.v6avg,
       v4loss: r.v4loss,
       v6loss: r.v6loss,
+      series4: r.v4series,
+      series6: r.v6series,
       excluded: strictCompare && !(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)),
     }));
   }, [mtrCompare, strictCompare]);
@@ -5132,7 +5220,7 @@ ${paramLines}` : header;
 
           {mtrVizRows.length >= 2 ? (
             <div style={{ margin: "10px 0 12px 0" }}>
-              <VisualCompare t={t} rows={mtrVizRows} defaultMetric="latency" shareContext={{ appName: "ping6.it", kindLabel: "MTR", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
+              <VisualCompare t={t} rows={mtrVizRows} defaultMetric="latency" showSparklines shareContext={{ appName: "ping6.it", kindLabel: "MTR", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
             </div>
           ) : null}
 
