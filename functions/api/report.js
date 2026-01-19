@@ -138,7 +138,8 @@ export async function onRequestPost(context) {
   try {
     await kv.put(key, JSON.stringify(value), { expirationTtl: ttlSec });
   } catch (e) {
-    return json({ error: "kv_put_failed", message: String(e?.message || e || "kv_put_failed") }, 500);
+    console.error("KV put failed", e);
+    return json({ error: "kv_put_failed", message: "Internal storage error" }, 500);
   }
 
   return json({ id, createdAt, expiresAt }, 200);
