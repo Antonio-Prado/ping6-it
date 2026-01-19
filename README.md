@@ -206,7 +206,9 @@ Available once results are present:
 
 ### Share link / Report mode
 - **Share link**: encodes current settings into URL query parameters.
-- **Report mode**: encodes both settings and results into the URL (shareable, read-only view).
+- **Report mode**: creates a shareable, read-only view that includes the results.
+  - With `REPORT_KV` (or `ASN_META_KV` fallback) configured, results are stored in KV and shared as a short link: `/r/<id>`.
+  - Without KV, ping6.it falls back to a long URL that embeds the full report bundle (may hit URL size limits).
 
 ## Commands
 
@@ -350,7 +352,7 @@ There is also an NLNOG Looking Glass proxy endpoint under `functions/api/nlnog/`
 - **ISP filtering is best-effort.** Prefer ASN when possible.
 - **Turnstile is enforced for pair creation.** Automated usage without a valid challenge token will fail.
 - **Pair endpoints are rate-limited.** On `429`, check `Retry-After`.
-- **Report mode embeds results into the URL.** Very large results may hit URL size limits.
+- **Report mode prefers short links** when `REPORT_KV` (or `ASN_META_KV` fallback) is configured. Without KV, it falls back to embedding results into the URL (large reports may hit URL size limits).
 
 ## Development
 
@@ -385,7 +387,7 @@ ping6.it is designed to run on **Cloudflare Pages** with Pages Functions.
   - Used for ASN metadata caching
   - Can also be used for rate limiting storage (zero-config)
 - KV binding `REPORT_KV` (recommended)
-  - Enables short report links (`/r/<id>`) by storing report bundles with a TTL (default: 7 days).
+  - Enables short report links (`/r/<id>`) by storing report bundles with a TTL (default: 30 days; configurable via `REPORT_TTL_DAYS`).
 - KV binding `RATE_LIMIT_KV` (optional separate storage for rate limiting)
 
 #### SEO & social previews
@@ -393,7 +395,8 @@ ping6.it is designed to run on **Cloudflare Pages** with Pages Functions.
 Static assets in `public/` help discoverability and richer link previews:
 
 - `robots.txt` and `sitemap.xml` for search engines
-- `logo-badge.svg` used by Open Graph / Twitter card meta tags (default social preview)
+- `og.png` used by Open Graph / Twitter card meta tags (default social preview)
+- `logo-badge.svg` used in the README and as a lightweight logo asset
 - `manifest.webmanifest` + icons (PWA metadata)
 - `.well-known/security.txt` for vuln disclosure contact
 
