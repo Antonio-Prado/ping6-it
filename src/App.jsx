@@ -245,6 +245,22 @@ const COPY = {
     visualCompareSortLabel: "Label",
     visualCompareHeatmap: "Heatmap",
     visualCompareHopProfile: "Hop RTT profile",
+    visualCompareHeatScaleLabel: "Heatmap scale",
+    visualCompareHeatScaleAdaptiveRegion: "Adaptive (by region)",
+    visualCompareHeatScaleAdaptiveGlobal: "Adaptive (global)",
+    visualCompareHeatScaleFixed: "Fixed",
+    visualCompareHeatScaleHintFixed: ({ good, bad }) => `good≈${good} · bad≈${bad}` ,
+    visualCompareHeatScaleHintAdaptiveGlobal: ({ good, bad }) => `adaptive (this run): good≈${good} · bad≈${bad}` ,
+    visualCompareHeatScaleHintAdaptiveRegion: "adaptive (by region): thresholds vary by region",
+    visualCompareShare: "Share",
+    visualCompareShareCardTitle: "Share-ready card",
+    visualCompareShareNote: ({ n }) => `Top ${n} rows shown (excluding incomplete pairs when possible).`,
+    visualCompareCopyImage: "Copy image",
+    visualCompareDownloadPng: "Download PNG",
+    visualCompareCopyOk: "Copied to clipboard.",
+    visualCompareCopyUnsupported: "Clipboard image copy is not supported in this browser.",
+    visualCompareExportFailed: "Export failed.",
+
     feedback: "Feedback welcome",
     docs: "Docs",
     source: "Source",
@@ -1058,6 +1074,22 @@ function formatProbeLocation(probe) {
   if (id) return `Probe ${id}`;
   return "-";
 }
+
+function getProbeRegionInfo(probe) {
+  if (!probe) return { key: "", label: "" };
+
+  const explicit = String(probe.continent ?? probe.region ?? probe.area ?? "").trim();
+  if (explicit) return { key: explicit, label: explicit };
+
+  const rawCountry = probe.country ?? probe.country_code ?? probe.countryCode ?? "";
+  const { code, name } = normalizeCountryLabel(rawCountry);
+
+  const key = String(code || name || "").trim();
+  const label = String(name || code || key || "Unknown").trim();
+
+  return { key, label };
+}
+
 
 
 function applyGpTag(fromStr, tag) {
@@ -4320,6 +4352,8 @@ ${paramLines}` : header;
     return pingCompare.rows.map((r) => ({
       id: `ping|${r.key}`,
       label: formatProbeLocation(r.probe),
+      regionKey: getProbeRegionInfo(r.probe).key,
+      regionLabel: getProbeRegionInfo(r.probe).label,
       v4: r.v4avg,
       v6: r.v6avg,
       v4loss: r.v4loss,
@@ -4333,6 +4367,8 @@ ${paramLines}` : header;
     return trCompare.rows.map((r) => ({
       id: `traceroute|${r.key}`,
       label: formatProbeLocation(r.probe),
+      regionKey: getProbeRegionInfo(r.probe).key,
+      regionLabel: getProbeRegionInfo(r.probe).label,
       v4: r.v4dst,
       v6: r.v6dst,
       series4: r.v4series,
@@ -4346,6 +4382,8 @@ ${paramLines}` : header;
     return mtrCompare.rows.map((r) => ({
       id: `mtr|${r.key}`,
       label: formatProbeLocation(r.probe),
+      regionKey: getProbeRegionInfo(r.probe).key,
+      regionLabel: getProbeRegionInfo(r.probe).label,
       v4: r.v4avg,
       v6: r.v6avg,
       v4loss: r.v4loss,
@@ -4359,6 +4397,8 @@ ${paramLines}` : header;
     return dnsCompare.rows.map((r) => ({
       id: `dns|${r.key}`,
       label: formatProbeLocation(r.probe),
+      regionKey: getProbeRegionInfo(r.probe).key,
+      regionLabel: getProbeRegionInfo(r.probe).label,
       v4: r.v4ms,
       v6: r.v6ms,
       excluded: strictCompare && !(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)),
@@ -4370,6 +4410,8 @@ ${paramLines}` : header;
     return httpCompare.rows.map((r) => ({
       id: `http|${r.key}`,
       label: formatProbeLocation(r.probe),
+      regionKey: getProbeRegionInfo(r.probe).key,
+      regionLabel: getProbeRegionInfo(r.probe).label,
       v4: r.v4ms,
       v6: r.v6ms,
       excluded: strictCompare && !(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)),
@@ -4673,7 +4715,7 @@ ${paramLines}` : header;
 
         {pingVizRows.length >= 2 ? (
           <div style={{ margin: "10px 0 12px 0" }}>
-            <VisualCompare t={t} rows={pingVizRows} defaultMetric="latency" />
+            <VisualCompare t={t} rows={pingVizRows} defaultMetric="latency" shareContext={{ appName: "ping6.it", kindLabel: "Ping", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
           </div>
         ) : null}
 
@@ -4714,7 +4756,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [showPingTable, pingCompare, pingRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t]);
+  }, [showPingTable, pingCompare, pingRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
 
   const traceroutePathsSection = useMemo(() => {
     if (!(showTracerouteTable && traceroutePaths.length > 0)) return null;
@@ -4821,7 +4863,7 @@ ${paramLines}` : header;
 
           {tracerouteVizRows.length >= 2 ? (
             <div style={{ margin: "10px 0 12px 0" }}>
-              <VisualCompare t={t} rows={tracerouteVizRows} defaultMetric="latency" showSparklines />
+              <VisualCompare t={t} rows={tracerouteVizRows} defaultMetric="latency" showSparklines shareContext={{ appName: "ping6.it", kindLabel: "Traceroute", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
             </div>
           ) : null}
 
@@ -4872,7 +4914,7 @@ ${paramLines}` : header;
         {traceroutePathsSection}
       </>
     );
-  }, [showTracerouteTable, trCompare, tracerouteRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, traceroutePathsSection]);
+  }, [showTracerouteTable, trCompare, tracerouteRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, traceroutePathsSection, target, multiTargetMode]);
 
   const mtrPathsSection = useMemo(() => {
     if (!(showMtrTable && mtrPaths.length > 0)) return null;
@@ -4981,7 +5023,7 @@ ${paramLines}` : header;
 
           {mtrVizRows.length >= 2 ? (
             <div style={{ margin: "10px 0 12px 0" }}>
-              <VisualCompare t={t} rows={mtrVizRows} defaultMetric="latency" />
+              <VisualCompare t={t} rows={mtrVizRows} defaultMetric="latency" shareContext={{ appName: "ping6.it", kindLabel: "MTR", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
             </div>
           ) : null}
 
@@ -5038,7 +5080,7 @@ ${paramLines}` : header;
         {mtrPathsSection}
       </>
     );
-  }, [showMtrTable, mtrCompare, mtrRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, mtrPathsSection]);
+  }, [showMtrTable, mtrCompare, mtrRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, mtrPathsSection, target, multiTargetMode]);
 
   const dnsSection = useMemo(() => {
     if (!(showDnsTable && dnsCompare)) return null;
@@ -5062,7 +5104,7 @@ ${paramLines}` : header;
 
         {dnsVizRows.length >= 2 ? (
           <div style={{ margin: "10px 0 12px 0" }}>
-            <VisualCompare t={t} rows={dnsVizRows} defaultMetric="latency" />
+            <VisualCompare t={t} rows={dnsVizRows} defaultMetric="latency" shareContext={{ appName: "ping6.it", kindLabel: "DNS", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
           </div>
         ) : null}
 
@@ -5101,7 +5143,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [showDnsTable, dnsCompare, dnsRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t]);
+  }, [showDnsTable, dnsCompare, dnsRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
 
   const httpSection = useMemo(() => {
     if (!(showHttpTable && httpCompare)) return null;
@@ -5125,7 +5167,7 @@ ${paramLines}` : header;
 
         {httpVizRows.length >= 2 ? (
           <div style={{ margin: "10px 0 12px 0" }}>
-            <VisualCompare t={t} rows={httpVizRows} defaultMetric="latency" />
+            <VisualCompare t={t} rows={httpVizRows} defaultMetric="latency" shareContext={{ appName: "ping6.it", kindLabel: "HTTP", targetLabel: multiTargetMode ? "Multiple targets" : target }} />
           </div>
         ) : null}
 
@@ -5168,7 +5210,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [showHttpTable, httpCompare, httpRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t]);
+  }, [showHttpTable, httpCompare, httpRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
 
   async function copyAsnToClipboard(asn) {
     try {
