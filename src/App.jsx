@@ -2530,6 +2530,20 @@ export default function App() {
     const el = turnstileContainerRef.current;
     if (!el) throw new Error(t("errorTurnstileMissingContainer"));
 
+    // The Turnstile widget is rendered into a specific DOM element.
+    // When we toggle report mode, React unmounts/remounts the controls,
+    // which can orphan the previous widget instance. If the container is
+    // empty but we still have a widget id, force a re-render.
+    if (turnstileWidgetIdRef.current !== null) {
+      const hasDom = !!(el.childNodes && el.childNodes.length);
+      if (!hasDom) {
+        try {
+          window.turnstile.remove?.(turnstileWidgetIdRef.current);
+        } catch {}
+        turnstileWidgetIdRef.current = null;
+      }
+    }
+
     // Ensure we have a rendered widget (render once, then execute per run).
     if (turnstileWidgetIdRef.current === null) {
       el.innerHTML = "";
