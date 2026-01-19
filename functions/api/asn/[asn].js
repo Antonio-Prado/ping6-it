@@ -346,7 +346,8 @@ async function fetchRpkiSample(asn, prefixes) {
   const list = Array.isArray(prefixes) ? prefixes.filter(Boolean) : [];
   if (!list.length) return null;
 
-  const v4n = list.filter((p) => !String(p).includes(":")) .length;
+  const isV6 = (pfx) => String(pfx || "").includes(":");
+  const v4n = list.filter((p) => !isV6(p)).length;
   const v6n = list.length - v4n;
 
   const results = await mapLimit(list, 4, async (pfx) => {
@@ -359,19 +360,75 @@ async function fetchRpkiSample(asn, prefixes) {
   });
 
   const counts = { valid: 0, invalid: 0, unknown: 0 };
+  const countsV4 = { valid: 0, invalid: 0, unknown: 0 };
+  const countsV6 = { valid: 0, invalid: 0, unknown: 0 };
+
   for (const r of results) {
     const s = normalizeRpkiStatus(r?.status);
+    const fam = isV6(r?.prefix) ? "v6" : "v4";
+
     if (s === "valid") counts.valid += 1;
     else if (s === "invalid") counts.invalid += 1;
     else counts.unknown += 1;
+
+    const bucket = fam === "v6" ? countsV6 : countsV4;
+    if (s === "valid") bucket.valid += 1;
+    else if (s === "invalid") bucket.invalid += 1;
+    else bucket.unknown += 1;
+
     if (r) r.status = s;
   }
+
+  const pct = (num, den) => {
+    const n = Number(num);
+    const d = Number(den);
+    if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return null;
+    return Math.round((n / d) * 1000) / 10; // 1 decimal
+  };
+
+  const pctAll = {
+    valid: pct(counts.valid, list.length),
+    invalid: pct(counts.invalid, list.length),
+    unknown: pct(counts.unknown, list.length),
+  };
+
+  const pctV4 = {
+    valid: pct(countsV4.valid, v4n),
+    invalid: pct(countsV4.invalid, v4n),
+    unknown: pct(countsV4.unknown, v4n),
+  };
+
+  const pctV6 = {
+    valid: pct(countsV6.valid, v6n),
+    invalid: pct(countsV6.invalid, v6n),
+    unknown: pct(countsV6.unknown, v6n),
+  };
+
+  const invalidPct = pctAll.invalid ?? 0;
+  const unknownPct = pctAll.unknown ?? 0;
+
+  let level = "ok";
+  if (invalidPct >= 20) level = "alert";
+  else if (invalidPct >= 5) level = "warn";
+
+  const actionable = {
+    level,
+    invalidPct,
+    unknownPct,
+    thresholds: { warnInvalidPct: 5, alertInvalidPct: 20 },
+  };
 
   return {
     n: list.length,
     v4: v4n,
     v6: v6n,
     counts,
+    pct: pctAll,
+    byFamily: {
+      v4: { n: v4n, counts: countsV4, pct: pctV4 },
+      v6: { n: v6n, counts: countsV6, pct: pctV6 },
+    },
+    actionable,
     sample: results,
     source: "ripestat-rpki-validation",
   };
