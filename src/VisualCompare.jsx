@@ -403,7 +403,7 @@ export default memo(function VisualCompare({
   const heatScaleAdaptiveGlobal = t ? t("visualCompareHeatScaleAdaptiveGlobal") : "Adaptive (global)";
   const heatScaleFixed = t ? t("visualCompareHeatScaleFixed") : "Fixed";
 
-  const heatLegendTitle = t ? t("visualCompareHeatLegendTitle") : "Legend";
+  const heatLegendTitle = t ? t("visualCompareHeatLegendTitle") : "Heatmap legend";
   const heatLegendNoData = t ? t("visualCompareHeatLegendNoData") : "No data";
   const heatLegendVaries = t
     ? t("visualCompareHeatLegendVaries")
@@ -548,6 +548,18 @@ export default memo(function VisualCompare({
               <option value="label">{sortLabel}</option>
             </select>
           </label>
+
+          <div style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 12, opacity: 0.9 }}>
+            <span style={{ opacity: 0.75 }}>Bars</span>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: "#2563eb", display: "inline-block" }} />
+              <span>v4</span>
+            </span>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: "#ea580c", display: "inline-block" }} />
+              <span>v6</span>
+            </span>
+          </div>
 
           <button
             type="button"

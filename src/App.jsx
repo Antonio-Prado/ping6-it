@@ -252,7 +252,7 @@ const COPY = {
     visualCompareHeatScaleHintFixed: ({ good, bad }) => `good≈${good} · bad≈${bad}` ,
     visualCompareHeatScaleHintAdaptiveGlobal: ({ good, bad }) => `adaptive (this run): good≈${good} · bad≈${bad}` ,
     visualCompareHeatScaleHintAdaptiveRegion: "adaptive (by region): thresholds vary by region",
-    visualCompareHeatLegendTitle: "Legend",
+    visualCompareHeatLegendTitle: "Heatmap legend",
     visualCompareHeatLegendGood: ({ value }) => `Good (<= ${value})`,
     visualCompareHeatLegendModerate: ({ from, to }) => `Moderate (${from} - ${to})`,
     visualCompareHeatLegendHigh: ({ value }) => `High (>= ${value})`,
