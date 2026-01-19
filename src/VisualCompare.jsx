@@ -785,7 +785,16 @@ export default memo(function VisualCompare({
         })}
       </div>
 
-      <div style={{ marginTop: 14 }}>
+      <div
+        aria-hidden="true"
+        style={{
+          marginTop: 16,
+          marginBottom: 12,
+          borderTop: "1px solid #e5e7eb",
+        }}
+      />
+
+      <div style={{ marginTop: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ fontWeight: 700, fontSize: 12 }}>{heatmapTitle}</div>
           <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12, opacity: 0.9 }}>
