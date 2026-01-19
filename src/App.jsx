@@ -2356,6 +2356,28 @@ export default function App() {
 
   const abortRef = useRef(null);
 
+  const reportSectionRef = useRef(null);
+
+  function scheduleScrollToId(id, opts = {}) {
+    if (typeof window === "undefined") return;
+    const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (fn) => setTimeout(fn, 0);
+    const behavior = opts.behavior || "smooth";
+    const block = opts.block || "start";
+    const inline = opts.inline || "nearest";
+
+    raf(() => {
+      raf(() => {
+        try {
+          const el = document.getElementById(id);
+          if (!el || typeof el.scrollIntoView !== "function") return;
+          el.scrollIntoView({ behavior, block, inline });
+        } catch {
+          // ignore
+        }
+      });
+    });
+  }
+
   useEffect(() => {
     if (!rateLimitUntil) {
       setRateLimitLeft(0);
@@ -2418,6 +2440,7 @@ export default function App() {
       setReportMeta({ id, createdAt: null, expiresAt: null });
       setReportNotice("");
       setShareUrl(window.location.href);
+      scheduleScrollToId("p6-report");
 
       (async () => {
         try {
@@ -2488,6 +2511,7 @@ export default function App() {
         setReportData(decoded);
         setReportMeta(null);
         setReportNotice("");
+        scheduleScrollToId("p6-report");
       }
     }
   }, []);
@@ -2563,6 +2587,7 @@ export default function App() {
 
     // Execute and wait for token.
     setShowTurnstile(true);
+    scheduleScrollToId("p6-turnstile", { block: "center" });
     const widgetId = turnstileWidgetIdRef.current;
 
     return await new Promise((resolve, reject) => {
@@ -4146,6 +4171,7 @@ ${paramLines}` : header;
       setReportMode(true);
       setReportData(payload);
       setReportMeta({ id, createdAt: created?.createdAt || null, expiresAt: created?.expiresAt || null });
+      scheduleScrollToId("p6-report");
     } catch (e) {
       if (e?.status === 429 && e?.retryAfter) {
         const ra = Number(e.retryAfter) || 0;
@@ -4168,6 +4194,7 @@ ${paramLines}` : header;
       setReportMeta(null);
       setShareUrl(url.toString());
       setReportNotice(t("reportCreateFailed"));
+      scheduleScrollToId("p6-report");
     } finally {
       setReportBusy(false);
     }
@@ -4193,6 +4220,7 @@ ${paramLines}` : header;
       setReportMode(true);
       setReportData(payload);
       setReportMeta({ id, createdAt: created?.createdAt || null, expiresAt: created?.expiresAt || null });
+      scheduleScrollToId("p6-report");
     } catch (e) {
       if (e?.status === 429 && e?.retryAfter) {
         const ra = Number(e.retryAfter) || 0;
@@ -5951,7 +5979,7 @@ ${paramLines}` : header;
         )}
         <div style={{ display: showTurnstile ? "block" : "none", width: "100%" }}>
           <div style={{ marginTop: 6 }}>
-            <div ref={turnstileContainerRef} />
+            <div id="p6-turnstile" ref={turnstileContainerRef} />
           </div>
         </div>
 
@@ -6192,7 +6220,7 @@ ${paramLines}` : header;
       )}
 
       {reportMode && (
-        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #dbeafe", borderRadius: 10, background: "#eff6ff" }}>
+        <div id="p6-report" ref={reportSectionRef} style={{ marginBottom: 16, padding: 12, border: "1px solid #dbeafe", borderRadius: 10, background: "#eff6ff" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 700 }}>{t("report")}</div>
             <button onClick={exitReportMode} style={{ padding: "6px 10px" }}>
