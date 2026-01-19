@@ -388,6 +388,17 @@ ping6.it is designed to run on **Cloudflare Pages** with Pages Functions.
   - Enables short report links (`/r/<id>`) by storing report bundles with a TTL (default: 7 days).
 - KV binding `RATE_LIMIT_KV` (optional separate storage for rate limiting)
 
+#### SEO & social previews
+
+Static assets in `public/` help discoverability and richer link previews:
+
+- `robots.txt` and `sitemap.xml` for search engines
+- `logo-badge.svg` used by Open Graph / Twitter card meta tags (default social preview)
+- `manifest.webmanifest` + icons (PWA metadata)
+- `.well-known/security.txt` for vuln disclosure contact
+
+The `public/_headers` file also sets cache and content-type headers for these resources on Cloudflare Pages.
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).

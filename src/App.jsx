@@ -1947,6 +1947,22 @@ export default function App() {
   const [multiExportIncludeRaw, setMultiExportIncludeRaw] = useState(false);
   const [cmd, setCmd] = useState("ping"); // ping | traceroute | mtr | dns | http
   const [backend, setBackend] = useState("globalping"); // globalping | atlas
+
+  // Keep the browser tab title informative for bookmarks/shares.
+  useEffect(() => {
+    const base = "ping6.it — IPv4 vs IPv6 network measurements";
+    const backendLabel = backend === "atlas" ? "RIPE Atlas" : "Globalping";
+    const t = String(target || "").trim();
+    const isDefault = !t || t === "example.com";
+    let title = base;
+    if (!isDefault) {
+      title = `${cmd} ${t} (${backendLabel}) — ping6.it`;
+    } else {
+      title = `${base} (${backendLabel})`;
+    }
+    if (title.length > 110) title = `${title.slice(0, 107)}…`;
+    document.title = title;
+  }, [backend, cmd, target]);
   const [atlasApiKey, setAtlasApiKey] = useState("");
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
