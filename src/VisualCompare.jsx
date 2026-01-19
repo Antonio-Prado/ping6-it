@@ -1,5 +1,18 @@
 import { memo, useEffect, useMemo, useState } from "react";
 
+// Centralized colors (keep legends and charts consistent)
+const V4_COLOR = "#2563eb";
+const V6_COLOR = "#ea580c";
+
+const HEAT_GOOD = "#dcfce7";
+const HEAT_MODERATE = "#fef9c3";
+const HEAT_HIGH = "#fee2e2";
+const HEAT_NEUTRAL = "#f3f4f6";
+
+const HEAT_NODATA_PATTERN =
+  "repeating-linear-gradient(45deg, #ffffff, #ffffff 6px, #f3f4f6 6px, #f3f4f6 12px)";
+const HEAT_NODATA_OUTLINE = "#9ca3af";
+
 function isFiniteNum(x) {
   return typeof x === "number" && Number.isFinite(x);
 }
@@ -31,14 +44,16 @@ function percentile(arr, p) {
 }
 
 function heatColor(value, { good, bad }) {
-  if (!isFiniteNum(value)) return "transparent";
-  if (!isFiniteNum(good) || !isFiniteNum(bad) || good === bad) return "#f3f4f6";
+  // Returns a fill color for the heatmap cells.
+  // For missing values, return null and let the caller render the 'no data' pattern.
+  if (!isFiniteNum(value)) return null;
+  if (!isFiniteNum(good) || !isFiniteNum(bad) || good === bad) return HEAT_NEUTRAL;
   // lower is better
   const t = clamp01((value - good) / (bad - good));
   // green -> yellow -> red (very lightweight, no deps)
-  if (t <= 0.5) return "#dcfce7"; // green-ish
-  if (t <= 0.85) return "#fef9c3"; // yellow-ish
-  return "#fee2e2"; // red-ish
+  if (t <= 0.5) return HEAT_GOOD;
+  if (t <= 0.85) return HEAT_MODERATE;
+  return HEAT_HIGH;
 }
 
 function buildSparkPoints(values, w, h) {
@@ -73,8 +88,8 @@ const DualSparkline = memo(function DualSparkline({ series4, series6 }) {
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
       <rect x="0" y="0" width={w} height={h} fill="#f3f4f6" rx="6" />
-      {p4 ? <polyline points={p4} fill="none" stroke="#2563eb" strokeWidth="2" /> : null}
-      {p6 ? <polyline points={p6} fill="none" stroke="#ea580c" strokeWidth="2" /> : null}
+      {p4 ? <polyline points={p4} fill="none" stroke={V4_COLOR} strokeWidth="2" /> : null}
+      {p6 ? <polyline points={p6} fill="none" stroke={V6_COLOR} strokeWidth="2" /> : null}
     </svg>
   );
 });
@@ -144,9 +159,9 @@ function buildShareSvg({
   svg.push(`<text x="${pad}" y="88" font-family="ui-sans-serif,system-ui" font-size="11" fill="#6b7280">${escapeXml(stamp)}</text>`);
 
   // Legend
-  svg.push(`<rect x="${W - 170}" y="22" width="12" height="12" rx="3" fill="#2563eb"/>`);
+  svg.push(`<rect x="${W - 170}" y="22" width="12" height="12" rx="3" fill="${V4_COLOR}"/>`);
   svg.push(`<text x="${W - 152}" y="32" font-family="ui-sans-serif,system-ui" font-size="12" fill="#111827">v4</text>`);
-  svg.push(`<rect x="${W - 120}" y="22" width="12" height="12" rx="3" fill="#ea580c"/>`);
+  svg.push(`<rect x="${W - 120}" y="22" width="12" height="12" rx="3" fill="${V6_COLOR}"/>`);
   svg.push(`<text x="${W - 102}" y="32" font-family="ui-sans-serif,system-ui" font-size="12" fill="#111827">v6</text>`);
 
   // Row headers
@@ -187,10 +202,10 @@ function buildShareSvg({
 
     // bars background
     svg.push(`<rect x="${barsX}" y="${yTop + 7}" width="${barsW}" height="8" rx="999" fill="#f3f4f6" opacity="${opacity}"/>`);
-    svg.push(`<rect x="${barsX}" y="${yTop + 7}" width="${w4}" height="8" rx="999" fill="#2563eb" opacity="${opacity}"/>`);
+    svg.push(`<rect x="${barsX}" y="${yTop + 7}" width="${w4}" height="8" rx="999" fill="${V4_COLOR}" opacity="${opacity}"/>`);
 
     svg.push(`<rect x="${barsX}" y="${yTop + 19}" width="${barsW}" height="8" rx="999" fill="#f3f4f6" opacity="${opacity}"/>`);
-    svg.push(`<rect x="${barsX}" y="${yTop + 19}" width="${w6}" height="8" rx="999" fill="#ea580c" opacity="${opacity}"/>`);
+    svg.push(`<rect x="${barsX}" y="${yTop + 19}" width="${w6}" height="8" rx="999" fill="${V6_COLOR}" opacity="${opacity}"/>`);
 
     // right-side values (compact)
     const vText = `${fmt(v4)} / ${fmt(v6)}`;
@@ -622,10 +637,10 @@ export default memo(function VisualCompare({
                 </div>
                 <div style={{ fontSize: 12, color: "#111827", display: "flex", gap: 10, alignItems: "center" }}>
                   <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: "#2563eb", display: "inline-block" }} /> v4
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: V4_COLOR, display: "inline-block" }} /> v4
                   </div>
                   <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: "#ea580c", display: "inline-block" }} /> v6
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: V6_COLOR, display: "inline-block" }} /> v6
                   </div>
                 </div>
               </div>
@@ -668,14 +683,14 @@ export default memo(function VisualCompare({
                         <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 100px", gap: 8, alignItems: "center" }}>
                           <div style={{ fontSize: 11, opacity: 0.8, color: "#111827" }}>v4</div>
                           <div style={{ height: 9, background: "#f3f4f6", borderRadius: 999, overflow: "hidden" }}>
-                            <div style={{ width: `${w4}%`, height: "100%", background: "#2563eb" }} />
+                            <div style={{ width: `${w4}%`, height: "100%", background: V4_COLOR }} />
                           </div>
                           <div style={{ fontSize: 11, textAlign: "right", color: "#374151" }}>{fmt(v4)}</div>
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 100px", gap: 8, alignItems: "center" }}>
                           <div style={{ fontSize: 11, opacity: 0.8, color: "#111827" }}>v6</div>
                           <div style={{ height: 9, background: "#f3f4f6", borderRadius: 999, overflow: "hidden" }}>
-                            <div style={{ width: `${w6}%`, height: "100%", background: "#ea580c" }} />
+                            <div style={{ width: `${w6}%`, height: "100%", background: V6_COLOR }} />
                           </div>
                           <div style={{ fontSize: 11, textAlign: "right", color: "#374151" }}>{fmt(v6)}</div>
                         </div>
@@ -730,7 +745,7 @@ export default memo(function VisualCompare({
                 <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 86px", gap: 8, alignItems: "center" }}>
                   <div style={{ fontSize: 11, opacity: 0.8 }}>v4</div>
                   <div style={{ height: 10, background: "#f3f4f6", borderRadius: 999, overflow: "hidden" }}>
-                    <div style={{ width: `${w4}%`, height: "100%", background: "#2563eb" }} />
+                    <div style={{ width: `${w4}%`, height: "100%", background: V4_COLOR }} />
                   </div>
                   <div style={{ fontSize: 11, textAlign: "right" }}>{fmt(v4)}</div>
                 </div>
@@ -738,7 +753,7 @@ export default memo(function VisualCompare({
                 <div style={{ display: "grid", gridTemplateColumns: "34px 1fr 86px", gap: 8, alignItems: "center" }}>
                   <div style={{ fontSize: 11, opacity: 0.8 }}>v6</div>
                   <div style={{ height: 10, background: "#f3f4f6", borderRadius: 999, overflow: "hidden" }}>
-                    <div style={{ width: `${w6}%`, height: "100%", background: "#ea580c" }} />
+                    <div style={{ width: `${w6}%`, height: "100%", background: V6_COLOR }} />
                   </div>
                   <div style={{ fontSize: 11, textAlign: "right" }}>{fmt(v6)}</div>
                 </div>
@@ -776,22 +791,22 @@ export default memo(function VisualCompare({
           <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.9 }}>{heatLegendTitle}</div>
 
           <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#dcfce7", border: "1px solid #e5e7eb" }} />
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: HEAT_GOOD, border: "1px solid #e5e7eb" }} />
             <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegend.good}</span>
           </div>
 
           <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#fef9c3", border: "1px solid #e5e7eb" }} />
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: HEAT_MODERATE, border: "1px solid #e5e7eb" }} />
             <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegend.moderate}</span>
           </div>
 
           <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#fee2e2", border: "1px solid #e5e7eb" }} />
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: HEAT_HIGH, border: "1px solid #e5e7eb" }} />
             <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegend.high}</span>
           </div>
 
           <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#ffffff", border: "1px dashed #9ca3af" }} />
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#ffffff", backgroundImage: HEAT_NODATA_PATTERN, border: `1px dashed ${HEAT_NODATA_OUTLINE}` }} />
             <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegendNoData}</span>
           </div>
         </div>
@@ -819,6 +834,16 @@ export default memo(function VisualCompare({
                 const c4 = heatColor(v4, scale);
                 const c6 = heatColor(v6, scale);
 
+                const noDataStyle = {
+                  background: "#ffffff",
+                  backgroundImage: HEAT_NODATA_PATTERN,
+                  outline: `1px dashed ${HEAT_NODATA_OUTLINE}`,
+                  outlineOffset: "-3px",
+                };
+
+                const s4 = isFiniteNum(v4) ? { background: c4 || "transparent" } : noDataStyle;
+                const s6 = isFiniteNum(v6) ? { background: c6 || "transparent" } : noDataStyle;
+
                 const regionLabel = String(r?.regionLabel || r?.regionKey || "").trim();
                 const titleParts = [];
                 if (regionLabel) titleParts.push(`Region: ${regionLabel}`);
@@ -829,10 +854,10 @@ export default memo(function VisualCompare({
                 return (
                   <tr key={`hm-${r?.id || r?.label}`} style={r?.excluded ? { opacity: 0.55 } : undefined}>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #f3f4f6", wordBreak: "break-word" }}>{r?.label || "-"}</td>
-                    <td title={cellTitle} style={{ padding: "6px 8px", borderBottom: "1px solid #f3f4f6", background: c4 }}>
+                    <td title={cellTitle} style={{ padding: "6px 8px", borderBottom: "1px solid #f3f4f6", ...s4 }}>
                       {fmt(v4)}
                     </td>
-                    <td title={cellTitle} style={{ padding: "6px 8px", borderBottom: "1px solid #f3f4f6", background: c6 }}>
+                    <td title={cellTitle} style={{ padding: "6px 8px", borderBottom: "1px solid #f3f4f6", ...s6 }}>
                       {fmt(v6)}
                     </td>
                   </tr>
