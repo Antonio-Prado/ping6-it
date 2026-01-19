@@ -2,6 +2,7 @@ import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMem
 import { waitForMeasurement } from "./lib/globalping";
 import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
+import VisualCompare from "./VisualCompare";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -192,6 +193,14 @@ const ATLAS_PROGRESS_CSS = `
 const COPY = {
   en: {
     tagline: "IPv4 vs IPv6, side by side",
+    visualCompareTitle: "Visual compare",
+    visualCompareMetricLatency: "Latency",
+    visualCompareMetricLoss: "Packet loss",
+    visualCompareSortWorst: "Worst IPv6 (Δ v6−v4)",
+    visualCompareSortBest: "Best IPv6 (Δ v6−v4)",
+    visualCompareSortLabel: "Label",
+    visualCompareHeatmap: "Heatmap",
+    visualCompareHopProfile: "Hop RTT profile",
     feedback: "Feedback welcome",
     docs: "Docs",
     source: "Source",
@@ -1441,6 +1450,18 @@ function buildHttpCompare(v4, v6, { strict = false } = {}) {
 }
 
 
+function pickTracerouteHopSeries(x, maxHops = 30) {
+  const r = x?.result;
+  if (!r || (r.status && r.status !== "finished")) return [];
+  if (r.error) return [];
+
+  const hops = Array.isArray(r.hops) ? r.hops : [];
+  return hops.slice(0, maxHops).map((h) => {
+    const rtts = (h?.timings || []).map((t) => t?.rtt).filter((v) => Number.isFinite(v) && v > 0);
+    return rtts.length ? Math.min(...rtts) : null;
+  });
+}
+
 function pickTracerouteDstMs(x) {
   const r = x?.result;
   if (!r || (r.status && r.status !== "finished")) return { reached: null, hops: null, dstMs: null };
@@ -1524,6 +1545,8 @@ function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
       v6reached: s6.reached,
       v6hops: s6.hops,
       v6dst: s6.dstMs,
+      v4series: pickTracerouteHopSeries(x, 30),
+      v6series: pickTracerouteHopSeries(y, 30),
       delta,
       winner,
     };
@@ -4072,6 +4095,68 @@ ${paramLines}` : header;
   const dnsRows = useMemo(() => (dnsCompare ? sortCompareRows(dnsCompare.rows, "dns", tableSort) : []), [dnsCompare, tableSort]);
   const httpRows = useMemo(() => (httpCompare ? sortCompareRows(httpCompare.rows, "http", tableSort) : []), [httpCompare, tableSort]);
 
+  const pingVizRows = useMemo(() => {
+    if (!pingCompare) return [];
+    return pingCompare.rows.map((r) => ({
+      id: `ping|${r.key}`,
+      label: formatProbeLocation(r.probe),
+      v4: r.v4avg,
+      v6: r.v6avg,
+      v4loss: r.v4loss,
+      v6loss: r.v6loss,
+      excluded: strictCompare && !(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)),
+    }));
+  }, [pingCompare, strictCompare]);
+
+  const tracerouteVizRows = useMemo(() => {
+    if (!trCompare) return [];
+    return trCompare.rows.map((r) => ({
+      id: `traceroute|${r.key}`,
+      label: formatProbeLocation(r.probe),
+      v4: r.v4dst,
+      v6: r.v6dst,
+      series4: r.v4series,
+      series6: r.v6series,
+      excluded: strictCompare && !(Number.isFinite(r.v4dst) && Number.isFinite(r.v6dst)),
+    }));
+  }, [trCompare, strictCompare]);
+
+  const mtrVizRows = useMemo(() => {
+    if (!mtrCompare) return [];
+    return mtrCompare.rows.map((r) => ({
+      id: `mtr|${r.key}`,
+      label: formatProbeLocation(r.probe),
+      v4: r.v4avg,
+      v6: r.v6avg,
+      v4loss: r.v4loss,
+      v6loss: r.v6loss,
+      excluded: strictCompare && !(Number.isFinite(r.v4avg) && Number.isFinite(r.v6avg)),
+    }));
+  }, [mtrCompare, strictCompare]);
+
+  const dnsVizRows = useMemo(() => {
+    if (!dnsCompare) return [];
+    return dnsCompare.rows.map((r) => ({
+      id: `dns|${r.key}`,
+      label: formatProbeLocation(r.probe),
+      v4: r.v4ms,
+      v6: r.v6ms,
+      excluded: strictCompare && !(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)),
+    }));
+  }, [dnsCompare, strictCompare]);
+
+  const httpVizRows = useMemo(() => {
+    if (!httpCompare) return [];
+    return httpCompare.rows.map((r) => ({
+      id: `http|${r.key}`,
+      label: formatProbeLocation(r.probe),
+      v4: r.v4ms,
+      v6: r.v6ms,
+      excluded: strictCompare && !(Number.isFinite(r.v4ms) && Number.isFinite(r.v6ms)),
+    }));
+  }, [httpCompare, strictCompare]);
+
+
   const asnContext = useMemo(() => {
     if (cmd === 'ping' && pingCompare) return { kind: 'ping', rows: pingCompare.rows };
     if (cmd === 'traceroute' && trCompare) return { kind: 'traceroute', rows: trCompare.rows };
@@ -4311,7 +4396,14 @@ ${paramLines}` : header;
           )}
         </div>
 
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+
+        {pingVizRows.length >= 2 ? (
+          <div style={{ margin: "10px 0 12px 0" }}>
+            <VisualCompare t={t} rows={pingVizRows} defaultMetric="latency" />
+          </div>
+        ) : null}
+
+<table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
               <SortTh table="ping" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
@@ -4452,7 +4544,14 @@ ${paramLines}` : header;
             )}
           </div>
 
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+
+          {tracerouteVizRows.length >= 2 ? (
+            <div style={{ margin: "10px 0 12px 0" }}>
+              <VisualCompare t={t} rows={tracerouteVizRows} defaultMetric="latency" showSparklines />
+            </div>
+          ) : null}
+
+<table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
                 <SortTh table="traceroute" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
@@ -4605,7 +4704,14 @@ ${paramLines}` : header;
             )}
           </div>
 
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+
+          {mtrVizRows.length >= 2 ? (
+            <div style={{ margin: "10px 0 12px 0" }}>
+              <VisualCompare t={t} rows={mtrVizRows} defaultMetric="latency" />
+            </div>
+          ) : null}
+
+<table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
                 <SortTh table="mtr" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
@@ -4679,7 +4785,14 @@ ${paramLines}` : header;
           )}
         </div>
 
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+
+        {dnsVizRows.length >= 2 ? (
+          <div style={{ margin: "10px 0 12px 0" }}>
+            <VisualCompare t={t} rows={dnsVizRows} defaultMetric="latency" />
+          </div>
+        ) : null}
+
+<table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
               <SortTh table="dns" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
@@ -4735,7 +4848,14 @@ ${paramLines}` : header;
           )}
         </div>
 
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+
+        {httpVizRows.length >= 2 ? (
+          <div style={{ margin: "10px 0 12px 0" }}>
+            <VisualCompare t={t} rows={httpVizRows} defaultMetric="latency" />
+          </div>
+        ) : null}
+
+<table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
               <SortTh table="http" colKey="idx" label="#" sort={tableSort} onToggle={toggleTableSort} defaultDir="asc" />
