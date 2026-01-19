@@ -11,6 +11,26 @@ const TURNSTILE_EXEC_TIMEOUT_MS = 30000;
 // ASN metadata cache (in-browser, per page load)
 const ASN_META_CACHE = new Map();
 const ASN_META_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const IP_META_CACHE = new Map();
+const IP_META_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function getIpMetaCache(ip) {
+  const key = String(ip || "").trim();
+  if (!key) return null;
+  const entry = IP_META_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > IP_META_CACHE_TTL_MS) {
+    IP_META_CACHE.delete(key);
+    return null;
+  }
+  return entry.data || null;
+}
+
+function setIpMetaCache(ip, data) {
+  const key = String(ip || "").trim();
+  if (!key) return;
+  IP_META_CACHE.set(key, { ts: Date.now(), data });
+}
 function loadTurnstileScript() {
   if (typeof window === "undefined") return Promise.reject(new Error("Turnstile can only run in the browser."));
   if (window.turnstile) return Promise.resolve();
@@ -65,6 +85,30 @@ function isIpLiteral(s) {
   const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/;
   const ipv6 = /^[0-9a-fA-F:]+$/;
   return ipv4.test(s) || (s.includes(":") && ipv6.test(s));
+}
+
+function isIPv4LiteralStrict(s) {
+  const m = String(s || "").trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  for (let i = 1; i <= 4; i += 1) {
+    const n = Number(m[i]);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return false;
+  }
+  return true;
+}
+
+function isIPv6LiteralLoose(s) {
+  const v = String(s || "").trim();
+  if (!v || !v.includes(":")) return false;
+  if (v.includes("%")) return false;
+  if (!/^[0-9a-fA-F:]+$/.test(v)) return false;
+  const parts = v.split(":");
+  if (parts.length < 3 || parts.length > 9) return false;
+  return true;
+}
+
+function isIpLiteralStrict(s) {
+  return isIPv4LiteralStrict(s) || isIPv6LiteralLoose(s);
 }
 
 function ms(n) {
@@ -215,6 +259,19 @@ const COPY = {
     asn: "ASN",
     isp: "ISP",
     deltaAlert: "Δ alert (ms)",
+
+    excludeUnstableProbes: "Exclude unstable probes",
+    helpExcludeUnstableProbes: "Exclude probes that frequently miss v4 or v6 results in recent History. This only affects comparison rows/statistics; it does not change how measurements are executed.",
+    unstableProbesDetected: ({ n }) => `${n} unstable probe(s) detected in recent history.`,
+    probeBlacklist: "Probe blacklist",
+    placeholderProbeBlacklist: "IDs/keys (comma, space, or newline separated)",
+    helpProbeBlacklist: "Exclude specific probe IDs/keys from comparison (comma/space/newline separated). Useful to manually mute known flapping probes.",
+
+    asnMetaRpkiShare: "share",
+    asnMetaRpkiByFamily: "By family",
+    asnMetaRpkiHintOk: "No obvious RPKI issues in this sample.",
+    asnMetaRpkiHintWarn: ({ pct }) => `Invalid share is ${pct} in this sample. If this ASN originates these prefixes, review ROAs; otherwise investigate upstream/downstream policy.`,
+    asnMetaRpkiHintAlert: ({ pct }) => `Invalid share is ${pct} in this sample. Investigate invalid routes/ROAs and possible leaks or mis-origination.`,
     ipv6Only: "IPv6-capable probes only",
     packets: "Packets",
     packetsHop: "Packets/hop",
@@ -301,7 +358,9 @@ const COPY = {
     pathNoDivergence: ({ n }) => `no divergence in first ${n} hop(s)`,
     pathMissingCounts: ({ v4, v6 }) => `missing: v4 ${v4}, v6 ${v6}`,
     pathNoHopData: "No hop data.",
+    perHopAsnLoading: "ASN lookup…",
     pathShowingFirstHops: ({ n }) => `Showing first ${n} hops.`,
+    asnLookupLoading: "ASN lookup…",
 
     mtrTitle: "MTR to destination (v4 vs v6)",
     mtrPathsTitle: "MTR paths (v4 vs v6)",
@@ -714,10 +773,10 @@ function loadHistory() {
   }
 }
 
-function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
+function normalizeHistorySummary(cmd, v4, v6, { strict = false, excludeKeys = null } = {}) {
   if (!v4 || !v6) return null;
   if (cmd === "ping") {
-    const { summary } = buildPingCompare(v4, v6, { strict });
+    const { summary } = buildPingCompare(v4, v6, { strict, excludeKeys });
     return {
       kind: "ping",
       medianV4: summary.median_avg_v4,
@@ -728,7 +787,7 @@ function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
     };
   }
   if (cmd === "traceroute") {
-    const { summary } = buildTracerouteCompare(v4, v6, { strict });
+    const { summary } = buildTracerouteCompare(v4, v6, { strict, excludeKeys });
     return {
       kind: "traceroute",
       medianV4: summary.median_v4,
@@ -737,7 +796,7 @@ function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
     };
   }
   if (cmd === "mtr") {
-    const { summary } = buildMtrCompare(v4, v6, { strict });
+    const { summary } = buildMtrCompare(v4, v6, { strict, excludeKeys });
     return {
       kind: "mtr",
       medianV4: summary.median_avg_v4,
@@ -748,7 +807,7 @@ function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
     };
   }
   if (cmd === "dns") {
-    const { summary } = buildDnsCompare(v4, v6, { strict });
+    const { summary } = buildDnsCompare(v4, v6, { strict, excludeKeys });
     return {
       kind: "dns",
       medianV4: summary.median_v4,
@@ -757,7 +816,7 @@ function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
     };
   }
   if (cmd === "http") {
-    const { summary } = buildHttpCompare(v4, v6, { strict });
+    const { summary } = buildHttpCompare(v4, v6, { strict, excludeKeys });
     return {
       kind: "http",
       medianV4: summary.median_v4,
@@ -766,6 +825,58 @@ function normalizeHistorySummary(cmd, v4, v6, { strict = false } = {}) {
     };
   }
   return null;
+}
+
+function parseKeyList(raw) {
+  const set = new Set();
+  String(raw || "")
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .forEach((t) => set.add(t));
+  return set;
+}
+
+function snapshotProbeStates(v4, v6) {
+  const a = v4?.results ?? [];
+  const b = v6?.results ?? [];
+  const keys = buildProbeUnionKeys(a, b);
+  const aMap = buildResultMap(a, "v4");
+  const bMap = buildResultMap(b, "v6");
+  return keys.map((k) => {
+    const s4 = resultState(aMap.get(k) ?? null);
+    const s6 = resultState(bMap.get(k) ?? null);
+    return { key: k, v4: s4, v6: s6 };
+  });
+}
+
+function computeUnstableProbeKeys(history, { backend, cmd, windowN = 5, minObs = 3, badRatio = 0.6 } = {}) {
+  const items = Array.isArray(history) ? history : [];
+  const filtered = items
+    .filter((h) => (backend ? h?.backend === backend : true))
+    .filter((h) => (cmd ? h?.cmd === cmd : true))
+    .slice(-windowN);
+
+  const counts = new Map();
+  filtered.forEach((h) => {
+    const ps = Array.isArray(h?.probeStates) ? h.probeStates : [];
+    ps.forEach((p) => {
+      const key = String(p?.key || "").trim();
+      if (!key) return;
+      const entry = counts.get(key) || { obs: 0, bad: 0 };
+      entry.obs += 1;
+      const v4ok = String(p?.v4 || "").toLowerCase() === "ok";
+      const v6ok = String(p?.v6 || "").toLowerCase() === "ok";
+      if (!v4ok || !v6ok) entry.bad += 1;
+      counts.set(key, entry);
+    });
+  });
+
+  const unstable = new Set();
+  counts.forEach((c, key) => {
+    if (c.obs >= minObs && c.bad / c.obs >= badRatio) unstable.add(key);
+  });
+  return unstable;
 }
 
 function encodeReportPayload(payload) {
@@ -993,12 +1104,14 @@ function rowKeyFromResult(x, idx, side) {
   return `${side}-${idx}`;
 }
 
-function buildProbeUnionKeys(v4Results, v6Results) {
+function buildProbeUnionKeys(v4Results, v6Results, { excludeKeys } = {}) {
   const keys = [];
   const seen = new Set();
+  const ex = excludeKeys instanceof Set ? excludeKeys : null;
 
   (Array.isArray(v4Results) ? v4Results : []).forEach((x, i) => {
     const k = rowKeyFromResult(x, i, "v4");
+    if (ex && ex.has(k)) return;
     if (seen.has(k)) return;
     seen.add(k);
     keys.push(k);
@@ -1006,6 +1119,7 @@ function buildProbeUnionKeys(v4Results, v6Results) {
 
   (Array.isArray(v6Results) ? v6Results : []).forEach((x, i) => {
     const k = rowKeyFromResult(x, i, "v6");
+    if (ex && ex.has(k)) return;
     if (seen.has(k)) return;
     seen.add(k);
     keys.push(k);
@@ -1120,9 +1234,23 @@ function hopLabelFromHop(h) {
   return v;
 }
 
+function hopIpFromHop(h) {
+  const candidates = [h?.resolvedAddress, h?.address, h?.ip, h?.hostname, h?.resolvedHostname];
+  for (const c of candidates) {
+    const v = String(c || "").trim();
+    if (!v) continue;
+    // Some backends return 'hostname (ip)' style strings.
+    const paren = v.match(/\(([^)]+)\)/);
+    if (paren && isIpLiteralStrict(paren[1])) return paren[1].trim();
+    if (isIpLiteralStrict(v)) return v;
+  }
+  return "";
+}
+
 function buildHopIndexMap(result) {
   const hops = Array.isArray(result?.result?.hops) ? result.result.hops : [];
   const map = new Map();
+  const ipMap = new Map();
   let maxHop = 0;
   let hasHopNumbers = false;
 
@@ -1132,15 +1260,17 @@ function buildHopIndexMap(result) {
     if (hopNo !== null) hasHopNumbers = true;
 
     const label = hopLabelFromHop(h);
+    const ip = hopIpFromHop(h);
     const key = hopNo !== null ? hopNo : idx + 1;
     if (key > maxHop) maxHop = key;
     if (!map.has(key)) map.set(key, label);
+    if (ip && !ipMap.has(key)) ipMap.set(key, ip);
   });
 
   // Fallback when we have hops but no explicit hop numbers.
   if (!maxHop && hops.length) maxHop = hops.length;
 
-  return { map, maxHop, hasHopNumbers };
+  return { map, ipMap, maxHop, hasHopNumbers };
 }
 
 function computeHopDiffSummary(v4res, v6res, maxHops = 30) {
@@ -1193,7 +1323,7 @@ function buildHopAlignment(v4res, v6res, maxHops = 30) {
     const v4 = ha || "*";
     const v6 = hb || "*";
     const diff = v4 !== v6;
-    rows.push({ hop: i, v4, v6, diff, isFirstDiff: summary.firstDiffHop === i });
+    rows.push({ hop: i, v4, v6, v4ip: String(a.ipMap?.get(i) || ""), v6ip: String(b.ipMap?.get(i) || ""), diff, isFirstDiff: summary.firstDiffHop === i });
   }
 
   return { rows, summary };
@@ -1215,10 +1345,10 @@ function pickPingStats(x) {
   return { avgMs, lossPct };
 }
 
-function buildPingCompare(v4, v6, { strict = false } = {}) {
+function buildPingCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const keys = buildProbeUnionKeys(a, b);
+  const keys = buildProbeUnionKeys(a, b, { excludeKeys });
   const aMap = buildResultMap(a, "v4");
   const bMap = buildResultMap(b, "v6");
 
@@ -1293,10 +1423,10 @@ function pickDnsTotalMs(x) {
   return Number.isFinite(t) && t > 0 ? t : null;
 }
 
-function buildDnsCompare(v4, v6, { strict = false } = {}) {
+function buildDnsCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const keys = buildProbeUnionKeys(a, b);
+  const keys = buildProbeUnionKeys(a, b, { excludeKeys });
   const aMap = buildResultMap(a, "v4");
   const bMap = buildResultMap(b, "v6");
 
@@ -1386,10 +1516,10 @@ function pickHttpStatusCode(x) {
   return Number.isFinite(sc) ? sc : null;
 }
 
-function buildHttpCompare(v4, v6, { strict = false } = {}) {
+function buildHttpCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const keys = buildProbeUnionKeys(a, b);
+  const keys = buildProbeUnionKeys(a, b, { excludeKeys });
   const aMap = buildResultMap(a, "v4");
   const bMap = buildResultMap(b, "v6");
 
@@ -1509,10 +1639,10 @@ function pickMtrDstStats(x) {
   return { reached: Boolean(dstHop), hops: hopCount, avgMs, lossPct };
 }
 
-function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
+function buildTracerouteCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const keys = buildProbeUnionKeys(a, b);
+  const keys = buildProbeUnionKeys(a, b, { excludeKeys });
   const aMap = buildResultMap(a, "v4");
   const bMap = buildResultMap(b, "v6");
 
@@ -1571,10 +1701,10 @@ function buildTracerouteCompare(v4, v6, { strict = false } = {}) {
 }
 
 
-function buildMtrCompare(v4, v6, { strict = false } = {}) {
+function buildMtrCompare(v4, v6, { strict = false, excludeKeys = null } = {}) {
   const a = v4?.results ?? [];
   const b = v6?.results ?? [];
-  const keys = buildProbeUnionKeys(a, b);
+  const keys = buildProbeUnionKeys(a, b, { excludeKeys });
   const aMap = buildResultMap(a, "v4");
   const bMap = buildResultMap(b, "v6");
 
@@ -1791,6 +1921,9 @@ export default function App() {
   const [limit, setLimit] = useState(3);
   const [requireV6Capable, setRequireV6Capable] = useState(true);
   const [runWarnings, setRunWarnings] = useState([]);
+  // Probe stability / exclusions (local UI preferences)
+  const [excludeUnstableProbes, setExcludeUnstableProbes] = useState(false);
+  const [probeBlacklist, setProbeBlacklist] = useState("");
 
   // Compare table sorting
   const [tableSort, setTableSort] = useState({ table: "", key: "", dir: "asc" });
@@ -1808,6 +1941,10 @@ export default function App() {
   // Paths (traceroute/mtr): per-hop diff expander
   const [expandedPathKey, setExpandedPathKey] = useState(null);
 
+  // Hop IP -> ASN/org enrichment (best-effort, cached in-browser)
+  const [ipMetaByIp, setIpMetaByIp] = useState(() => ({}));
+  const ipMetaInFlightRef = useRef(new Set());
+
 
   // ASN details (in-app)
   const [asnCard, setAsnCard] = useState(null);
@@ -1823,6 +1960,61 @@ export default function App() {
     if (typeof entry === "function") return entry(vars);
     return entry ?? key;
   }, []);
+
+  const fetchIpMeta = useCallback(async (ips) => {
+    const list = Array.from(new Set((Array.isArray(ips) ? ips : []).map((x) => String(x || "").trim()).filter(Boolean)));
+    if (!list.length) return;
+
+    const missing = list.filter((ip) => !getIpMetaCache(ip));
+    if (!missing.length) return;
+
+    const inFlight = ipMetaInFlightRef.current;
+    const todo = missing.filter((ip) => !inFlight.has(ip));
+    if (!todo.length) return;
+
+    todo.forEach((ip) => inFlight.add(ip));
+    try {
+      const res = await fetch("/api/ipmeta", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ips: todo }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const meta = data?.meta && typeof data.meta === "object" ? data.meta : {};
+      const keys = Object.keys(meta);
+      if (!keys.length) return;
+
+      setIpMetaByIp((prev) => {
+        const next = { ...prev };
+        keys.forEach((ip) => {
+          const m = meta[ip];
+          if (m && typeof m === "object") {
+            next[ip] = m;
+            setIpMetaCache(ip, m);
+          }
+        });
+        return next;
+      });
+    } catch {
+      // ignore
+    } finally {
+      todo.forEach((ip) => inFlight.delete(ip));
+    }
+  }, []);
+
+  const prefetchHopMeta = useCallback(
+    (v4res, v6res) => {
+      const { rows } = buildHopAlignment(v4res, v6res, 30);
+      const ips = [];
+      rows.forEach((r) => {
+        if (r.v4ip) ips.push(r.v4ip);
+        if (r.v6ip) ips.push(r.v6ip);
+      });
+      fetchIpMeta(ips);
+    },
+    [fetchIpMeta]
+  );
 
 
   const openAsnCard = useCallback((asnValue, kind, rows) => {
@@ -2000,6 +2192,24 @@ export default function App() {
   }, [backend]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const v = String(window.localStorage.getItem("PING6_EXCLUDE_UNSTABLE_PROBES") || "").trim();
+      if (v === "1") setExcludeUnstableProbes(true);
+      const bl = String(window.localStorage.getItem("PING6_PROBE_BLACKLIST") || "");
+      if (bl) setProbeBlacklist(bl);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("PING6_EXCLUDE_UNSTABLE_PROBES", excludeUnstableProbes ? "1" : "0");
+      window.localStorage.setItem("PING6_PROBE_BLACKLIST", probeBlacklist || "");
+    } catch {}
+  }, [excludeUnstableProbes, probeBlacklist]);
+
+  useEffect(() => {
     setStoredAtlasKey(atlasApiKey);
   }, [atlasApiKey]);
 
@@ -2048,6 +2258,16 @@ export default function App() {
   const [deltaThreshold, setDeltaThreshold] = useState("");
 
   const [history, setHistory] = useState(() => loadHistory());
+
+  const probeBlacklistSet = useMemo(() => parseKeyList(probeBlacklist), [probeBlacklist]);
+  const unstableProbeKeys = useMemo(() => computeUnstableProbeKeys(history, { backend, cmd }), [history, backend, cmd]);
+  const probeExcludeKeys = useMemo(() => {
+    const s = new Set();
+    probeBlacklistSet.forEach((k) => s.add(k));
+    if (excludeUnstableProbes) unstableProbeKeys.forEach((k) => s.add(k));
+    return s;
+  }, [probeBlacklistSet, unstableProbeKeys, excludeUnstableProbes]);
+
   const [historyCompareA, setHistoryCompareA] = useState("");
   const [historyCompareB, setHistoryCompareB] = useState("");
   const [reportMode, setReportMode] = useState(false);
@@ -4019,7 +4239,7 @@ ${paramLines}` : header;
     if (!showTracerouteTable || !v4ForCompute || !v6ForCompute) return [];
     const a = v4ForCompute?.results ?? [];
     const b = v6ForCompute?.results ?? [];
-    const keys = buildProbeUnionKeys(a, b);
+    const keys = buildProbeUnionKeys(a, b, { excludeKeys: probeExcludeKeys });
     const aMap = buildResultMap(a, "v4");
     const bMap = buildResultMap(b, "v6");
 
@@ -4037,13 +4257,13 @@ ${paramLines}` : header;
         hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
-  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare]);
+  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
   const mtrPaths = useMemo(() => {
     if (!showMtrTable || !v4ForCompute || !v6ForCompute) return [];
     const a = v4ForCompute?.results ?? [];
     const b = v6ForCompute?.results ?? [];
-    const keys = buildProbeUnionKeys(a, b);
+    const keys = buildProbeUnionKeys(a, b, { excludeKeys: probeExcludeKeys });
     const aMap = buildResultMap(a, "v4");
     const bMap = buildResultMap(b, "v6");
 
@@ -4061,33 +4281,33 @@ ${paramLines}` : header;
         hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
-  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare]);
+  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
   const pingCompare = useMemo(() => {
     if (!showPingTable) return null;
-    return buildPingCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
-  }, [showPingTable, v4ForCompute, v6ForCompute, strictCompare]);
+    return buildPingCompare(v4ForCompute, v6ForCompute, { strict: strictCompare, excludeKeys: probeExcludeKeys });
+  }, [showPingTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
   const dnsCompare = useMemo(() => {
     if (!showDnsTable) return null;
-    return buildDnsCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
-  }, [showDnsTable, v4ForCompute, v6ForCompute, strictCompare]);
+    return buildDnsCompare(v4ForCompute, v6ForCompute, { strict: strictCompare, excludeKeys: probeExcludeKeys });
+  }, [showDnsTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
   const httpCompare = useMemo(() => {
     if (!showHttpTable) return null;
-    return buildHttpCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
-  }, [showHttpTable, v4ForCompute, v6ForCompute, strictCompare]);
+    return buildHttpCompare(v4ForCompute, v6ForCompute, { strict: strictCompare, excludeKeys: probeExcludeKeys });
+  }, [showHttpTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
 
   const trCompare = useMemo(() => {
     if (!showTracerouteTable) return null;
-    return buildTracerouteCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
-  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare]);
+    return buildTracerouteCompare(v4ForCompute, v6ForCompute, { strict: strictCompare, excludeKeys: probeExcludeKeys });
+  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
   const mtrCompare = useMemo(() => {
     if (!showMtrTable) return null;
-    return buildMtrCompare(v4ForCompute, v6ForCompute, { strict: strictCompare });
-  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare]);
+    return buildMtrCompare(v4ForCompute, v6ForCompute, { strict: strictCompare, excludeKeys: probeExcludeKeys });
+  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
 
   const pingRows = useMemo(() => (pingCompare ? sortCompareRows(pingCompare.rows, "ping", tableSort) : []), [pingCompare, tableSort]);
   const tracerouteRows = useMemo(() => (trCompare ? sortCompareRows(trCompare.rows, "traceroute", tableSort) : []), [trCompare, tableSort]);
@@ -4281,6 +4501,52 @@ ${paramLines}` : header;
       return <div style={{ fontSize: 12, opacity: 0.8 }}>{t('pathNoHopData')}</div>;
     }
 
+    const renderHopCell = (label, ip) => {
+      const ipStr = String(ip || '').trim();
+      const m = ipStr ? (ipMetaByIp?.[ipStr] || getIpMetaCache(ipStr)) : null;
+      const asn = m && Number.isFinite(Number(m.asn)) ? Number(m.asn) : null;
+      const loading = ipStr && ipMetaInFlightRef.current?.has(ipStr) && !m;
+
+      if (!asn && !loading) {
+        return <div style={{ wordBreak: 'break-word' }}>{label}</div>;
+      }
+
+      const bits = [];
+      if (asn) bits.push(`AS${asn}`);
+      if (m?.holder) bits.push(String(m.holder));
+      if (m?.prefix) bits.push(String(m.prefix));
+      const metaText = bits.join(' · ');
+
+      const titleBits = [];
+      if (asn) titleBits.push(`AS${asn}`);
+      if (m?.holder) titleBits.push(String(m.holder));
+      if (m?.prefix) titleBits.push(String(m.prefix));
+      if (m?.source) titleBits.push(String(m.source));
+      const title = titleBits.join(' · ');
+
+      return (
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ wordBreak: 'break-word' }}>{label}</div>
+          {asn ? (
+            <div
+              style={{
+                fontSize: 11,
+                opacity: 0.75,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+              title={title}
+            >
+              {metaText}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, opacity: 0.6 }}>{t('perHopAsnLoading')}</div>
+          )}
+        </div>
+      );
+    };
+
     return (
       <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 10, background: '#fafafa' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -4314,8 +4580,12 @@ ${paramLines}` : header;
               return (
                 <tr key={r.hop} style={{ background: bg }}>
                   <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', width: 60 }}>{r.hop}</td>
-                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', wordBreak: 'break-word' }}>{r.v4}</td>
-                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', wordBreak: 'break-word' }}>{r.v6}</td>
+                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>
+                    {renderHopCell(r.v4, r.v4ip)}
+                  </td>
+                  <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>
+                    {renderHopCell(r.v6, r.v6ip)}
+                  </td>
                 </tr>
               );
             })}
@@ -4323,7 +4593,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [t]);
+  }, [t, ipMetaByIp]);
 
   const preStyle = {
     padding: 12,
@@ -4370,9 +4640,13 @@ ${paramLines}` : header;
     return `checks: ${checks} · last: ${last} · ${next}`;
   }
 
-  const toggleExpandedPath = useCallback((key) => {
-    setExpandedPathKey((prev) => (prev === key ? null : key));
-  }, []);
+  const toggleExpandedPath = useCallback((key, v4res, v6res) => {
+    setExpandedPathKey((prev) => {
+      const next = prev === key ? null : key;
+      if (next === key) prefetchHopMeta(v4res, v6res);
+      return next;
+    });
+  }, [prefetchHopMeta]);
 
   const pingSection = useMemo(() => {
     if (!(showPingTable && pingCompare)) return null;
@@ -4492,7 +4766,7 @@ ${paramLines}` : header;
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
                       <button
                         type="button"
-                        onClick={() => toggleExpandedPath(expKey)}
+                        onClick={() => toggleExpandedPath(expKey, row.v4res, row.v6res)}
                         style={{
                           padding: "4px 8px",
                           borderRadius: 10,
@@ -4650,7 +4924,7 @@ ${paramLines}` : header;
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
                       <button
                         type="button"
-                        onClick={() => toggleExpandedPath(expKey)}
+                        onClick={() => toggleExpandedPath(expKey, row.v4res, row.v6res)}
                         style={{
                           padding: "4px 8px",
                           borderRadius: 10,
@@ -5069,6 +5343,36 @@ ${paramLines}` : header;
                 style={{ padding: 6, width: 100 }}
               />
             </label>
+
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={excludeUnstableProbes}
+                    onChange={(e) => setExcludeUnstableProbes(e.target.checked)}
+                    disabled={running}
+                  />
+                  {t("excludeUnstableProbes")}
+                </label>
+                <Help text={t("helpExcludeUnstableProbes")} />
+              </div>
+              {unstableProbeKeys.size ? (
+                <span style={{ fontSize: 12, opacity: 0.75 }}>{t("unstableProbesDetected", { n: unstableProbeKeys.size })}</span>
+              ) : null}
+            </div>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {t("probeBlacklist")} <Help text={t("helpProbeBlacklist")} />{" "}
+              <input
+                value={probeBlacklist}
+                onChange={(e) => setProbeBlacklist(e.target.value)}
+                disabled={running}
+                placeholder={t("placeholderProbeBlacklist")}
+                style={{ padding: 6, width: 220 }}
+              />
+            </label>
+
           </>
         )}
 
@@ -6250,44 +6554,106 @@ ${paramLines}` : header;
                                 <SkeletonLine width="55%" />
                                 <SkeletonLine width="70%" />
                               </div>
-                            ) : meta?.rpkiSample ? (
-                              <div>
-                                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                                  <span>{t('asnMetaRpkiValid')}: {Number.isFinite(meta.rpkiSample?.counts?.valid) ? meta.rpkiSample.counts.valid : 0}</span>
-                                  <span>{t('asnMetaRpkiInvalid')}: {Number.isFinite(meta.rpkiSample?.counts?.invalid) ? meta.rpkiSample.counts.invalid : 0}</span>
-                                  <span>{t('asnMetaRpkiUnknown')}: {Number.isFinite(meta.rpkiSample?.counts?.unknown) ? meta.rpkiSample.counts.unknown : 0}</span>
-                                </div>
-                                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
-                                  {t('asnMetaRpkiSampleNote', {
-                                    n: Number.isFinite(meta.rpkiSample?.n) ? meta.rpkiSample.n : (Array.isArray(meta.rpkiSample?.sample) ? meta.rpkiSample.sample.length : 0),
-                                    v4: Number.isFinite(meta.rpkiSample?.v4) ? meta.rpkiSample.v4 : '-',
-                                    v6: Number.isFinite(meta.rpkiSample?.v6) ? meta.rpkiSample.v6 : '-',
-                                  })}
-                                </div>
-                                {Array.isArray(meta.rpkiSample?.sample) && meta.rpkiSample.sample.length ? (
-                                  <div style={{ marginTop: 8, maxHeight: 160, overflow: 'auto', border: '1px solid #f3f4f6', borderRadius: 10 }}>
-                                    <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
-                                      <thead>
-                                        <tr>
-                                          <th style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{t('asnMetaRpkiPrefix')}</th>
-                                          <th style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{t('asnMetaRpkiStatus')}</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {meta.rpkiSample.sample.slice(0, 20).map((row, idx) => (
-                                          <tr key={`${row.prefix || ''}-${idx}`}>
-                                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}>
-                                              {row.prefix}
-                                            </td>
-                                            <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{row.status || '-'}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
+                            ) : meta?.rpkiSample ? (() => {
+                              const rp = meta.rpkiSample;
+                              const counts = rp?.counts || {};
+                              const share = rp?.pct || {};
+                              const fam4 = rp?.byFamily?.v4 || null;
+                              const fam6 = rp?.byFamily?.v6 || null;
+                              const act = rp?.actionable || {};
+                              const level = String(act?.level || 'ok');
+                              const invalidPct = Number.isFinite(act?.invalidPct) ? act.invalidPct : null;
+                              const hint =
+                                level === 'alert'
+                                  ? t('asnMetaRpkiHintAlert', { pct: pct(invalidPct) })
+                                  : level === 'warn'
+                                    ? t('asnMetaRpkiHintWarn', { pct: pct(invalidPct) })
+                                    : t('asnMetaRpkiHintOk');
+
+                              const fmtCount = (label, n, s) => (
+                                <span>
+                                  {label}: {Number.isFinite(n) ? n : 0}{' '}
+                                  <span style={{ opacity: 0.8 }}>({t('asnMetaRpkiShare')}: {pct(Number.isFinite(s) ? s : null)})</span>
+                                </span>
+                              );
+
+                              const famLine = (tag, f) => {
+                                if (!f) return null;
+                                const c = f.counts || {};
+                                const p = f.pct || {};
+                                return (
+                                  <div style={{ fontSize: 12, opacity: 0.85 }}>
+                                    <span style={{ fontWeight: 700 }}>{tag}:</span>{' '}
+                                    <span>{t('asnMetaRpkiValid')} {Number.isFinite(c.valid) ? c.valid : 0} ({pct(Number.isFinite(p.valid) ? p.valid : null)})</span>
+                                    <span style={{ marginLeft: 8 }}>{t('asnMetaRpkiInvalid')} {Number.isFinite(c.invalid) ? c.invalid : 0} ({pct(Number.isFinite(p.invalid) ? p.invalid : null)})</span>
+                                    <span style={{ marginLeft: 8 }}>{t('asnMetaRpkiUnknown')} {Number.isFinite(c.unknown) ? c.unknown : 0} ({pct(Number.isFinite(p.unknown) ? p.unknown : null)})</span>
                                   </div>
-                                ) : null}
-                              </div>
-                            ) : (
+                                );
+                              };
+
+                              return (
+                                <div>
+                                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                    {fmtCount(t('asnMetaRpkiValid'), counts?.valid, share?.valid)}
+                                    {fmtCount(t('asnMetaRpkiInvalid'), counts?.invalid, share?.invalid)}
+                                    {fmtCount(t('asnMetaRpkiUnknown'), counts?.unknown, share?.unknown)}
+                                  </div>
+
+                                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+                                    {t('asnMetaRpkiSampleNote', {
+                                      n: Number.isFinite(rp?.n) ? rp.n : (Array.isArray(rp?.sample) ? rp.sample.length : 0),
+                                      v4: Number.isFinite(rp?.v4) ? rp.v4 : '-',
+                                      v6: Number.isFinite(rp?.v6) ? rp.v6 : '-',
+                                    })}
+                                  </div>
+
+                                  {(fam4 || fam6) ? (
+                                    <div style={{ marginTop: 8 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>{t('asnMetaRpkiByFamily')}</div>
+                                      {famLine('v4', fam4)}
+                                      {famLine('v6', fam6)}
+                                    </div>
+                                  ) : null}
+
+                                  <div
+                                    style={{
+                                      marginTop: 8,
+                                      padding: 8,
+                                      border: '1px solid #e5e7eb',
+                                      borderRadius: 10,
+                                      background: level === 'alert' ? '#fef2f2' : level === 'warn' ? '#fff7ed' : '#f8fafc',
+                                      fontSize: 12,
+                                      opacity: 0.95,
+                                    }}
+                                  >
+                                    {hint}
+                                  </div>
+
+                                  {Array.isArray(rp?.sample) && rp.sample.length ? (
+                                    <div style={{ marginTop: 8, maxHeight: 160, overflow: 'auto', border: '1px solid #f3f4f6', borderRadius: 10 }}>
+                                      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+                                        <thead>
+                                          <tr>
+                                            <th style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{t('asnMetaRpkiPrefix')}</th>
+                                            <th style={{ textAlign: 'left', borderBottom: '1px solid #e5e7eb', padding: '6px 8px' }}>{t('asnMetaRpkiStatus')}</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {rp.sample.slice(0, 20).map((row, idx) => (
+                                            <tr key={`${row.prefix || ''}-${idx}`}>
+                                              <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}>
+                                                {row.prefix}
+                                              </td>
+                                              <td style={{ padding: '6px 8px', borderBottom: '1px solid #f3f4f6' }}>{row.status || '-'}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })() : (
                               <div>-</div>
                             )}
                           </div>
