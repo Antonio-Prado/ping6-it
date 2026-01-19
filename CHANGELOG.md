@@ -66,5 +66,5 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 - Turnstile integration is loaded on demand and validated server-side to reduce automated abuse.
 - Error reporting for Turnstile / upstream API failures (more actionable messages).
 
-## [1.0.0] - 2025-??-??
+## [1.0.0] - 2025-01-08
 - Initial public release.
