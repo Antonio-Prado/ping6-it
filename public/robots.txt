@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ping6.it/sitemap.xml
