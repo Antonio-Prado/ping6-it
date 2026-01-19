@@ -56,40 +56,90 @@ function heatColor(value, { good, bad }) {
   return HEAT_HIGH;
 }
 
-function buildSparkPoints(values, w, h) {
+function lastFiniteIndex(values) {
   const arr = Array.isArray(values) ? values : [];
-  const finite = arr.map((v, i) => ({ v, i })).filter((x) => isFiniteNum(x.v));
-  if (finite.length < 2) return "";
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (isFiniteNum(arr[i])) return i;
+  }
+  return -1;
+}
 
-  const minV = Math.min(...finite.map((x) => x.v));
-  const maxV = Math.max(...finite.map((x) => x.v));
+function buildStepPath(values, w, h, pad, { minV, maxV, maxIndex }) {
+  const arr = Array.isArray(values) ? values : [];
   const span = maxV - minV || 1;
 
-  const lastIndex = Math.max(...finite.map((x) => x.i)) || 1;
+  const xFor = (i) => (i / Math.max(1, maxIndex)) * w;
+  const yFor = (v) => {
+    const t = (v - minV) / span;
+    const clamped = clamp01(t);
+    return h - pad - clamped * (h - 2 * pad);
+  };
 
-  return finite
-    .map(({ v, i }) => {
-      const x = (i / lastIndex) * w;
-      const y = h - ((v - minV) / span) * h;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  let d = "";
+  let started = false;
+  let prevY = null;
+
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (!isFiniteNum(v)) {
+      started = false;
+      prevY = null;
+      continue;
+    }
+
+    const x = xFor(i);
+    const y = yFor(v);
+
+    if (!started) {
+      d += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
+      started = true;
+      prevY = y;
+      continue;
+    }
+
+    // Step line: horizontal to the new x at previous y, then vertical to the new y.
+    d += `L ${x.toFixed(1)} ${prevY.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)} `;
+    prevY = y;
+  }
+
+  return d.trim();
 }
 
 const DualSparkline = memo(function DualSparkline({ series4, series6 }) {
   const w = 120;
   const h = 28;
+  const pad = 2;
 
-  const p4 = useMemo(() => buildSparkPoints(series4, w, h), [series4]);
-  const p6 = useMemo(() => buildSparkPoints(series6, w, h), [series6]);
+  const s4 = Array.isArray(series4) ? series4 : [];
+  const s6 = Array.isArray(series6) ? series6 : [];
 
-  if (!p4 && !p6) return <span style={{ opacity: 0.6 }}>-</span>;
+  const extent = useMemo(() => {
+    const finite = [];
+    for (const v of s4) if (isFiniteNum(v)) finite.push(v);
+    for (const v of s6) if (isFiniteNum(v)) finite.push(v);
+
+    if (finite.length < 2) return null;
+
+    const minV = Math.min(...finite);
+    const maxV = Math.max(...finite);
+
+    const i4 = lastFiniteIndex(s4);
+    const i6 = lastFiniteIndex(s6);
+    const maxIndex = Math.max(1, i4, i6);
+
+    return { minV, maxV, maxIndex };
+  }, [s4, s6]);
+
+  const d4 = useMemo(() => (extent ? buildStepPath(s4, w, h, pad, extent) : ""), [s4, extent]);
+  const d6 = useMemo(() => (extent ? buildStepPath(s6, w, h, pad, extent) : ""), [s6, extent]);
+
+  if (!d4 && !d6) return <span style={{ opacity: 0.6 }}>-</span>;
 
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
       <rect x="0" y="0" width={w} height={h} fill="#f3f4f6" rx="6" />
-      {p4 ? <polyline points={p4} fill="none" stroke={V4_COLOR} strokeWidth="2" /> : null}
-      {p6 ? <polyline points={p6} fill="none" stroke={V6_COLOR} strokeWidth="2" /> : null}
+      {d4 ? <path d={d4} fill="none" stroke={V4_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" /> : null}
+      {d6 ? <path d={d6} fill="none" stroke={V6_COLOR} strokeWidth="2" vectorEffect="non-scaling-stroke" /> : null}
     </svg>
   );
 });
