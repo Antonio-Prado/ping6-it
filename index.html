@@ -2,14 +2,59 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-	<link rel="icon" href="/favicon.svg" type="image/svg+xml" media="(prefers-color-scheme: light)" />
-<link rel="icon" href="/favicon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
-<link rel="alternate icon" href="/favicon.ico" />
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ping6.it</title>
+
+    <title>ping6.it — IPv4 vs IPv6 network measurements</title>
+    <meta
+      name="description"
+      content="Compare IPv4 and IPv6 network measurements side-by-side using the same probes. Powered by Globalping and RIPE Atlas."
+    />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://ping6.it/" />
+
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1020" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ping6.it" />
+    <meta property="og:url" content="https://ping6.it/" />
+    <meta property="og:title" content="ping6.it — IPv4 vs IPv6 network measurements" />
+    <meta
+      property="og:description"
+      content="Run ping/traceroute-style checks over IPv4 and IPv6 on the same probes and compare results side-by-side (Globalping + RIPE Atlas)."
+    />
+<meta property="og:image" content="https://ping6.it/og.png" />
+<meta name="twitter:image" content="https://ping6.it/og.png" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ping6.it — IPv4 vs IPv6 network measurements" />
+    <meta
+      name="twitter:description"
+      content="Compare IPv4 and IPv6 network measurements side-by-side using the same probes (Globalping + RIPE Atlas)."
+    />
+    <meta name="twitter:image" content="https://ping6.it/logo-badge.svg" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "ping6.it",
+        "url": "https://ping6.it/",
+        "applicationCategory": "NetworkUtility",
+        "operatingSystem": "Any",
+        "description": "Compare IPv4 and IPv6 network measurements side-by-side using the same probes. Powered by Globalping and RIPE Atlas."
+      }
+    </script>
   </head>
   <body>
+    <noscript>This site requires JavaScript to run the measurements UI.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

@@ -51,10 +51,21 @@ function toNumber(x) {
 
 function normalizeProbeMeta(p) {
   const id = String(p?.id ?? "").trim();
-  const countryCode = String(p?.country_code ?? "").trim();
+
+  // RIPE Atlas probe API generally exposes a 2-letter country code.
+  // Be tolerant to schema differences across API versions.
+  const countryCode = String(p?.country_code ?? p?.country ?? p?.countryCode ?? "").trim();
+
+  // City is not guaranteed, but include it if available.
+  const city = String(p?.city ?? p?.location?.city ?? p?.place?.city ?? "").trim();
+
   const asnV6 = toNumber(p?.asn_v6);
   const asnV4 = toNumber(p?.asn_v4);
-  const asn = asnV6 ?? asnV4 ?? undefined;
+  const asnAny = toNumber(p?.asn);
+
+  // Atlas may report 0 when the ASN is unknown for a given address-family.
+  // Prefer the first positive ASN we can find (v6, then v4, then generic).
+  const asn = [asnV6, asnV4, asnAny].find((n) => Number.isFinite(n) && n > 0) ?? undefined;
 
   let latitude;
   let longitude;
@@ -70,12 +81,58 @@ function normalizeProbeMeta(p) {
 
   return {
     id: id || undefined,
+    city: city || undefined,
     country: countryCode || undefined,
     country_code: countryCode || undefined,
     asn,
     latitude,
     longitude,
   };
+}
+
+
+const PROBE_META_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+const PROBE_META_CACHE_PREFIX = "https://ping6.it/_cache/atlas/probe-meta/";
+
+function probeMetaCacheKey(pid) {
+  return `${PROBE_META_CACHE_PREFIX}${encodeURIComponent(String(pid))}`;
+}
+
+function getDefaultCache() {
+  try {
+    return typeof caches !== "undefined" && caches.default ? caches.default : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheReadProbeMeta(cache, pid) {
+  if (!cache) return null;
+  try {
+    const req = new Request(probeMetaCacheKey(pid));
+    const res = await cache.match(req);
+    if (!res) return null;
+    const data = await res.json();
+    return data && typeof data === "object" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheWriteProbeMeta(cache, pid, meta) {
+  if (!cache || !meta || typeof meta !== "object") return;
+  try {
+    const req = new Request(probeMetaCacheKey(pid));
+    const res = new Response(JSON.stringify(meta), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": `public, max-age=${PROBE_META_CACHE_TTL_SECONDS}`,
+      },
+    });
+    await cache.put(req, res);
+  } catch {
+    // ignore
+  }
 }
 
 async function fetchProbeMetaMap(probeIds, apiKey, signal) {
@@ -86,40 +143,68 @@ async function fetchProbeMetaMap(probeIds, apiKey, signal) {
   const MAX = 80;
   const limited = ids.slice(0, MAX);
 
-  const fields = "id,country_code,asn_v4,asn_v6,geometry";
+  const fields = "id,country_code,asn_v4,asn_v6,geometry,city";
+  const cache = getDefaultCache();
 
-  // Attempt a batched lookup first. If the API doesn't support the filter, we'll
-  // still fall back to per-probe lookups for the missing ids.
+  // 1) Try cache first.
   const map = new Map();
+  if (cache) {
+    const cached = await Promise.all(limited.map((pid) => cacheReadProbeMeta(cache, pid)));
+    for (const meta of cached) {
+      if (meta?.id) map.set(String(meta.id), meta);
+    }
+  }
+
+  const remaining = limited.filter((pid) => !map.has(String(pid)));
+  if (!remaining.length) return map;
+
+  // 2) Attempt a batched lookup. If the API doesn't support the filter, we'll
+  // still fall back to per-probe lookups for the missing ids.
   try {
     const qs = new URLSearchParams({
-      id__in: limited.join(","),
-      limit: String(limited.length),
+      id__in: remaining.join(","),
+      limit: String(remaining.length),
       fields,
     });
     const data = await atlasGetJson(`/api/v2/probes/?${qs.toString()}`, apiKey, signal);
     const list = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
     for (const p of list) {
       const meta = normalizeProbeMeta(p);
-      if (meta.id) map.set(String(meta.id), meta);
+      if (meta.id) {
+        map.set(String(meta.id), meta);
+        await cacheWriteProbeMeta(cache, meta.id, meta);
+      }
     }
   } catch {
     // ignore
   }
 
-  // Fill gaps (or fully resolve) via per-probe lookups.
-  const missing = limited.filter((pid) => !map.has(String(pid)));
+  // 3) Fill gaps (or fully resolve) via per-probe lookups.
+  const missing = remaining.filter((pid) => !map.has(String(pid)));
   if (!missing.length) return map;
 
   const settled = await Promise.all(
     missing.map(async (pid) => {
+      // Cache might have been populated by a previous request while we were waiting.
+      const cached = await cacheReadProbeMeta(cache, pid);
+      if (cached?.id) return cached;
+
       try {
-        const p = await atlasGetJson(
-          `/api/v2/probes/${encodeURIComponent(pid)}/?fields=${encodeURIComponent(fields)}`,
-          apiKey,
-          signal
-        );
-        return normalizeProbeMeta(p);
+        let p;
+        try {
+          p = await atlasGetJson(
+            `/api/v2/probes/${encodeURIComponent(pid)}/?fields=${encodeURIComponent(fields)}`,
+            apiKey,
+            signal
+          );
+        } catch {
+          // Some Atlas deployments are picky about the `fields=` parameter.
+          // Fallback to the full probe payload if the filtered request fails.
+          p = await atlasGetJson(`/api/v2/probes/${encodeURIComponent(pid)}/`, apiKey, signal);
+        }
+        const meta = normalizeProbeMeta(p);
+        if (meta?.id) await cacheWriteProbeMeta(cache, meta.id, meta);
+        return meta;
       } catch {
         return null;
       }
@@ -259,16 +344,32 @@ function normalizeDnsResult(r, probe) {
 }
 
 function deriveStatus(meta, resultsLen) {
-  const name = String(meta?.status?.name || meta?.status_name || meta?.status || "").toLowerCase();
+  const rawName = meta?.status?.name ?? meta?.status_name ?? meta?.status ?? "";
+  const name = String(rawName || "").toLowerCase();
+
+  // Atlas can label terminal errors in various ways.
+  if (
+    name.includes("failed") ||
+    name.includes("error") ||
+    name.includes("abandoned") ||
+    name.includes("no suitable") ||
+    name.includes("no probes") ||
+    name.includes("unsupported") ||
+    name.includes("unschedul")
+  ) {
+    return "failed";
+  }
+
   if (name.includes("stopped") || name.includes("finished") || name.includes("completed")) return "finished";
 
   const now = Math.floor(Date.now() / 1000);
   const stop = toNumber(meta?.stop_time);
-  if (stop && stop <= now) return "finished";
+  if (stop && stop <= now) return resultsLen > 0 ? "finished" : "failed";
 
-  if (resultsLen > 0 && meta?.is_oneoff) {
+  // One-off measurements can report stop_time late; fall back to a time window.
+  if (meta?.is_oneoff) {
     const start = toNumber(meta?.start_time);
-    if (start && now - start > 120) return "finished";
+    if (start && now - start > 120) return resultsLen > 0 ? "finished" : "failed";
   }
 
   return "in-progress";

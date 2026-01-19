@@ -1,0 +1,18 @@
+{
+  "name": "ping6.it",
+  "short_name": "ping6.it",
+  "description": "Compare IPv4 vs IPv6 network measurements side-by-side using the same probes (Globalping and RIPE Atlas).",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
