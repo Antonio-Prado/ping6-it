@@ -542,7 +542,7 @@ const COPY = {
     placeholderMultiDefault: "hostname (e.g. example.com)\nexample.net",
     placeholderTargetDns: "name (e.g. example.com)",
     placeholderTargetHttp: "URL or hostname (e.g. https://example.com/)",
-    placeholderTargetDefault: "hostname (e.g. example.com)",
+    placeholderTargetDefault: "example.com",
     statusPreparing: "Preparing measurement...",
     statusWaitingVerification: ({ stepLabel }) => `Waiting for human verification${stepLabel}...`,
     statusWaitingVerificationRetry: ({ ip }) => `Waiting for human verification (retry ${ip})...`,
@@ -1946,7 +1946,7 @@ async function fetchAsnMeta(asn, signal) {
 
 export default function App() {
   // Globalping UI
-  const [target, setTarget] = useState("example.com");
+  const [target, setTarget] = useState("");
   const [multiTargetMode, setMultiTargetMode] = useState(false);
   const [multiTargetInput, setMultiTargetInput] = useState("");
   const [multiRunResults, setMultiRunResults] = useState([]);
