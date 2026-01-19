@@ -573,6 +573,8 @@ const COPY = {
     rateLimitRetryIn: ({ seconds }) => `Rate limited. Retry in ${seconds}s.`,
     errorTitle: "Error",
     copy: "Copy",
+    copied: "Copied",
+    open: "Open",
     errorUpstreamUnavailable: "The measurement service is temporarily unavailable. Please retry in a moment.",
     errorNetworkFailure: "Network error. Please check your connection and retry.",
     errorTurnstileChallengeFailed: ({ code }) =>
@@ -2330,6 +2332,7 @@ export default function App() {
   const [reportNotice, setReportNotice] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
+  const [reportCopied, setReportCopied] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [retryingFamily, setRetryingFamily] = useState(""); // "v4" | "v6" | ""
@@ -2358,6 +2361,8 @@ export default function App() {
 
   const reportSectionRef = useRef(null);
 
+  const reportCopyTimerRef = useRef(null);
+
   function scheduleScrollToId(id, opts = {}) {
     if (typeof window === "undefined") return;
     const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (fn) => setTimeout(fn, 0);
@@ -2377,6 +2382,18 @@ export default function App() {
       });
     });
   }
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (reportCopyTimerRef.current) clearTimeout(reportCopyTimerRef.current);
+      } catch {}
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!reportMode) setReportCopied(false);
+  }, [reportMode]);
 
   useEffect(() => {
     if (!rateLimitUntil) {
@@ -4172,6 +4189,7 @@ ${paramLines}` : header;
 
     setErr("");
     setReportNotice("");
+    setReportCopied(false);
     setReportBusy(true);
 
     const ac = new AbortController();
@@ -4221,6 +4239,7 @@ ${paramLines}` : header;
 
     setErr("");
     setReportNotice("");
+    setReportCopied(false);
     setReportBusy(true);
 
     const ac = new AbortController();
@@ -4247,12 +4266,34 @@ ${paramLines}` : header;
   }
 
 
-  function copyToClipboard(value) {
-    if (typeof navigator === "undefined") return;
-    if (!value) return;
+  async function copyToClipboard(value) {
+    if (typeof window === "undefined") return false;
+    if (!value) return false;
+
     try {
-      navigator.clipboard?.writeText(value);
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
     } catch {}
+
+    // Fallback for older browsers / denied permissions.
+    try {
+      const el = document.createElement("textarea");
+      el.value = value;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.top = "-1000px";
+      el.style.left = "-1000px";
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      const ok = document.execCommand?.("copy");
+      document.body.removeChild(el);
+      return !!ok;
+    } catch {
+      return false;
+    }
   }
 
   function exitReportMode() {
@@ -4261,6 +4302,10 @@ ${paramLines}` : header;
     setReportData(null);
     setReportMeta(null);
     setReportNotice("");
+    setReportCopied(false);
+    try {
+      if (reportCopyTimerRef.current) clearTimeout(reportCopyTimerRef.current);
+    } catch {}
     setLocationToShareParams();
   }
 
@@ -5843,8 +5888,26 @@ ${paramLines}` : header;
           </div>
         )}
         {shareUrl && (
-          <div style={{ fontSize: 12, opacity: 0.8, width: "100%" }} role="status" aria-live="polite">
-            {t("linkReady")} <a href={shareUrl}>{shareUrl}</a>
+          <div
+            style={{
+              width: "100%",
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+              fontSize: 12,
+              opacity: 0.9,
+            }}
+            role="status"
+            aria-live="polite"
+          >
+            <span style={{ opacity: 0.8 }}>{t("linkReady")}</span>
+            <a href={shareUrl} style={{ wordBreak: "break-all", opacity: 0.85 }}>
+              {shareUrl}
+            </a>
+            <button type="button" onClick={() => copyToClipboard(shareUrl)} style={{ padding: "4px 8px", fontSize: 12 }}>
+              {t("copy")}
+            </button>
           </div>
         )}
         {turnstileStatus && (
@@ -6249,13 +6312,51 @@ ${paramLines}` : header;
           )}
 
           {shareUrl && (
-            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-              {t("reportLinkShort")}: <a href={shareUrl}>{shareUrl}</a>
-              {reportMeta?.expiresAt && (
-                <>
-                  {" · "}{t("reportExpires")}: {new Date(reportMeta.expiresAt).toLocaleString(dateLocale)}
-                </>
-              )}
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, opacity: 0.8 }}>
+                {t("reportLinkShort")}
+                {reportMeta?.expiresAt && (
+                  <>
+                    {" · "}{t("reportExpires")}: {new Date(reportMeta.expiresAt).toLocaleString(dateLocale)}
+                  </>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  onFocus={(e) => e.target.select()}
+                  onClick={(e) => e.target.select()}
+                  style={{
+                    flex: "1 1 420px",
+                    minWidth: 220,
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(17,24,39,.18)",
+                    background: "rgba(255,255,255,.8)",
+                    fontSize: 12,
+                  }}
+                  aria-label={t("reportLinkShort")}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    copyToClipboard(shareUrl);
+                    setReportCopied(true);
+                    try {
+                      if (reportCopyTimerRef.current) clearTimeout(reportCopyTimerRef.current);
+                    } catch {}
+                    reportCopyTimerRef.current = setTimeout(() => setReportCopied(false), 1200);
+                  }}
+                  style={{ padding: "8px 12px" }}
+                >
+                  {reportCopied ? t("copied") : t("copy")}
+                </button>
+                <a href={shareUrl} style={{ fontSize: 12, padding: "8px 10px" }}>
+                  {t("open")}
+                </a>
+              </div>
             </div>
           )}
 
