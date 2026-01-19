@@ -6,8 +6,25 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 
 ## [Unreleased]
 
+- None.
+
+## [2.1.0] - 2026-02-05
+
+### Added
+- RIPE Atlas backend support for ping, traceroute, and DNS measurements (including API key input and local persistence).
+- DNS and HTTP timing comparison tables with per-probe v4/v6 totals, deltas, ratios, and medians/p95 summaries.
+- MTR path comparison table (v4 vs v6).
+- Optional delta alert threshold to highlight large median v6-v4 gaps.
+- Heatmap coloring with legend for quick visual comparison.
+- Report mode now exposes a direct, copyable link.
+- Modal details now include RPKI, announcements, and cache indicators.
+
+### Changed
 - Minor UI polish and copy tweaks.
 - Additional validation and guardrails around measurement creation.
+
+### Fixed
+- Atlas DNS timings now derive totals from nested result/resultset entries when top-level `rt` is missing.
 
 ## [2.0.0] - 2026-01-14
 
