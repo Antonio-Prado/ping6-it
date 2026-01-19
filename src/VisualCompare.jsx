@@ -388,6 +388,12 @@ export default memo(function VisualCompare({
   const heatScaleAdaptiveGlobal = t ? t("visualCompareHeatScaleAdaptiveGlobal") : "Adaptive (global)";
   const heatScaleFixed = t ? t("visualCompareHeatScaleFixed") : "Fixed";
 
+  const heatLegendTitle = t ? t("visualCompareHeatLegendTitle") : "Legend";
+  const heatLegendNoData = t ? t("visualCompareHeatLegendNoData") : "No data";
+  const heatLegendVaries = t
+    ? t("visualCompareHeatLegendVaries")
+    : "Thresholds vary by region; hover a cell for details.";
+
   const shareBtn = t ? t("visualCompareShare") : "Share";
   const shareCardTitle = t ? t("visualCompareShareCardTitle") : "Share-ready card";
   const copyImageLabel = t ? t("visualCompareCopyImage") : "Copy image";
@@ -472,6 +478,32 @@ export default memo(function VisualCompare({
     if (heatMode === "adaptive_region" && hasRegions) return `${heatScaleAdaptiveRegion} · thresholds vary by region`;
     return `${heatScaleAdaptiveGlobal} · good ≈ ${fmt(g.good)} · bad ≈ ${fmt(g.bad)}`;
   }, [adaptiveScales, fixedScale, metricKey, heatMode, hasRegions, heatScaleFixed, heatScaleAdaptiveRegion, heatScaleAdaptiveGlobal]);
+
+  const heatLegend = useMemo(() => {
+    const scale = heatMode === "fixed" ? fixedScale : adaptiveScales.global || fixedScale;
+    const fmt = metricKey === "loss" ? fmtPct : fmtMs;
+
+    const good = scale?.good;
+    const bad = scale?.bad;
+    if (!isFiniteNum(good) || !isFiniteNum(bad) || good === bad) {
+      return {
+        good: t ? t("visualCompareHeatLegendGood", { value: "-" }) : "Good",
+        moderate: t ? t("visualCompareHeatLegendModerate", { from: "-", to: "-" }) : "Moderate",
+        high: t ? t("visualCompareHeatLegendHigh", { value: "-" }) : "High",
+      };
+    }
+
+    const b1 = good + 0.5 * (bad - good);
+    const b2 = good + 0.85 * (bad - good);
+    const v1 = fmt(b1);
+    const v2 = fmt(b2);
+
+    const goodLabel = t ? t("visualCompareHeatLegendGood", { value: v1 }) : `Good (<= ${v1})`;
+    const modLabel = t ? t("visualCompareHeatLegendModerate", { from: v1, to: v2 }) : `Moderate (${v1} - ${v2})`;
+    const highLabel = t ? t("visualCompareHeatLegendHigh", { value: v2 }) : `High (>= ${v2})`;
+
+    return { good: goodLabel, moderate: modLabel, high: highLabel };
+  }, [adaptiveScales, fixedScale, metricKey, heatMode, t]);
 
   return (
     <div
@@ -739,6 +771,34 @@ export default memo(function VisualCompare({
           </label>
         </div>
         <div style={{ marginTop: 4, fontSize: 11, opacity: 0.75 }}>{heatHint}</div>
+
+        <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.9 }}>{heatLegendTitle}</div>
+
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#dcfce7", border: "1px solid #e5e7eb" }} />
+            <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegend.good}</span>
+          </div>
+
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#fef9c3", border: "1px solid #e5e7eb" }} />
+            <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegend.moderate}</span>
+          </div>
+
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#fee2e2", border: "1px solid #e5e7eb" }} />
+            <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegend.high}</span>
+          </div>
+
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={{ width: 12, height: 12, borderRadius: 4, background: "#ffffff", border: "1px dashed #9ca3af" }} />
+            <span style={{ fontSize: 11, opacity: 0.85 }}>{heatLegendNoData}</span>
+          </div>
+        </div>
+
+        {heatMode === "adaptive_region" && hasRegions ? (
+          <div style={{ marginTop: 6, fontSize: 11, opacity: 0.75 }}>{heatLegendVaries}</div>
+        ) : null}
 
         <div style={{ overflowX: "auto", marginTop: 8 }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
