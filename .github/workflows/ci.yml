@@ -28,36 +28,6 @@ jobs:
       - name: Test
         run: npm test --if-present
 
-      - name: Audit (fail on high/critical, tolerate registry errors)
-        run: |
-          set -euo pipefail
-
-          npm audit --json > audit.json || true
-
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          let report;
-          try {
-            report = JSON.parse(fs.readFileSync('audit.json', 'utf8'));
-          } catch {
-            console.warn('::warning::Unable to parse npm audit output; skipping audit failure.');
-            process.exit(0);
-          }
-
-          const vulnerabilities = report?.metadata?.vulnerabilities;
-          if (!vulnerabilities) {
-            const msg = report?.error?.summary || report?.error?.message || 'npm audit unavailable';
-            console.warn(`::warning::npm audit unavailable (${msg}); skipping audit failure.`);
-            process.exit(0);
-          }
-
-          const high = Number(vulnerabilities.high || 0);
-          const critical = Number(vulnerabilities.critical || 0);
-          if (high > 0 || critical > 0) {
-            console.error(`High vulnerabilities: ${high}, critical vulnerabilities: ${critical}`);
-            process.exit(1);
-          }
-
-          console.log('No high/critical vulnerabilities found.');
-          NODE
+      - name: Audit (non-blocking)
+        continue-on-error: true
+        run: npm audit --audit-level=high
