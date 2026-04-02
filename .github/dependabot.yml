@@ -9,3 +9,6 @@ updates:
       - dependency-name: "eslint"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "vite"
+        update-types:
+          - "version-update:semver-major"
