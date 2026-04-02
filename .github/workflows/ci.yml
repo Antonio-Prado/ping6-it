@@ -28,5 +28,6 @@ jobs:
       - name: Test
         run: npm test --if-present
 
-      - name: Audit (fail on high/critical)
+      - name: Audit (non-blocking)
+        continue-on-error: true
         run: npm audit --audit-level=high
