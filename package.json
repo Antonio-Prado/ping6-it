@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.7"
   },
   "overrides": {
     "picomatch": ">=4.0.4",
