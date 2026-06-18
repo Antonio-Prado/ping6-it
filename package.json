@@ -15,7 +15,8 @@
   },
   "overrides": {
     "picomatch": ">=4.0.4",
-    "flatted": ">=3.4.2"
+    "flatted": ">=3.4.2",
+    "@babel/core": ">=7.29.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
