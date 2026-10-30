@@ -438,8 +438,8 @@ async function fetchRipestat(asn) {
   const base = await fetchAsOverview(asn);
 
   // Keep this endpoint responsive: avoid "announced-prefixes" (can be huge for large ASNs).
-  let announcedPrefixes = null;
-  let rpkiSample = null;
+  let announcedPrefixes;
+  let rpkiSample;
 
   try {
     const [counts, samples] = await Promise.all([
