@@ -110,8 +110,8 @@ const DualSparkline = memo(function DualSparkline({ series4, series6 }) {
   const h = 28;
   const pad = 2;
 
-  const s4 = Array.isArray(series4) ? series4 : [];
-  const s6 = Array.isArray(series6) ? series6 : [];
+  const s4 = useMemo(() => (Array.isArray(series4) ? series4 : []), [series4]);
+  const s6 = useMemo(() => (Array.isArray(series6) ? series6 : []), [series6]);
 
   const extent = useMemo(() => {
     const finite = [];
@@ -313,7 +313,7 @@ export default memo(function VisualCompare({
   showSparklines = false,
   shareContext,
 }) {
-  const data = Array.isArray(rows) ? rows : [];
+  const data = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
 
   const hasLoss = useMemo(
     () => data.some((r) => isFiniteNum(r?.v4loss) || isFiniteNum(r?.v6loss)),
@@ -508,7 +508,6 @@ export default memo(function VisualCompare({
       }
     } catch (e) {
       setShareStatus(t ? t("visualCompareExportFailed") : "Export failed.");
-      // eslint-disable-next-line no-console
       console.error(e);
     }
   }
@@ -530,7 +529,6 @@ export default memo(function VisualCompare({
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (e) {
       setShareStatus(t ? t("visualCompareExportFailed") : "Export failed.");
-      // eslint-disable-next-line no-console
       console.error(e);
     }
   }

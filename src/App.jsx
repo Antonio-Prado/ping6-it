@@ -861,19 +861,6 @@ function parseKeyList(raw) {
   return set;
 }
 
-function snapshotProbeStates(v4, v6) {
-  const a = v4?.results ?? [];
-  const b = v6?.results ?? [];
-  const keys = buildProbeUnionKeys(a, b);
-  const aMap = buildResultMap(a, "v4");
-  const bMap = buildResultMap(b, "v6");
-  return keys.map((k) => {
-    const s4 = resultState(aMap.get(k) ?? null);
-    const s6 = resultState(bMap.get(k) ?? null);
-    return { key: k, v4: s4, v6: s6 };
-  });
-}
-
 function computeUnstableProbeKeys(history, { backend, cmd, windowN = 5, minObs = 3, badRatio = 0.6 } = {}) {
   const items = Array.isArray(history) ? history : [];
   const filtered = items
@@ -1071,7 +1058,7 @@ function formatProbeLocation(probe) {
   if (!probe) return "-";
   const city = String(probe.city ?? "").trim();
   const rawCountry = probe.country ?? probe.country_code ?? probe.countryCode ?? "";
-  const { code, name } = normalizeCountryLabel(rawCountry);
+  const { name } = normalizeCountryLabel(rawCountry);
   const id = probe.id !== undefined && probe.id !== null ? String(probe.id).trim() : "";
 
   if (city && name) return `${city}, ${name}`;
@@ -2046,7 +2033,7 @@ export default function App() {
     const backendLabel = backend === "atlas" ? "RIPE Atlas" : "Globalping";
     const t = String(target || "").trim();
     const isDefault = !t || t === "example.com";
-    let title = base;
+    let title;
     if (!isDefault) {
       title = `${cmd} ${t} (${backendLabel}) — ping6.it`;
     } else {
@@ -2296,7 +2283,9 @@ export default function App() {
     return () => {
       try {
         ac.abort();
-      } catch {}
+      } catch {
+        // ignore
+      }
       if (revalTimer) clearTimeout(revalTimer);
     };
   }, [asnCard?.asn, asnCard?.metaReqId]);
@@ -2321,14 +2310,18 @@ export default function App() {
     try {
       const b = String(window.localStorage.getItem("PING6_BACKEND") || "").trim();
       if (b === "atlas" || b === "globalping") setBackend(b);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem("PING6_BACKEND", backend);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [backend]);
 
   useEffect(() => {
@@ -2338,7 +2331,9 @@ export default function App() {
       if (v === "1") setExcludeUnstableProbes(true);
       const bl = String(window.localStorage.getItem("PING6_PROBE_BLACKLIST") || "");
       if (bl) setProbeBlacklist(bl);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -2346,7 +2341,9 @@ export default function App() {
     try {
       window.localStorage.setItem("PING6_EXCLUDE_UNSTABLE_PROBES", excludeUnstableProbes ? "1" : "0");
       window.localStorage.setItem("PING6_PROBE_BLACKLIST", probeBlacklist || "");
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [excludeUnstableProbes, probeBlacklist]);
 
   useEffect(() => {
@@ -2471,7 +2468,9 @@ export default function App() {
     return () => {
       try {
         if (reportCopyTimerRef.current) clearTimeout(reportCopyTimerRef.current);
-      } catch {}
+      } catch {
+        // ignore
+      }
     };
   }, []);
 
@@ -2505,7 +2504,9 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [history]);
 
   useEffect(() => {
@@ -2567,7 +2568,9 @@ export default function App() {
       return () => {
         try {
           ac.abort();
-        } catch {}
+        } catch {
+          // ignore
+        }
       };
     }
 
@@ -2615,7 +2618,7 @@ export default function App() {
         scheduleScrollToId("p6-report");
       }
     }
-  }, []);
+  }, [t]);
 
   async function getTurnstileToken(signal) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
@@ -2640,7 +2643,9 @@ export default function App() {
       if (!hasDom) {
         try {
           window.turnstile.remove?.(turnstileWidgetIdRef.current);
-        } catch {}
+        } catch {
+          // ignore
+        }
         turnstileWidgetIdRef.current = null;
       }
     }
@@ -2717,7 +2722,9 @@ export default function App() {
       const cleanup = () => {
         try {
           if (signal) signal.removeEventListener("abort", onAbort);
-        } catch {}
+        } catch {
+          // ignore
+        }
         turnstilePendingRef.current = null;
         setShowTurnstile(false);
       };
@@ -3022,14 +3029,13 @@ ${paramLines}` : header;
     let effectiveTarget = trimmedTarget;
 
     // HTTP: we also accept a full URL and split it into host/path/query.
-    let httpParsed = null;
     let httpEffectiveProto = httpProto;
     let httpEffectivePath = (httpPath || "/").trim() || "/";
     let httpEffectiveQuery = (httpQuery || "").trim();
     let httpEffectivePort = (httpPort || "").trim();
 
     if (cmd === "http") {
-      httpParsed = parseHttpInput(trimmedTarget);
+      const httpParsed = parseHttpInput(trimmedTarget);
       if (!httpParsed?.host) {
         throw new Error(t("errorHttpTarget"));
       }
@@ -3551,12 +3557,16 @@ ${paramLines}` : header;
         turnstilePendingRef.current.cleanup();
         turnstilePendingRef.current.reject(new Error(t("errorCancelled")));
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       if (window.turnstile && turnstileWidgetIdRef.current !== null) {
         window.turnstile.reset(turnstileWidgetIdRef.current);
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
     setShowTurnstile(false);
     setTurnstileStatus("");
     setMultiRunStatus(null);
@@ -4359,7 +4369,9 @@ ${paramLines}` : header;
         await navigator.clipboard.writeText(value);
         return true;
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     // Fallback for older browsers / denied permissions.
     try {
@@ -4389,7 +4401,9 @@ ${paramLines}` : header;
     setReportCopied(false);
     try {
       if (reportCopyTimerRef.current) clearTimeout(reportCopyTimerRef.current);
-    } catch {}
+    } catch {
+      // ignore
+    }
     setLocationToShareParams();
   }
 
@@ -4468,7 +4482,7 @@ ${paramLines}` : header;
     const aMap = buildResultMap(a, "v4");
     const bMap = buildResultMap(b, "v6");
 
-    return keys.map((k, i) => {
+    return keys.map((k) => {
       const x = aMap.get(k) ?? null;
       const y = bMap.get(k) ?? null;
       const p = x?.probe || y?.probe || {};
@@ -4482,7 +4496,7 @@ ${paramLines}` : header;
         hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
-  }, [showTracerouteTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
+  }, [showTracerouteTable, v4ForCompute, v6ForCompute, probeExcludeKeys]);
 
   const mtrPaths = useMemo(() => {
     if (!showMtrTable || !v4ForCompute || !v6ForCompute) return [];
@@ -4492,7 +4506,7 @@ ${paramLines}` : header;
     const aMap = buildResultMap(a, "v4");
     const bMap = buildResultMap(b, "v6");
 
-    return keys.map((k, i) => {
+    return keys.map((k) => {
       const x = aMap.get(k) ?? null;
       const y = bMap.get(k) ?? null;
       const p = x?.probe || y?.probe || {};
@@ -4506,7 +4520,7 @@ ${paramLines}` : header;
         hopDiff: computeHopDiffSummary(x, y, 30),
       };
     });
-  }, [showMtrTable, v4ForCompute, v6ForCompute, strictCompare, probeExcludeKeys]);
+  }, [showMtrTable, v4ForCompute, v6ForCompute, probeExcludeKeys]);
 
   const pingCompare = useMemo(() => {
     if (!showPingTable) return null;
@@ -4634,7 +4648,7 @@ ${paramLines}` : header;
     const rows = Array.isArray(asnContext?.rows) ? asnContext.rows : [];
     openAsnCard(asn, kind, rows);
     setAsnCardFromUrl(null);
-  }, [asnCardFromUrl, asnCard, asnContext, cmd]);
+  }, [asnCardFromUrl, asnCard, asnContext, cmd, openAsnCard]);
 
   const deltaThresholdValue = Number(deltaThreshold);
   const thresholdEnabled = Number.isFinite(deltaThresholdValue) && deltaThresholdValue > 0;
@@ -4953,7 +4967,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [showPingTable, pingCompare, pingRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
+  }, [showPingTable, pingCompare, pingRows, pingVizRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
 
   const traceroutePathsSection = useMemo(() => {
     if (!(showTracerouteTable && traceroutePaths.length > 0)) return null;
@@ -5111,7 +5125,7 @@ ${paramLines}` : header;
         {traceroutePathsSection}
       </>
     );
-  }, [showTracerouteTable, trCompare, tracerouteRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, traceroutePathsSection, target, multiTargetMode]);
+  }, [showTracerouteTable, trCompare, tracerouteRows, tracerouteVizRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, traceroutePathsSection, target, multiTargetMode]);
 
   const mtrPathsSection = useMemo(() => {
     if (!(showMtrTable && mtrPaths.length > 0)) return null;
@@ -5277,7 +5291,7 @@ ${paramLines}` : header;
         {mtrPathsSection}
       </>
     );
-  }, [showMtrTable, mtrCompare, mtrRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, mtrPathsSection, target, multiTargetMode]);
+  }, [showMtrTable, mtrCompare, mtrRows, mtrVizRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, mtrPathsSection, target, multiTargetMode]);
 
   const dnsSection = useMemo(() => {
     if (!(showDnsTable && dnsCompare)) return null;
@@ -5340,7 +5354,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [showDnsTable, dnsCompare, dnsRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
+  }, [showDnsTable, dnsCompare, dnsRows, dnsVizRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
 
   const httpSection = useMemo(() => {
     if (!(showHttpTable && httpCompare)) return null;
@@ -5407,7 +5421,7 @@ ${paramLines}` : header;
         </table>
       </div>
     );
-  }, [showHttpTable, httpCompare, httpRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
+  }, [showHttpTable, httpCompare, httpRows, httpVizRows, strictCompare, tableSort, toggleTableSort, renderAsnCell, t, target, multiTargetMode]);
 
   async function copyAsnToClipboard(asn) {
     try {
@@ -6434,7 +6448,9 @@ ${paramLines}` : header;
                     setReportCopied(true);
                     try {
                       if (reportCopyTimerRef.current) clearTimeout(reportCopyTimerRef.current);
-                    } catch {}
+                    } catch {
+                      // ignore
+                    }
                     reportCopyTimerRef.current = setTimeout(() => setReportCopied(false), 1200);
                   }}
                   style={{ padding: "8px 12px" }}

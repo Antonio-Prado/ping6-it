@@ -85,7 +85,9 @@ async function fetchJsonWithTimeout(url, { timeoutMs = 8000, headers = {} } = {}
   const timer = setTimeout(() => {
     try {
       ac.abort();
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, timeoutMs);
 
   try {
@@ -183,7 +185,7 @@ function nibbleReverse(hex32) {
 
 async function cymruLookup(ip, { timeoutMs = 6000 } = {}) {
   const isV6 = String(ip).includes(":");
-  let qname = null;
+  let qname;
   if (!isV6) {
     qname = `${reverseIpv4(ip)}.origin.asn.cymru.com`;
   } else {
@@ -340,7 +342,7 @@ export async function onRequest(context) {
     return json({ error: "rate_limited", retryAfterSec: rl.retryAfterSec }, { status: 429, headers: rl.headers });
   }
 
-  let payload = null;
+  let payload;
   try {
     payload = await request.json();
   } catch {

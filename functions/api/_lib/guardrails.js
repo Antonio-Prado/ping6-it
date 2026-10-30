@@ -147,7 +147,7 @@ export function looksLikeUrlOrPath(s) {
   return false;
 }
 
-export function sanitizeTarget({ type, target, allowIp = false }) {
+export function sanitizeTarget({ target, allowIp = false }) {
   const t = String(target || "").trim();
   if (!t) return { ok: false, error: "invalid_target", message: 'Invalid "target". Expected a non-empty string.' };
   if (t.length > 253) return { ok: false, error: "invalid_target", message: 'Invalid "target". Too long.' };

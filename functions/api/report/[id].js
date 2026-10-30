@@ -29,7 +29,7 @@ export async function onRequestGet(context) {
 
   const key = `__report:v1:${id}`;
 
-  let value = null;
+  let value;
   try {
     value = await kv.get(key, { type: "json" });
   } catch {
