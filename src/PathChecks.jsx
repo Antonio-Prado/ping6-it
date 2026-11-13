@@ -101,6 +101,7 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
   // the pings to the anchors belong to one pair of measurements: `pair` tells which
   const [anch, setAnch] = useState({ state: "idle", pings: null, msg: "", pair: "" });
   const anchorsAbort = useRef(null);
+  const boxRef = useRef(null);
   const pairKey = `${v4?.id ?? ""}|${v6?.id ?? ""}`;
   const anchorPings = anch.pair === pairKey ? anch.pings : null;
   const anchState = anch.pair === pairKey ? anch.state : "idle";
@@ -168,6 +169,14 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
   // Ask the probes to ping a few anchors of RIPE Atlas: new measurements, so only when the visitor asks.
   const anchorsCount = isAtlas ? 3 + WORLD_POINTS.length : 3 + WORLD_POINTS_SHORT.length;
   const canPingAnchors = !busy && anchState !== "running" && (isAtlas ? Boolean(getTurnstileToken && atlasIds) : Boolean(v4?.id || v6?.id));
+  // Bring this box back into view when the pings end, wherever the page went meanwhile.
+  const showBox = () => {
+    try {
+      boxRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch {
+      // ignore
+    }
+  };
   async function runAnchors() {
     anchorsAbort.current?.abort();
     const ctl = new AbortController();
@@ -184,16 +193,24 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
       if (!chosen.length) throw new Error("No anchor could be chosen.");
       let pings;
       if (isAtlas) {
-        const turnstileToken = await getTurnstileToken(ctl.signal);
+        say("human verification (if it asks for you, the check is next to the Run button)");
+        // the page stays here: the results come in this box
+        const turnstileToken = await getTurnstileToken(ctl.signal, { scroll: false });
         say(`pinging ${chosen.length} anchors`);
         pings = await pingAnchorsAtlas({ probeIds: atlasIds.split(","), anchors: chosen, turnstileToken, atlasKey, signal: ctl.signal, onProgress: say });
       } else {
         say(`pinging ${chosen.length} anchors`);
         pings = await pingAnchorsGlobalping({ measurementId: v4?.id || v6?.id, anchors: chosen, signal: ctl.signal, onProgress: say });
       }
-      if (!ctl.signal.aborted) setAnch({ state: "done", pings, msg: `${chosen.length} anchors pinged`, pair: pairKey });
+      if (!ctl.signal.aborted) {
+        setAnch({ state: "done", pings, msg: `${chosen.length} anchors pinged: the result for each probe is in the Place column below`, pair: pairKey });
+        showBox();
+      }
     } catch (e) {
-      if (!ctl.signal.aborted) setAnch({ state: "failed", pings: null, msg: String(e?.message || "The anchors could not be pinged."), pair: pairKey });
+      if (!ctl.signal.aborted) {
+        setAnch({ state: "failed", pings: null, msg: String(e?.message || "The anchors could not be pinged."), pair: pairKey });
+        showBox();
+      }
     }
   }
 
@@ -234,7 +251,7 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
   const cols = paths ? 6 : 3;
 
   return (
-    <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
+    <div ref={boxRef} style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10, scrollMargin: 16 }}>
       <h3 style={{ margin: "0 0 8px 0" }}>{paths ? "Trombone routing and probe locations" : "Probe locations"}</h3>
 
       {h ? (
@@ -266,7 +283,7 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
           <button type="button" onClick={runAnchors} disabled={!canPingAnchors} style={{ padding: "4px 10px", borderRadius: 10, font: "inherit", fontSize: 12 }}>
             {anchState === "done" ? "Ping the anchors again" : "Ping the anchors of RIPE Atlas"}
           </button>
-          <span style={{ flex: "1 1 320px", opacity: 0.85 }} role="status">
+          <span style={{ flex: "1 1 320px", opacity: anchState === "idle" ? 0.85 : 1, fontWeight: anchState === "idle" ? 400 : 700, color: anchState === "failed" ? "#b91c1c" : "inherit" }} role="status">
             {anchState === "running"
               ? `${anch.msg}…`
               : anchState === "failed"
