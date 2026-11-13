@@ -12,7 +12,7 @@ It is intended for **quick, reproducible v4 vs v6 troubleshooting**: reachabilit
 
 ping6.it supports two measurement backends:
 - **Globalping** (default) for fast, lightweight measurements.
-- **RIPE Atlas** (experimental) for broader probe availability (no API key needed when the site provides its own; currently supports fewer commands).
+- **RIPE Atlas** for broader probe availability (no API key needed when the site provides its own; currently supports fewer commands).
 
 > Experimental beta: defaults, UI layout, and comparison logic may evolve.
 
@@ -22,7 +22,7 @@ Feedback: mailto:antonio@prado.it
 ## Main features
 
 - **Fair v4/v6 comparison** by pinning both runs to the **same probes**
-- **Backends:** Globalping (default) and **RIPE Atlas** (experimental)
+- **Backends:** Globalping (default) and **RIPE Atlas**
 - **Commands:** `ping`, `traceroute`, `mtr`, `dns`, `http` (Atlas: `ping`/`traceroute`/`dns` only)
 - **Geo selection** (macro region + sub-regions) and **Net** filter (eyeball/datacenter, Globalping only)
 - Probe filters: **limit**, **ASN**, **IPv6-capable probes only**
@@ -87,7 +87,7 @@ Globalping provides a distributed probe network and an API for measurements. pin
 - `ping`, `traceroute`, `mtr`, `dns`, `http`.
 - `Net` filtering (eyeball/datacenter) via Globalping location tags.
 
-### RIPE Atlas (experimental)
+### RIPE Atlas
 
 RIPE Atlas can provide significantly more probes in some regions, but it comes with different constraints:
 
@@ -141,7 +141,7 @@ For `http`, the UI accepts a full URL (e.g. `https://example.com/path?x=1`) and 
 Choose the measurement network backend:
 
 - **Globalping** (default)
-- **RIPE Atlas (experimental)**
+- **RIPE Atlas**
 
 When the site has a RIPE Atlas key of its own, no key is asked for: measurements run with the key of the site, on up to 25 probes for each test and 6 tests an hour for each address (200 a day for everybody). You can still paste your **own Atlas API key** to use your credits and lift those limits (up to 50 probes). Without a key of the site, your own key is required.
 

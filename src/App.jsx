@@ -274,7 +274,7 @@ const COPY = {
     source: "Source",
     backend: "Backend",
     backendGlobalping: "Globalping",
-    backendAtlas: "RIPE Atlas (experimental)",
+    backendAtlas: "RIPE Atlas",
     atlasApiKey: "Atlas API key",
     atlasApiKeyOptional: "Atlas API key (optional)",
     command: "Command",
@@ -2305,25 +2305,6 @@ export default function App() {
   const strictCompare = requireV6Capable && canRequireV6Capable;
 
   const maxProbes = backend === "atlas" ? (atlasShared && !atlasHasOwnKey ? atlasShared.maxProbes : 50) : 10;
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const b = String(window.localStorage.getItem("PING6_BACKEND") || "").trim();
-      if (b === "atlas" || b === "globalping") setBackend(b);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem("PING6_BACKEND", backend);
-    } catch {
-      // ignore
-    }
-  }, [backend]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
