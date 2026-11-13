@@ -70,23 +70,26 @@ export const soiReach = (rtt) => (rtt / 2) * FIBRE_KM_PER_MS;
 
 // A declared place against reference points whose place is known: refs [{ sites: [[lat, lon], ...], rtt, margin?, ...what to tell }].
 // A round trip shorter than the floor for the nearest site of a reference proves that the probe is elsewhere. How many
-// references could be used, and the strongest proof (the round trip that misses the floor by most), or null.
+// references could be used, the strongest proof (the round trip that misses the floor by most), or null, and every reference
+// that was used with its figures (points: km to its nearest site, the least round trip from the place, how far from it the
+// probe can be, and whether the round trip is long enough for the place).
 export function soiCheck(lat, lon, refs) {
-  if (typeof lat !== "number" || typeof lon !== "number" || !Number.isFinite(lat) || !Number.isFinite(lon)) return { checked: 0, misplaced: null };
+  if (typeof lat !== "number" || typeof lon !== "number" || !Number.isFinite(lat) || !Number.isFinite(lon)) return { checked: 0, misplaced: null, points: [] };
   let checked = 0;
   let worst = null;
+  const points = [];
   for (const r of refs || []) {
     if (typeof r.rtt !== "number" || !(r.rtt > 0) || !Array.isArray(r.sites) || !r.sites.length) continue;
     checked++;
     const margin = typeof r.margin === "number" ? r.margin : PLACE_MARGIN_KM;
     const km = Math.min(...r.sites.map((s) => distanceKm([lat, lon], s)));
     const atLeast = soiFloor(km, margin);
-    if (r.rtt < atLeast && (!worst || atLeast - r.rtt > worst.atLeast - worst.rtt)) {
-      const { sites: _sites, ...rest } = r;
-      worst = { ...rest, margin, km: Math.round(km), atLeast: Math.round(atLeast * 10) / 10, within: Math.round(margin + soiReach(r.rtt)) };
-    }
+    const { sites: _sites, ...rest } = r;
+    const point = { ...rest, margin, km: Math.round(km), atLeast: Math.round(atLeast * 10) / 10, within: Math.round(margin + soiReach(r.rtt)), ok: !(r.rtt < atLeast) };
+    points.push(point);
+    if (!point.ok && (!worst || atLeast - r.rtt > worst.gap)) worst = { point, gap: atLeast - r.rtt };
   }
-  return { checked, misplaced: worst };
+  return { checked, misplaced: worst ? worst.point : null, points };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------

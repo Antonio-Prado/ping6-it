@@ -36,6 +36,63 @@ function probeLabel(p) {
   return [city, country].filter(Boolean).join(", ") || "A probe";
 }
 
+// A reference point of a probe, as a name and what tells where it is.
+function pointLabel(p) {
+  const where = [p.city, p.country].filter(Boolean).join(", ");
+  if (p.kind === "anchor") return { name: `anchor ${String(p.anchor).replace(/\.anchors\.atlas\.ripe\.net$/, "")}`, note: where };
+  if (p.kind === "root") return { name: `${String(p.letter).toUpperCase()} root`, note: `${p.hostname} (${p.code})` };
+  return { name: p.ixp, note: [where, `${p.family} hop ${p.hop}, ${p.ip}`].filter(Boolean).join(" · ") };
+}
+
+const fmtKm = (v) => `${Number(v).toLocaleString("en-US")} km`;
+
+// The reference points of a probe with their figures, the nearest first.
+function PlaceDetails({ row }) {
+  const points = [...row.place.points].sort((a, b) => a.km - b.km);
+  const lat = Number(row.probe?.latitude);
+  const lon = Number(row.probe?.longitude);
+  const num = { ...cell, textAlign: "right", whiteSpace: "nowrap" };
+  const numHead = { ...head, textAlign: "right" };
+  return (
+    <div>
+      <div style={{ marginBottom: 6 }}>
+        Declared place: {[row.probe?.city, String(row.probe?.country ?? row.probe?.country_code ?? "").toUpperCase()].filter(Boolean).join(", ") || "-"}
+        {Number.isFinite(lat) && Number.isFinite(lon) ? ` (${lat.toFixed(2)}, ${lon.toFixed(2)})` : ""}. A round trip shorter than the least one proves that the probe is elsewhere.
+      </div>
+      <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr>
+            <th style={head}>Reference point</th>
+            <th style={numHead} title="From the declared place of the probe to the nearest site of the reference point">Distance</th>
+            <th style={numHead} title="The shortest round trip from the probe to the reference point">Round trip</th>
+            <th style={numHead} title="Light in fibre there and back from the declared place, less the margin">Least one</th>
+            <th style={numHead} title="The round trip in fibre, plus the margin: the probe cannot be farther than this from the reference point">Probe within</th>
+            <th style={head} />
+          </tr>
+        </thead>
+        <tbody>
+          {points.map((p, i) => {
+            const l = pointLabel(p);
+            return (
+              <tr key={i}>
+                <td style={cell}>
+                  {l.name}
+                  {l.note ? <span style={{ opacity: 0.7 }}> · {l.note}</span> : null}
+                </td>
+                <td style={num}>{fmtKm(p.km)}</td>
+                <td style={num}>{fmtMs(p.rtt)}</td>
+                <td style={num}>{p.atLeast > 0 ? fmtMs(p.atLeast) : <span title={`Within the margin of ${p.margin} km: any round trip is possible`}>any</span>}</td>
+                <td style={num}>{fmtKm(p.within)}</td>
+                <td style={cell}>{p.ok ? "possible" : <span style={{ fontWeight: 700, color: "#92400e" }}>too fast</span>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // The sentence for a probe that is not where it is said to be, with the figures that prove it.
 function misplacedText(row, isAtlas) {
   const m = row.place.misplaced;
@@ -102,6 +159,13 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
   const [anch, setAnch] = useState({ state: "idle", pings: null, msg: "", pair: "" });
   const anchorsAbort = useRef(null);
   const boxRef = useRef(null);
+  const [open, setOpen] = useState(() => new Set()); // the probes whose reference points are shown
+  const flip = (key) =>
+    setOpen((was) => {
+      const next = new Set(was);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   const pairKey = `${v4?.id ?? ""}|${v6?.id ?? ""}`;
   const anchorPings = anch.pair === pairKey ? anch.pings : null;
   const anchState = anch.pair === pairKey ? anch.state : "idle";
@@ -203,7 +267,7 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
         pings = await pingAnchorsGlobalping({ measurementId: v4?.id || v6?.id, anchors: chosen, signal: ctl.signal, onProgress: say });
       }
       if (!ctl.signal.aborted) {
-        setAnch({ state: "done", pings, msg: `${chosen.length} anchors pinged: the result for each probe is in the Place column below`, pair: pairKey });
+        setAnch({ state: "done", pings, msg: `${chosen.length} anchors pinged: the result for each probe is in the Place column below (press it for the figures)`, pair: pairKey });
         showBox();
       }
     } catch (e) {
@@ -248,6 +312,9 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
   }
 
   const showTable = paths || (enabled && !loading);
+  const withPoints = enabled && !loading ? rows.filter((r) => r.place.points.length).map((r) => r.key) : [];
+  const allOpen = withPoints.length > 0 && withPoints.every((k) => open.has(k));
+  const linkButton = { padding: 0, border: 0, background: "none", font: "inherit", color: "inherit", cursor: "pointer", textAlign: "left" };
   const cols = paths ? 6 : 3;
 
   return (
@@ -307,12 +374,21 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
                 {paths ? <th style={head} title="The round trip to the target, from the first public address of the path">IPv4 net</th> : null}
                 {paths ? <th style={head} title="The round trip to the target, from the first public address of the path">IPv6 net</th> : null}
                 {paths ? <th style={head}>Reading</th> : null}
-                <th style={head}>Place</th>
+                <th style={head}>
+                  Place
+                  {withPoints.length > 1 ? (
+                    <button type="button" onClick={() => setOpen(new Set(allOpen ? [] : withPoints))} style={{ ...linkButton, marginLeft: 8, fontWeight: 400, textDecoration: "underline" }}>
+                      {allOpen ? "hide all details" : "show all details"}
+                    </button>
+                  ) : null}
+                </th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => {
                 const out = r.place.misplaced;
+                const shown = enabled && !loading && r.place.points.length > 0 && open.has(r.key);
+                const mark = <span style={{ fontWeight: 400, opacity: 0.7 }}>{shown ? "▾ " : "▸ "}</span>;
                 return [
                   <tr key={r.key} style={out ? { background: "#fffbeb" } : undefined}>
                     <td style={cell}>{i + 1}</td>
@@ -327,9 +403,19 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
                       {!enabled || loading ? (
                         <span style={{ opacity: 0.6 }}>-</span>
                       ) : out ? (
-                        <span style={{ fontWeight: 700, color: "#92400e" }}>not where it is said to be</span>
+                        <button type="button" onClick={() => flip(r.key)} aria-expanded={shown} style={{ ...linkButton, fontWeight: 700, color: "#92400e" }}>
+                          {mark}not where it is said to be
+                        </button>
                       ) : r.place.checked ? (
-                        <span title={`${plural(r.place.checked, "reference point", "reference points")}, none of them too fast for the place`}>consistent ({r.place.checked})</span>
+                        <button
+                          type="button"
+                          onClick={() => flip(r.key)}
+                          aria-expanded={shown}
+                          title={`${plural(r.place.checked, "reference point", "reference points")}, none of them too fast for the place: press for the figures`}
+                          style={linkButton}
+                        >
+                          {mark}consistent ({r.place.checked})
+                        </button>
                       ) : (
                         <span style={{ opacity: 0.7 }}>{r.placed ? "no reference point" : "no coordinates"}</span>
                       )}
@@ -341,6 +427,14 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
                       <td style={cell} colSpan={cols - 1}>
                         {misplacedText(r, isAtlas)}
                         {paths ? " Its delays are not read as a trombone." : ""}
+                      </td>
+                    </tr>
+                  ) : null,
+                  shown ? (
+                    <tr key={`${r.key}-points`} style={out ? { background: "#fffbeb" } : { background: "#f9fafb" }}>
+                      <td style={cell} />
+                      <td style={cell} colSpan={cols - 1}>
+                        <PlaceDetails row={r} />
                       </td>
                     </tr>
                   ) : null,

@@ -127,8 +127,8 @@ test("a round trip long enough for the distance, a nearby site, no coordinates, 
   assert.equal(one(MILAN, [["80.81.196.146", 6], ["193.0.0.1", 9]]).misplaced, null); // 6 ms covers 520 km
   assert.equal(one(MILAN, [["217.29.66.10", 0.3], ["193.0.0.1", 9]]).misplaced, null); // MIX is in Milan
   assert.equal(one({ ...MILAN, latitude: 50.0, longitude: 8.7 }, [["80.81.196.146", 0.5]]).misplaced, null); // a probe in Frankfurt
-  assert.deepEqual(one({ city: "Milan" }, [["80.81.196.146", 0.5]]), { checked: 0, misplaced: null });
-  assert.deepEqual(one(MILAN, [["80.81.196.146", 0.5]], null), { checked: 0, misplaced: null });
+  assert.deepEqual(one({ city: "Milan" }, [["80.81.196.146", 0.5]]), { checked: 0, misplaced: null, points: [] });
+  assert.deepEqual(one(MILAN, [["80.81.196.146", 0.5]], null), { checked: 0, misplaced: null, points: [] });
   assert.deepEqual(ixpRefs([{ n: 1, ip: "80.81.196.146", rtt: null }, { n: 2, ip: "193.0.0.1", rtt: 0.5 }], idx, "IPv4"), []);
 });
 
@@ -144,8 +144,15 @@ test("the strongest of several proofs", () => {
   assert.equal(r.misplaced.name, "us-iad");
   assert.ok(r.misplaced.atLeast > 60);
   assert.ok(r.misplaced.within > 2000 && r.misplaced.within < 2200); // 100 km + 10 ms of fibre
-  assert.deepEqual(soiCheck(45.464, 9.19, refs.slice(2)), { checked: 1, misplaced: null });
-  assert.deepEqual(soiCheck(undefined, 9, refs), { checked: 0, misplaced: null });
+  // every reference that was used comes with its figures, in the order given
+  assert.deepEqual(r.points.map((p) => [p.name, p.ok]), [["de-fra", false], ["us-iad", false], ["it-mil", true]]);
+  assert.equal(r.points[1], r.misplaced);
+  assert.deepEqual(soiCheck(45.464, 9.19, refs.slice(2)), {
+    checked: 1,
+    misplaced: null,
+    points: [{ kind: "x", name: "it-mil", rtt: 0.5, margin: 100, km: 1, atLeast: 0, within: 150, ok: true }],
+  });
+  assert.deepEqual(soiCheck(undefined, 9, refs), { checked: 0, misplaced: null, points: [] });
 });
 
 test("the instances of the root servers: the naming schemes of the operators, and nothing else", () => {
@@ -186,7 +193,7 @@ test("the root servers as reference points for a probe of RIPE Atlas, on a ping 
   assert.equal(rows[0].place.misplaced.margin, 300);
   assert.equal(rows[0].place.misplaced.within, 410);
   assert.equal(rows[0].reading, null); // a ping has no hops: no reading of the trombone
-  assert.deepEqual(rows[1].place, { checked: 0, misplaced: null });
+  assert.deepEqual(rows[1].place, { checked: 0, misplaced: null, points: [] });
   // a probe declared in Brussels (about 170 km away) is within the margin of the instance of Amsterdam
   assert.equal(analysePair([ping(6001, 50.85, 4.35)], [], { rootSites: sites, rootAnswers: answers, paths: false })[0].place.misplaced, null);
 });
