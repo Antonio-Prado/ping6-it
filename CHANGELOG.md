@@ -6,7 +6,16 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 
 ## [Unreleased]
 
-- None.
+### Changed
+- The RIPE Atlas key of the site is never used to read a measurement (only a key sent by the visitor is), so it cannot open private measurements of its owner.
+
+### Added
+- Trombone routing reading under the `traceroute` and `mtr` tables: for each probe, the round trip to the target net of the access network, over IPv4 and IPv6; when one family proves that the target is near (up to 50 ms) and the other needs 100 ms or more, the slower one is marked as a trombone. Bands and method from ASPA Explorer.
+- Probe location check, on request: a round trip shorter than light in fibre (2/3 of c, the "speed of Internet") allows from the declared place of a probe proves that the probe is elsewhere. Reference points: the exchange points that a path crosses (PeeringDB, asked from the browser and kept for a day) and, for RIPE Atlas probes on every command, the instances of the thirteen DNS root servers that answer `hostname.bind` (Izhikevich and others, IMC 2026). A probe that is not where it is said to be is marked with the figures that prove it and is not read as a trombone.
+- Probe location check with the anchors of RIPE Atlas, on request and on both backends: the probes of the measurement ping a few anchors (three in their countries, the others spread over the world), and a round trip too short for the declared place proves that the probe is elsewhere. New endpoint `POST /api/atlas/anchor-pings`.
+- The instances of the DNS root servers are placed for the thirteen letters (about 1,600 instances, from 695): by the lists that the operators publish on root-servers.org, and by the codes in their names where no identifiers are published; the anchors still refute a wrong place.
+- RIPE Atlas without a key of the visitor: when `ATLAS_API_KEY` is set, measurements run with the key of the site, bounded by tests an hour for each address, tests a day for everybody and probes for each test (`ATLAS_SHARED_HOURLY_PER_IP`, `ATLAS_SHARED_DAILY`, `ATLAS_SHARED_MAX_PROBES`); a visitor can still use a key of their own. New endpoint `GET /api/atlas/config`.
+- `src/lib/soi.js` (pure functions) with unit tests, and tests of the server functions with RIPE Atlas faked (`npm test`, run by CI), `public/data/root-sites.json` and `scripts/build-root-sites.mjs` to rebuild it.
 
 ## [2.1.0] - 2026-02-05
 

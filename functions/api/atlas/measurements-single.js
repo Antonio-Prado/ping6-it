@@ -1,4 +1,5 @@
 import { applyRateLimit } from "../_lib/rateLimit.js";
+import { resolveAtlasKey, sharedAtlasLimits, spendSharedAtlasBudget } from "../_lib/atlasKey.js";
 import { sanitizeMeasurementOptions, sanitizeTarget } from "../_lib/guardrails.js";
 
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
@@ -37,12 +38,6 @@ async function verifyTurnstile({ token, secret, remoteip, signal }) {
   const verifyRes = await fetch(SITEVERIFY_URL, { method: "POST", body: fd, signal });
   const verify = await verifyRes.json();
   return verify;
-}
-
-function extractAtlasKey(request, env) {
-  const headerKey = request.headers.get("X-Atlas-Key") || "";
-  const key = String(headerKey || env.ATLAS_API_KEY || "").trim();
-  return key;
 }
 
 async function atlasGetJson(path, apiKey, signal) {
@@ -301,7 +296,7 @@ export async function onRequestPost(context) {
   const secret = env.TURNSTILE_SECRET;
   if (!secret) return json({ error: "TURNSTILE_SECRET not set" }, 500);
 
-  const apiKey = extractAtlasKey(request, env);
+  const { key: apiKey, shared: sharedKey } = resolveAtlasKey(request, env);
   if (!apiKey) {
     return badRequest("missing_atlas_api_key", "RIPE Atlas needs an API key.", {
       hint: "Paste it in Settings (Atlas API key) and retry.",
@@ -376,11 +371,18 @@ export async function onRequestPost(context) {
     return json({ error: "turnstile_bad_hostname", hostname: verify.hostname }, 403);
   }
 
+  // The key of this site spends the credits of its owner: bounded for each address and for each day.
+  if (sharedKey) {
+    const refused = await spendSharedAtlasBudget({ request, env });
+    if (refused) return json(refused.body, refused.status, refused.headers);
+  }
+
   const warnings = [];
 
   let probeDerivation;
   try {
-    probeDerivation = await fetchAllocatedProbeIds(String(sameProbesAs || ""), apiKey, request.signal);
+    // read without the key of the site: it must not open the private measurements of its owner
+    probeDerivation = await fetchAllocatedProbeIds(String(sameProbesAs || ""), sharedKey ? "" : apiKey, request.signal);
   } catch {
     probeDerivation = { ids: [], warnings: [], source: "none" };
   }
@@ -410,7 +412,7 @@ export async function onRequestPost(context) {
   }
 
   // Atlas probe selection requests can be large; keep it bounded.
-  const MAX_PROBES = 50;
+  const MAX_PROBES = sharedKey ? sharedAtlasLimits(env).maxProbes : 50;
   if (probeIds.length > MAX_PROBES) {
     warnings.push(
       `Reference measurement used ${probeIds.length} probes; retry is limited to ${MAX_PROBES} (lowest probe IDs).`

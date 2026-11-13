@@ -110,8 +110,10 @@ export async function applyRateLimit({
   scope = "default",
   limit = 30,
   windowSec = 600,
+  // What is counted: the address of the client, or a fixed subject (a budget shared by everybody).
+  subject = null,
 }) {
-  const ip = getClientIp(request);
+  const ip = subject ? String(subject) : getClientIp(request);
   const nowSec = Math.floor(Date.now() / 1000);
 
   const l = clampInt(limit, { min: 1, max: 10_000, fallback: 30 });

@@ -3,6 +3,7 @@ import { waitForMeasurement } from "./lib/globalping";
 import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
 import VisualCompare from "./VisualCompare";
+import PathChecks from "./PathChecks";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -274,6 +275,7 @@ const COPY = {
     backendGlobalping: "Globalping",
     backendAtlas: "RIPE Atlas (experimental)",
     atlasApiKey: "Atlas API key",
+    atlasApiKeyOptional: "Atlas API key (optional)",
     command: "Command",
     net: "Net",
     from: "From",
@@ -444,9 +446,10 @@ const COPY = {
     helpCommand: "Measurement type to run. IPv4 and IPv6 are executed on the same probes for a fair comparison.",
     helpNet: "Probe network profile filter: any, eyeball (access/consumer), or datacenter.",
     helpFrom: "Where probes are selected (Globalping location string). Presets below can fill this automatically.",
-    helpProbes: "Number of probes to run (Globalping: 1–10, Atlas: 1–50). More probes improve coverage but take longer.",
-    helpBackend: "Choose the measurement network backend. Globalping is the default. RIPE Atlas can provide many more probes but requires an API key.",
+    helpProbes: "Number of probes to run (Globalping: 1–10, Atlas: 1–50, fewer with the key of this site). More probes improve coverage but take longer.",
+    helpBackend: "Choose the measurement network backend. Globalping is the default. RIPE Atlas can provide many more probes; it needs an API key unless this site provides its own.",
     helpAtlasKey: "Get an API key from RIPE Atlas: log in → My Atlas → Keys (API Keys) → Create key. Paste it here. Kept in memory (not stored) and never included in share links.",
+    helpAtlasKeyOptional: ({ n, tests }) => `No key is needed: ping6.it measures with its own RIPE Atlas key, up to ${n} probes for each test and ${tests} tests an hour for each address. Paste your own key to use your credits and lift those limits (up to 50 probes). Kept in memory (not stored) and never included in share links.`,
     helpAsn: "Filter probes by ASN (e.g. 12345).",
     helpIsp: "ISP name filtering is not supported by the Globalping API: use an ASN when possible.",
     asnCellHint: "Click for ASN details.",
@@ -2043,6 +2046,24 @@ export default function App() {
     document.title = title;
   }, [backend, cmd, target]);
   const [atlasApiKey, setAtlasApiKey] = useState("");
+  // Whether this site has a key of RIPE Atlas of its own (then the visitor needs none), and the limits that go with it.
+  const [atlasShared, setAtlasShared] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/atlas/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (live && d && d.sharedKey) setAtlasShared({ maxProbes: Number(d.maxProbes) || 25, hourlyPerIp: Number(d.hourlyPerIp) || 6 });
+      })
+      .catch(() => {
+        // ignore: the key is asked for, as before
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const atlasHasOwnKey = Boolean(String(atlasApiKey || "").trim());
+  const atlasKeyAvailable = atlasHasOwnKey || Boolean(atlasShared);
   const [from, setFrom] = useState("Western Europe");
   const [gpTag, setGpTag] = useState("any"); // any | eyeball | datacenter
   const [limit, setLimit] = useState(3);
@@ -2303,7 +2324,7 @@ export default function App() {
 
   const strictCompare = requireV6Capable && canRequireV6Capable;
 
-  const maxProbes = backend === "atlas" ? 50 : 10;
+  const maxProbes = backend === "atlas" ? (atlasShared && !atlasHasOwnKey ? atlasShared.maxProbes : 50) : 10;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2743,6 +2764,13 @@ export default function App() {
     });
   }
 
+  // The same function for the whole life of the page, for the components that are memoized.
+  const turnstileTokenRef = useRef(null);
+  useEffect(() => {
+    turnstileTokenRef.current = getTurnstileToken;
+  });
+  const stableTurnstileToken = useCallback((signal) => turnstileTokenRef.current(signal), []);
+
   function formatRetryAfterHeader(value) {
     const s = String(value || "").trim();
     if (!s) return "";
@@ -2808,6 +2836,8 @@ export default function App() {
     const code = data?.error;
 
     if (status === 429) {
+      // the limits of the RIPE Atlas key of this site say what to do next
+      if (String(code || "").startsWith("atlas_shared_") && data?.message) return String(data.message);
       return t("errorRateLimited", { retryAfter: retry });
     }
 
@@ -3177,7 +3207,7 @@ ${paramLines}` : header;
         } = buildMeasurementRequest(rawTarget, { syncHttpFields: !multiTargetMode });
 
         if (backend === "atlas") {
-          if (!String(atlasApiKey || "").trim()) {
+          if (!atlasKeyAvailable) {
             throw new Error("RIPE Atlas API key is required when using the Atlas backend.");
           }
           if (!["ping", "traceroute", "dns"].includes(cmd)) {
@@ -3389,7 +3419,7 @@ ${paramLines}` : header;
     }
 
     if (isAtlas) {
-      if (!String(atlasApiKey || "").trim()) {
+      if (!atlasKeyAvailable) {
         setErr("RIPE Atlas API key is required when retrying Atlas measurements.");
         return;
       }
@@ -4741,7 +4771,7 @@ ${paramLines}` : header;
     v4 &&
     v6 &&
     (Number(familyIssues?.badV4) > 0 || Number(familyIssues?.badV6) > 0) &&
-    (backend !== "atlas" || Boolean(String(atlasApiKey || "").trim()));
+    (backend !== "atlas" || atlasKeyAvailable);
   const canRetryV4 = showRetryControls && Number(familyIssues?.badV4) > 0 && Boolean(v6?.id);
   const canRetryV6 = showRetryControls && Number(familyIssues?.badV6) > 0 && Boolean(v4?.id);
 
@@ -5500,13 +5530,14 @@ ${paramLines}` : header;
 
         {backend === "atlas" && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {t("atlasApiKey")} <Help text={t("helpAtlasKey")} />{" "}
+            {t(atlasShared ? "atlasApiKeyOptional" : "atlasApiKey")}{" "}
+            <Help text={atlasShared ? t("helpAtlasKeyOptional", { n: atlasShared.maxProbes, tests: atlasShared.hourlyPerIp }) : t("helpAtlasKey")} />{" "}
             <input
               value={atlasApiKey}
               onChange={(e) => setAtlasApiKey(e.target.value)}
               disabled={running}
               type="password"
-              placeholder="e.g. 0123456789abcdef..."
+              placeholder={atlasShared ? "not needed" : "e.g. 0123456789abcdef..."}
               style={{ padding: 6, width: 220 }}
             />
           </label>
@@ -6604,6 +6635,11 @@ ${paramLines}` : header;
       {mtrSection}
       {dnsSection}
       {httpSection}
+
+      {/* Trombone routing and the place of the probes (traceroute, mtr; RIPE Atlas probes on any command) */}
+      {v4ForCompute && v6ForCompute ? (
+        <PathChecks cmd={cmd} v4={v4ForCompute} v6={v6ForCompute} excludeKeys={probeExcludeKeys} busy={running} atlasKey={atlasApiKey} getTurnstileToken={reportMode ? null : stableTurnstileToken} />
+      ) : null}
 
 
       {asnCard && (() => {
