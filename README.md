@@ -456,6 +456,7 @@ ping6.it is designed to run on **Cloudflare Pages** with Pages Functions.
   - `ATLAS_SHARED_DAILY` (default 200): tests a day for everybody
   - `ATLAS_SHARED_MAX_PROBES` (default 25): probes for each test
   The key of the site is never used to read a measurement, so it cannot open private measurements of its owner; give it only the permission to create measurements.
+  A secret set after a deployment is read only by the next one: deploy again (any push to the production branch) and check that `GET /api/atlas/config` answers `sharedKey: true`.
 - KV binding **`ASN_META_KV`** (recommended)
   - Used for ASN metadata caching
   - Can also be used for rate limiting storage (zero-config)
