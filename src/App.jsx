@@ -3,6 +3,7 @@ import { waitForMeasurement } from "./lib/globalping";
 import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
 import VisualCompare from "./VisualCompare";
+import PathChecks from "./PathChecks";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -6604,6 +6605,11 @@ ${paramLines}` : header;
       {mtrSection}
       {dnsSection}
       {httpSection}
+
+      {/* Trombone routing and the place of the probes (traceroute, mtr; RIPE Atlas probes on any command) */}
+      {v4ForCompute && v6ForCompute ? (
+        <PathChecks cmd={cmd} v4={v4ForCompute} v6={v6ForCompute} excludeKeys={probeExcludeKeys} />
+      ) : null}
 
 
       {asnCard && (() => {
