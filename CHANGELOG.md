@@ -7,6 +7,8 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 ## [Unreleased]
 
 ### Changed
+- Globalping is the backend on every visit: the page no longer reopens on the backend used last (a share link or a history entry still selects its own).
+- RIPE Atlas is no longer labelled as experimental.
 - The RIPE Atlas key of the site is never used to read a measurement (only a key sent by the visitor is), so it cannot open private measurements of its owner.
 
 ### Fixed
