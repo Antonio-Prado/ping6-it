@@ -52,10 +52,7 @@ function headline(c) {
     return {
       tone: "plain",
       title: "No reading of the trombone",
-      text:
-        c.far > 0
-          ? `No probe gets to the target within ${LONG_DELAY_MS} ms on either family, so the target may simply be far from all of them.`
-          : "No probe reached the target on both families.",
+      text: c.far > 0 ? `No probe gets to the target within ${LONG_DELAY_MS} ms on either family, so the target may simply be far from all of them.` : "",
     };
   }
   const of = `of the ${plural(c.read, "probe", "probes")} that can be read`;
@@ -159,9 +156,9 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
   const c = aggregateReadings(rows);
   const h = paths ? headline(c) : null;
   const left = [
-    c.far ? `${plural(c.far, "is", "are")} far from the target on both families` : "",
-    c.unknown ? `${plural(c.unknown, "did", "did")} not reach it on both` : "",
-    c.misplaced ? `${plural(c.misplaced, "is", "are")} not where ${c.misplaced === 1 ? "it is" : "they are"} said to be` : "",
+    c.far ? `${c.far} ${c.far === 1 ? "is" : "are"} far from the target on both families` : "",
+    c.unknown ? `${c.unknown} did not reach the target on both families` : "",
+    c.misplaced ? `${c.misplaced} ${c.misplaced === 1 ? "is" : "are"} not where ${c.misplaced === 1 ? "it is" : "they are"} said to be` : "",
   ].filter(Boolean);
 
   const refs = [
@@ -199,7 +196,7 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
           <div style={{ fontWeight: 700 }}>{h.title}</div>
           <div style={{ marginTop: 2, fontSize: 13 }}>
             {h.text}
-            {left.length ? ` Of the other ${plural(c.probes - c.read, "probe", "probes")}, ${left.join(", ")}.` : ""}
+            {left.length ? ` Not read: ${left.join("; ")}.` : ""}
           </div>
         </div>
       ) : null}
