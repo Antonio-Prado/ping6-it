@@ -9,6 +9,10 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 ### Changed
 - The RIPE Atlas key of the site is never used to read a measurement (only a key sent by the visitor is), so it cannot open private measurements of its owner.
 
+### Fixed
+- The probe map was a broken image: the static-map service it relied on (`staticmap.openstreetmap.de`) no longer answers. The map is now laid out by the page from the tiles of OpenStreetMap, zoomed on the probes of the measurement.
+- Pressing *Ping the anchors of RIPE Atlas* on a RIPE Atlas measurement moved the page up to the human verification next to *Run*, away from the results. The page now stays where it is, and the box is brought back into view when the pings end.
+
 ### Added
 - Trombone routing reading under the `traceroute` and `mtr` tables: for each probe, the round trip to the target net of the access network, over IPv4 and IPv6; when one family proves that the target is near (up to 50 ms) and the other needs 100 ms or more, the slower one is marked as a trombone. Bands and method from ASPA Explorer.
 - Probe location check, on request: a round trip shorter than light in fibre (2/3 of c, the "speed of Internet") allows from the declared place of a probe proves that the probe is elsewhere. Reference points: the exchange points that a path crosses (PeeringDB, asked from the browser and kept for a day) and, for RIPE Atlas probes on every command, the instances of the thirteen DNS root servers that answer `hostname.bind` (Izhikevich and others, IMC 2026). A probe that is not where it is said to be is marked with the figures that prove it and is not read as a trombone.
