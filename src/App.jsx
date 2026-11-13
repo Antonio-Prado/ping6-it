@@ -4,6 +4,7 @@ import { setStoredAtlasKey, waitForAtlasMeasurement } from "./lib/atlas";
 import { GEO_PRESETS } from "./geoPresets";
 import VisualCompare from "./VisualCompare";
 import PathChecks from "./PathChecks";
+import ProbeMap from "./ProbeMap";
 // Turnstile (Cloudflare) - load on demand (only when the user presses Run).
 let __turnstileScriptPromise = null;
 const TURNSTILE_LOAD_TIMEOUT_MS = 8000;
@@ -362,7 +363,6 @@ const COPY = {
     deltaAlertNotice: ({ label, delta, threshold }) => `${label} is ${ms(delta)} (threshold ${threshold} ms).`,
     probeMap: "Probe map",
     probeMapAlt: "Map of probe locations",
-    noProbeCoordinates: "No coordinates available for these probes.",
     coverageTitle: "Probe coverage",
     measurementStatusTitle: "Measurement status",
     measurementStatusBody: ({ v4, v6 }) => `IPv4: ${v4} · IPv6: ${v6}. Some rows may be missing or incomplete.`,
@@ -1225,26 +1225,6 @@ function probeCoords(p) {
   const lon = Number(p.longitude ?? p.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   return { lat, lon };
-}
-
-function buildStaticMapUrl(points) {
-  if (!points.length) return "";
-  const avg = points.reduce(
-    (acc, p) => ({ lat: acc.lat + p.lat, lon: acc.lon + p.lon }),
-    { lat: 0, lon: 0 }
-  );
-  const centerLat = avg.lat / points.length;
-  const centerLon = avg.lon / points.length;
-  const markers = points
-    .map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)},red-pushpin`)
-    .join("|");
-  const params = new URLSearchParams({
-    center: `${centerLat.toFixed(5)},${centerLon.toFixed(5)}`,
-    zoom: "2",
-    size: "800x320",
-    markers,
-  });
-  return `https://staticmap.openstreetmap.de/staticmap.php?${params.toString()}`;
 }
 
 function formatHopPath(result, maxHops = 12) {
@@ -2641,7 +2621,8 @@ export default function App() {
     }
   }, [t]);
 
-  async function getTurnstileToken(signal) {
+  // opts.scroll === false: do not bring the widget into view (for an action started far down the page).
+  async function getTurnstileToken(signal, opts = {}) {
     const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY;
     if (!sitekey) {
       throw new Error(t("errorTurnstileMissing"));
@@ -2728,7 +2709,7 @@ export default function App() {
 
     // Execute and wait for token.
     setShowTurnstile(true);
-    scheduleScrollToId("p6-turnstile", { block: "center" });
+    if (opts.scroll !== false) scheduleScrollToId("p6-turnstile", { block: "center" });
     const widgetId = turnstileWidgetIdRef.current;
 
     return await new Promise((resolve, reject) => {
@@ -2769,7 +2750,7 @@ export default function App() {
   useEffect(() => {
     turnstileTokenRef.current = getTurnstileToken;
   });
-  const stableTurnstileToken = useCallback((signal) => turnstileTokenRef.current(signal), []);
+  const stableTurnstileToken = useCallback((signal, opts) => turnstileTokenRef.current(signal, opts), []);
 
   function formatRetryAfterHeader(value) {
     const s = String(value || "").trim();
@@ -4502,7 +4483,7 @@ ${paramLines}` : header;
     return points;
   }, [v4ForCompute, v6ForCompute]);
 
-  const probeMapUrl = useMemo(() => buildStaticMapUrl(probePoints.slice(0, 40)), [probePoints]);
+  const probeMapPoints = useMemo(() => probePoints.slice(0, 60), [probePoints]);
 
   const traceroutePaths = useMemo(() => {
     if (!showTracerouteTable || !v4ForCompute || !v6ForCompute) return [];
@@ -6605,15 +6586,7 @@ ${paramLines}` : header;
       {probePoints.length > 0 && (
         <div style={{ marginBottom: 16, padding: 12, border: "1px solid #e5e7eb", borderRadius: 10 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("probeMap")}</div>
-          {probeMapUrl ? (
-            <img
-              src={probeMapUrl}
-              alt={t("probeMapAlt")}
-              style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid #e5e7eb" }}
-            />
-          ) : (
-            <div style={{ fontSize: 13, opacity: 0.8 }}>{t("noProbeCoordinates")}</div>
-          )}
+          <ProbeMap points={probeMapPoints} label={t("probeMapAlt")} />
           <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
             {probePoints.slice(0, 30).map((p, idx) => (
               <a
