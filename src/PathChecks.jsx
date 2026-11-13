@@ -311,6 +311,46 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
     }.${failed.length ? ` ${failed.join("; ")}.` : ""}`;
   }
 
+  // The three checks of the place, and what each of them does on this measurement.
+  const usedBy = (kind) => rows.filter((r) => r.place.points.some((p) => p.kind === kind)).length;
+  const applied = (kind, none) => {
+    const n = usedBy(kind);
+    return n ? { text: `applied: a reference point for ${n} of the ${plural(rows.length, "probe", "probes")}`, on: true } : { text: none };
+  };
+  const checks = [
+    {
+      name: "DNS root servers",
+      when: "probes of RIPE Atlas only, on every command",
+      status: !isAtlas
+        ? { text: "not applied here: these are probes of Globalping", off: true }
+        : roots.key !== atlasIds
+          ? { text: "asking RIPE Atlas…" }
+          : roots.state === "failed"
+            ? { text: "not applied: RIPE Atlas did not give the answers of the root servers" }
+            : applied("root", "applied, but no instance whose place is known answered these probes"),
+    },
+    {
+      name: "Exchange points (PeeringDB)",
+      when: "traceroute and mtr only, on both backends",
+      status: !paths
+        ? { text: `not applied here: ${cmd} gives no path to read`, off: true }
+        : ixp.state === "idle"
+          ? { text: "asking PeeringDB…" }
+          : ixp.state === "failed"
+            ? { text: "not applied: PeeringDB did not give the list of the exchange points" }
+            : applied("ixp", "applied, but no path crosses an exchange whose sites are known"),
+    },
+    {
+      name: "Anchors of RIPE Atlas",
+      when: "both backends, on every command, when you ask for it",
+      status: anchorPings
+        ? applied("anchor", "applied, but no anchor answered these probes")
+        : anchState === "running"
+          ? { text: "pinging the anchors…" }
+          : { text: "not applied yet: press the button below" },
+    },
+  ];
+
   const showTable = paths || (enabled && !loading);
   const withPoints = enabled && !loading ? rows.filter((r) => r.place.points.length).map((r) => r.key) : [];
   const allOpen = withPoints.length > 0 && withPoints.every((k) => open.has(k));
@@ -343,6 +383,27 @@ function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", get
             Check where the probes are
           </button>
         )}
+      </div>
+
+      <div style={{ overflowX: "auto", marginBottom: 10 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={head}>Check</th>
+              <th style={head}>Applies to</th>
+              {enabled ? <th style={head}>On this measurement</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {checks.map((k) => (
+              <tr key={k.name}>
+                <td style={{ ...cell, whiteSpace: "nowrap" }}>{k.name}</td>
+                <td style={cell}>{k.when}</td>
+                {enabled ? <td style={{ ...cell, opacity: k.status.off ? 0.7 : 1, fontWeight: k.status.on ? 700 : 400 }}>{k.status.text}</td> : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {enabled ? (
