@@ -12,7 +12,7 @@ It is intended for **quick, reproducible v4 vs v6 troubleshooting**: reachabilit
 
 ping6.it supports two measurement backends:
 - **Globalping** (default) for fast, lightweight measurements.
-- **RIPE Atlas** (experimental) for broader probe availability (requires an API key and currently supports fewer commands).
+- **RIPE Atlas** (experimental) for broader probe availability (no API key needed when the site provides its own; currently supports fewer commands).
 
 > Experimental beta: defaults, UI layout, and comparison logic may evolve.
 
@@ -30,7 +30,7 @@ Feedback: mailto:antonio@prado.it
 - **Multi-target** mode (run the same command over multiple targets)
 - **Per-probe tables** (sortable) + summary stats (medians/p95 and deltas)
 - **Trombone routing** hints on `traceroute`/`mtr`: a family that takes a detour on a probe where the other one proves the target is near
-- **Probe location check**: probes that cannot be where they are said to be, proved with the speed of light in fibre (exchange points, DNS root servers)
+- **Probe location check**: probes that cannot be where they are said to be, proved with the speed of light in fibre (exchange points, DNS root servers, RIPE Atlas anchors)
 - **ASN details**: click an ASN to open an in-app panel with RIPEstat data (including a RPKI validity breakdown)
 - **Exports:** JSON (raw bundle) and CSV (per-probe rows)
 - **Share link** (settings) and **Report mode** (shareable link embedding results)
@@ -91,7 +91,7 @@ Globalping provides a distributed probe network and an API for measurements. pin
 
 RIPE Atlas can provide significantly more probes in some regions, but it comes with different constraints:
 
-- Requires a **RIPE Atlas API key** (user-provided in the UI; stored locally).
+- Needs a **RIPE Atlas API key**: the one of the site (`ATLAS_API_KEY`, see [Cloudflare Pages configuration](#cloudflare-pages-configuration)), within its limits, or one that the visitor pastes in the UI (kept in memory, never stored).
 - Currently supported commands: **`ping`, `traceroute`, `dns`**.
 - Measurements can take longer to stream results; ping6.it shows a dedicated progress indicator.
 - Geo presets are mapped to a curated set of **ISO country codes** (best-effort; see limitations).
@@ -143,9 +143,9 @@ Choose the measurement network backend:
 - **Globalping** (default)
 - **RIPE Atlas (experimental)**
 
-When using RIPE Atlas, you must provide an **Atlas API key** in the Settings panel.
+When the site has a RIPE Atlas key of its own, no key is asked for: measurements run with the key of the site, on up to 25 probes for each test and 6 tests an hour for each address (200 a day for everybody). You can still paste your **own Atlas API key** to use your credits and lift those limits (up to 50 probes). Without a key of the site, your own key is required.
 
-**Privacy note:** the Atlas API key is not stored locally in your browser and is **never included in share links**.
+**Privacy note:** your own Atlas API key is not stored locally in your browser and is **never included in share links**.
 
 ### Target / Multi-target
 - **Single target:** one hostname (or IP literal for DNS on Globalping).
@@ -362,16 +362,17 @@ The bands (50 and 100 ms) are the ones ASPA Explorer uses. They follow the LACNI
 
 Every reading supposes that a probe is where it is said to be. Globalping places a probe by the address it connects from (geolocation databases); the hosts of RIPE Atlas place their probes on a map. Both can be wrong: [Izhikevich and others](https://doi.org/10.1145/3777912.3839804) ("Rooting Out Incorrect RIPE Atlas Probe Geolocations", IMC 2026) found that 2.4% of the probes of RIPE Atlas could not be where they were said to be, about half of them more than 1,000 km away. A probe that is not where it is said to be makes a detour that is not there.
 
-The check is the SOI bound, applied to points whose place is known: **a round trip to such a point shorter than light in fibre needs from the declared place of the probe, less a margin, is impossible from that place**, so the probe is elsewhere, within the distance that the round trip allows from that point. The probe is marked in the table with the figures that prove it, and its delays are not read as a trombone. Two kinds of points are used:
+The check is the SOI bound, applied to points whose place is known: **a round trip to such a point shorter than light in fibre needs from the declared place of the probe, less a margin, is impossible from that place**, so the probe is elsewhere, within the distance that the round trip allows from that point. The probe is marked in the table with the figures that prove it, and its delays are not read as a trombone. Three kinds of points are used:
 
 - **Exchange points** (`traceroute` and `mtr`, both backends). A traceroute has its own reference points: a hop that answers from the LAN of an exchange is on the other side of its switch, so the packet went at least to the nearest site of that exchange and came back. The prefixes of the LANs and the coordinates of the facilities come from [PeeringDB](https://www.peeringdb.com/). The hops of both families are used. Margin: 100 km, because both places are cities and not points.
-- **DNS root servers** (RIPE Atlas probes, every command). This is the method of the study above. Every probe of RIPE Atlas asks each root server, every four minutes, which of its instances answers (`hostname.bind`, public built-in measurements), and the name of an instance carries the code of its city or airport. Only the instances whose place has been confirmed by the anchors of RIPE Atlas are used (`public/data/root-sites.json`): one anchor reached it within 5 ms, and none in less time than light allows from the place read from the name. An answer outside the naming scheme of the operator (often a resolver or a firewall of the network of the probe) is not used; the G, D and I roots are not read. Margin: 300 km, because the place is read from the code of a city.
+- **DNS root servers** (RIPE Atlas probes, every command). This is the method of the study above. Every probe of RIPE Atlas asks each of the thirteen root servers, every four minutes, which of its instances answers (`hostname.bind`, public built-in measurements). The place of an instance (`public/data/root-sites.json`, about 1,600 of them) comes from the list that its operator publishes on [root-servers.org](https://root-servers.org/) (sites, coordinates of the town, identifiers) or, where the operator publishes no identifiers (C and E, part of A and J), from the code of a city or airport in the name of the instance. The anchors of RIPE Atlas are the judges: an instance that an anchor reaches in less time than light allows from that place is dropped, whoever placed it, and an instance placed only by its name is kept when an anchor reached it within 5 ms. An answer that is not an instance of the root (often a resolver or a firewall of the network of the probe) is not used. Margin: 300 km, because the place is the one of a city.
+- **Anchors of RIPE Atlas** (every command, both backends, on request). The anchors are probes of RIPE Atlas in data centres, whose places are checked. A probe that is elsewhere shows it with a round trip too short to an anchor near where it really is, so the anchors are spread: up to three in the countries of the probes, as far from each other as they can be, and one near each of a few points of the world (eleven for RIPE Atlas: Frankfurt, London, Ashburn, San Jose, São Paulo, Johannesburg, Dubai, Mumbai, Singapore, Tokyo and Sydney; four for Globalping: Frankfurt, Ashburn, São Paulo and Singapore). The pings are new measurements on the same probes, so they start only when you press *Ping the anchors of RIPE Atlas*: up to 7 more measurements on Globalping, up to 14 one-off pings on RIPE Atlas (they count as one test against the limits of the key of the site). Margin: 100 km.
 
-Not every probe can be checked: a path may cross no exchange, and Globalping cannot ask a root server which instance answers. The result says how many probes could be checked.
+Not every probe can be checked without the anchors: a path may cross no exchange, and Globalping cannot ask a root server which instance answers. The result says how many probes could be checked.
 
-**Privacy.** The check is off until you press *Check where the probes are* (the choice is remembered in your browser, and a checkbox turns it off). When it is on, your browser asks PeeringDB for five tables, once a day (they are kept in your browser; PeeringDB limits how often an address can ask for them, and its data are not copied to ping6.it), and RIPE Atlas for the answers of the root servers to the probes of the measurement. Both see your address. The reading of the trombone uses only the results already on the page.
+**Privacy.** The check is off until you press *Check where the probes are* (the choice is remembered in your browser, and a checkbox turns it off). When it is on, your browser asks PeeringDB for five tables, once a day (they are kept in your browser; PeeringDB limits how often an address can ask for them, and its data are not copied to ping6.it), and RIPE Atlas for the answers of the root servers to the probes of the measurement, for the list of the anchors (once a day) and for the results of the pings to the anchors, which are public. Both see your address. The reading of the trombone uses only the results already on the page.
 
-`public/data/root-sites.json` is rebuilt by hand with `node scripts/build-root-sites.mjs` (data of RIPE Atlas and of [OurAirports](https://ourairports.com/), public domain).
+`public/data/root-sites.json` is rebuilt by hand with `node scripts/build-root-sites.mjs` (data of root-servers.org, of RIPE Atlas and of [OurAirports](https://ourairports.com/), public domain).
 
 ## API endpoints
 
@@ -385,6 +386,12 @@ This repo includes Cloudflare Pages Functions used by the UI:
 
 - `GET /api/atlas/measurements/:id`
   Reads and normalizes RIPE Atlas measurement results (with best-effort probe metadata caching).
+
+- `GET /api/atlas/config`
+  Tells the UI whether the site has a RIPE Atlas key of its own, and the limits that go with it (nothing about the key).
+
+- `POST /api/atlas/anchor-pings`
+  Creates one-off pings from the probes of a measurement to a few RIPE Atlas anchors, for the probe location check (Turnstile, rate limits; only anchors can be aimed at).
 
 - `POST /api/globalping/measurements`
   Proxy/sanitizer for Globalping create requests (defensive validation/clamping).
@@ -444,7 +451,11 @@ ping6.it is designed to run on **Cloudflare Pages** with Pages Functions.
 
 #### Optional
 
-- `ATLAS_API_KEY` (server-side fallback for RIPE Atlas; the UI can also send `X-Atlas-Key` from the user’s local settings)
+- `ATLAS_API_KEY` (Pages secret): the RIPE Atlas key of the site. When it is set, visitors need no key of their own; a visitor can still send one (`X-Atlas-Key`), which is then used instead. The key of the site spends the credits of its owner, so its use is bounded (the limits need a KV binding to be kept reliably):
+  - `ATLAS_SHARED_HOURLY_PER_IP` (default 6): tests an hour for each address
+  - `ATLAS_SHARED_DAILY` (default 200): tests a day for everybody
+  - `ATLAS_SHARED_MAX_PROBES` (default 25): probes for each test
+  The key of the site is never used to read a measurement, so it cannot open private measurements of its owner; give it only the permission to create measurements.
 - KV binding **`ASN_META_KV`** (recommended)
   - Used for ASN metadata caching
   - Can also be used for rate limiting storage (zero-config)
@@ -478,6 +489,7 @@ ping6.it is built on top of:
 - Globalping (API + distributed probes)
 - RIPE Atlas (API + distributed probes, built-in measurements and anchors)
 - PeeringDB (exchange points and their facilities)
+- root-servers.org and the root server operators (sites and identifiers of the instances)
 - Izhikevich and others, "Rooting Out Incorrect RIPE Atlas Probe Geolocations" (IMC 2026), for the method of the probe location check
 - ASPA Explorer (University of Padova), where the trombone and probe location checks were first built
 - OurAirports (public domain airport data)
