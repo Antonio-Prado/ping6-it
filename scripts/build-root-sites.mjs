@@ -1,14 +1,19 @@
 // The place of the instances of the DNS root servers, for the check of the probes of RIPE Atlas (src/lib/soi.js, rootRefs):
-// public/data/root-sites.json, { letter: { hostname: [latitude, longitude, code] } }.
+// public/data/root-sites.json, { letter: { hostname: [latitude, longitude, label] } }.
 //
-// Every probe of RIPE Atlas asks each root server for hostname.bind (built-in measurements), and the name of the instance that
-// answers carries the code of its place in the scheme of its operator (rootPlace). The code is read as a city code of IATA, or as
-// an airport of OurAirports (public domain), in the country of the name when it has one. An instance is kept only when the anchors
-// of RIPE Atlas, whose places are checked, agree with it: one of them reaches it within CONFIRM_MS (so it was seen from near its
-// real place), and none reaches it in less time than light in fibre needs from where the anchor is to the place read from the name.
-// Anchors that disagree with several instances are not used as judges (they may be elsewhere, or behind a resolver that answers).
+// Every probe of RIPE Atlas asks each root server for hostname.bind (built-in measurements). The name of the instance that answers
+// is placed in two ways:
+// - by the list that its operator publishes on root-servers.org (sites, coordinates of the town, identifiers), for the thirteen
+//   letters; C and E publish no identifiers there;
+// - by the code of a place in the naming scheme of the operator (rootPlace): a city code of IATA, or an airport of OurAirports
+//   (public domain), in the country of the name when it has one.
+// The anchors of RIPE Atlas, whose places are checked, are the judges: an instance that one of them reaches in less time than light
+// in fibre needs from where the anchor is to that place is dropped, whoever placed it. An instance placed only by its name is kept
+// when an anchor reaches it within CONFIRM_MS (so it was seen from near its real place). Anchors that disagree with several
+// instances are not used as judges (they may be elsewhere, or behind a resolver that answers).
 //
-// Ported from ASPA Explorer (scripts/build-root-sites.mjs). It downloads the latest answers of every probe for ten root letters:
+// Ported from ASPA Explorer (scripts/build-root-sites.mjs), with the lists of the operators added. It downloads the latest answers
+// of every probe for the thirteen root letters:
 // run it by hand, now and then, when the operators add or rename instances.
 //
 // usage: node scripts/build-root-sites.mjs [OUT]          (OUT: public/data/root-sites.json)
@@ -82,6 +87,49 @@ const placeOf = (code, cc, ap) => {
   return [c[1], c[2]];
 };
 
+// The sites that the operators publish on root-servers.org, with the identifiers that their instances answer with and the
+// coordinates of the town: { exact: Map(identifier -> place), byCode: Map("cc-code" -> place) }, place = [lat, lon, town].
+// The site answers 429 to requests that come too close to each other.
+async function official(letter) {
+  const exact = new Map(), byCode = new Map();
+  let d = null;
+  for (let i = 1; i <= 4 && !d; i++) {
+    const r = await fetch(`https://root-servers.org/root/${letter}/json/`, { headers: UA, signal: AbortSignal.timeout(60000) }).catch(() => null);
+    if (r && r.ok) d = await r.json().catch(() => null);
+    if (!d) await new Promise((res) => setTimeout(res, 15000 * i));
+  }
+  for (const site of (d && d.Sites) || []) {
+    const lat = Number(site.Latitude), lon = Number(site.Longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
+    const at = [Math.round(lat * 1000) / 1000, Math.round(lon * 1000) / 1000, String(site.Town || site.Country || '').trim()];
+    for (const id of site.Identifiers || []) {
+      const k = String(id).trim().toLowerCase();
+      if (!k) continue;
+      exact.set(k, at);
+      const m = /^[a-z]\d+\.([a-z]{2}-[a-z]{3})\.root$/.exec(k);          // A and J: a6.nl-ams.root
+      if (m) byCode.set(m[1], at);
+    }
+  }
+  return { exact, byCode, ok: !!d };
+}
+
+// The place of an instance from what the operator publishes, or null. I answers "sN.xxx" where the list has "xxx"; A and J answer
+// names of another form than the list (nnn1-frpar-1 for the site fr-par), which are matched by the code of the place.
+function officialPlace(letter, host, off) {
+  const h = host.trim().toLowerCase();
+  if (off.exact.has(h)) return off.exact.get(h);
+  if (letter === 'i') { const m = /^s\d+\.([a-z0-9]+)$/.exec(h); return (m && off.exact.get(m[1])) || null; }
+  if (letter === 'a' || letter === 'j') {
+    const p = T.rootPlace(letter, host);
+    if (!p) return null;
+    const code = p.code.toLowerCase();
+    if (p.cc) return off.byCode.get(`${p.cc.toLowerCase()}-${code}`) || null;
+    const same = [...off.byCode].filter(([k]) => k.endsWith(`-${code}`));
+    return same.length === 1 ? same[0][1] : null;
+  }
+  return null;
+}
+
 const ap = await airports();
 console.error(`${ap.size} airports with an IATA code`);
 // the anchors that are connected, with their places
@@ -93,48 +141,56 @@ for (let url = `${ATLAS}/probes/?is_anchor=true&status=1&page_size=500&fields=id
 }
 console.error(`${anchors.size} connected anchors`);
 
-const sites = {};
+const sites = {};                            // letter -> hostname -> [lat, lon, label, published by the operator?]
 const judgements = [];                       // [letter, hostname, anchor, rtt]
 let read = 0, unread = 0;
 for (const [letter, id] of Object.entries(MEASUREMENTS)) {
+  const off = await official(letter);
+  if (!off.ok) console.error(`${letter}: root-servers.org did not answer, the names alone are read`);
   const results = await getJson(`${ATLAS}/measurements/${id}/latest/`);
   sites[letter] = {};
+  let published = 0;
   for (const r of results) {
     const res = r.result || {};
     const host = (res.answers || []).map((a) => (Array.isArray(a.RDATA) ? a.RDATA.join(' ') : a.RDATA)).find(Boolean);
     if (!host || typeof res.rt !== 'number') continue;
-    const place = T.rootPlace(letter, host);
-    if (!place) { unread++; continue; }
+    if (!sites[letter][host]) {
+      const pub = officialPlace(letter, host, off);
+      const place = pub ? null : T.rootPlace(letter, host);
+      const at = pub || (place && placeOf(place.code, place.cc, ap));
+      if (at) { sites[letter][host] = pub ? [pub[0], pub[1], pub[2], true] : [at[0], at[1], place.code, false]; if (pub) published++; }
+    }
+    if (!sites[letter][host]) { unread++; continue; }
     read++;
-    const at = placeOf(place.code, place.cc, ap);
-    if (at && !sites[letter][host]) sites[letter][host] = [at[0], at[1], place.code];
     if (anchors.has(r.prb_id)) judgements.push([letter, host, r.prb_id, res.rt]);
   }
-  console.error(`${letter}: ${Object.keys(sites[letter]).length} instances placed`);
+  console.error(`${letter}: ${Object.keys(sites[letter]).length} instances placed, ${published} of them by the list of the operator`);
 }
 
 // the anchors that disagree with several instances are not judges
 const disagree = new Map();
 const verdicts = judgements.map(([letter, host, anchor, rtt]) => {
   const s = sites[letter][host];
-  if (!s) return null;
   const floor = T.soiFloor(T.distanceKm(anchors.get(anchor), [s[0], s[1]]));
   const bad = rtt < floor;
   if (bad) { if (!disagree.has(anchor)) disagree.set(anchor, new Set()); disagree.get(anchor).add(`${letter} ${host}`); }
   return { letter, host, anchor, rtt, bad };
-}).filter(Boolean);
+});
 const judges = new Set([...anchors.keys()].filter((a) => !disagree.has(a) || disagree.get(a).size < JUDGE_LIMIT));
+// An instance that an anchor refutes is dropped, whoever placed it. One that the operator publishes is kept otherwise; one whose
+// place is only read from its name is kept when an anchor saw it from near.
 const kept = {};
-let confirmed = 0, refuted = 0, unseen = 0;
+let byList = 0, byAnchor = 0, refuted = 0, unseen = 0;
 for (const [letter, list] of Object.entries(sites)) {
   kept[letter] = {};
   for (const [host, s] of Object.entries(list)) {
     const v = verdicts.filter((x) => x.letter === letter && x.host === host && judges.has(x.anchor));
     if (v.some((x) => x.bad)) { refuted++; continue; }
-    if (!v.some((x) => x.rtt <= CONFIRM_MS)) { unseen++; continue; }
-    kept[letter][host] = s;
-    confirmed++;
+    if (s[3]) byList++;
+    else if (v.some((x) => x.rtt <= CONFIRM_MS)) byAnchor++;
+    else { unseen++; continue; }
+    kept[letter][host] = [s[0], s[1], s[2]];
   }
 }
-writeFileSync(OUT, `${JSON.stringify({ generated: new Date().toISOString(), confirmMs: CONFIRM_MS, sources: 'RIPE Atlas built-in hostname.bind measurements and anchors; OurAirports (public domain)', sites: kept })}\n`);
-console.error(`answers read ${read}, not in a scheme ${unread}; instances kept ${confirmed}, refuted by an anchor ${refuted}, not confirmed by a near anchor ${unseen}; anchors not judging ${anchors.size - judges.size}`);
+writeFileSync(OUT, `${JSON.stringify({ generated: new Date().toISOString(), confirmMs: CONFIRM_MS, sources: 'root-servers.org (sites and identifiers published by the operators); RIPE Atlas built-in hostname.bind measurements and anchors; OurAirports (public domain)', sites: kept })}\n`);
+console.error(`answers read ${read}, not placed ${unread}; instances kept ${byList + byAnchor} (${byList} published by their operator, ${byAnchor} read from the name and confirmed by a near anchor), refuted by an anchor ${refuted}, not confirmed ${unseen}; anchors not judging ${anchors.size - judges.size}`);
