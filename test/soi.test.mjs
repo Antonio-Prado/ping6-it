@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import {
   FIBRE_KM_PER_MS, aggregateReadings, analysePair, distanceKm, familyReading, hopsOf, isPrivate, ixpIndex, ixpOf, ixpRefs, ixpsFrom,
-  lanPrefix, pairResults, parseIp, rootAnswersFrom, rootPlace, rootRefs, soiCheck, soiFloor, soiReach, summarise,
+  lanPrefix, pairResults, parseIp, pickAnchors, anchorRefs, ROOT_MEASUREMENTS, rootAnswersFrom, rootPlace, rootRefs, soiCheck, soiFloor, soiReach, summarise,
 } from "../src/lib/soi.js";
 
 const IXPS = [
@@ -207,4 +207,40 @@ test("the probes of two measurements side by side, and the headline counts", () 
   assert.deepEqual(aggregateReadings(rows), { probes: 4, read: 3, none: 1, tromboneV4: 1, tromboneV6: 1, longV4: 0, longV6: 0, far: 1, unknown: 0, misplaced: 0, checked: 0 });
   // one family only: nothing to compare
   assert.equal(analysePair([t4(MILAN, 8)], [], {})[0].reading.verdict, "unknown");
+});
+
+test("the thirteen root letters are asked", () => {
+  assert.deepEqual(Object.keys(ROOT_MEASUREMENTS).join(""), "abcdefghijklm");
+  assert.equal(new Set(Object.values(ROOT_MEASUREMENTS)).size, 13);
+});
+
+test("the anchors to ping: spread in the countries of the probes, and one near each point of the world", () => {
+  const A = (id, country, latitude, longitude) => ({ id, fqdn: `a${id}.anchors.atlas.ripe.net`, country, latitude, longitude, city: `c${id}` });
+  const anchors = [A(1, "IT", 45.46, 9.19), A(2, "IT", 41.9, 12.5), A(3, "IT", 45.07, 7.69), A(4, "IT", 38.12, 13.36), A(5, "DE", 50.11, 8.68),
+    A(6, "US", 39.04, -77.49), A(7, "JP", 35.68, 139.69), A(8, "IT", 44.49, 11.34), { id: 9, fqdn: null, country: "IT", latitude: 1, longitude: 1 }];
+  const picked = pickAnchors(anchors, ["it"], 3, [[50.11, 8.68], [39.04, -77.49], [35.68, 139.69]]);
+  assert.equal(picked.length, 6);
+  assert.deepEqual(picked.slice(0, 3).map((a) => a.country), ["IT", "IT", "IT"]);
+  assert.ok(picked.slice(0, 3).some((a) => a.id === 4)); // Palermo, the farthest from the others
+  assert.deepEqual(picked.slice(3).map((a) => a.id), [5, 6, 7]);
+  assert.equal(new Set(picked.map((a) => a.id)).size, 6); // no anchor twice
+  // probes of two countries; no anchor in a country: the world only
+  assert.deepEqual(pickAnchors(anchors, ["DE", "JP"], 3, []).map((a) => a.id).sort(), [5, 7]);
+  assert.deepEqual(pickAnchors(anchors, ["ZZ"], 3, [[39.04, -77.49]]).map((a) => a.id), [6]);
+  assert.deepEqual(pickAnchors(null, ["IT"]), []);
+});
+
+test("a probe said to be in Milan that reaches an anchor in Ashburn in 20 ms is not in Milan", () => {
+  const iad = { id: 6, fqdn: "us-iad.anchors.atlas.ripe.net", city: "Ashburn", country: "US", latitude: 39.04, longitude: -77.49 };
+  const mil = { id: 1, fqdn: "it-mil.anchors.atlas.ripe.net", city: "Milan", country: "IT", latitude: 45.47, longitude: 9.18 };
+  assert.deepEqual(anchorRefs([{ anchor: mil, rtt: 0.5 }, { anchor: iad, rtt: null }, null]), [{ kind: "anchor", anchor: mil.fqdn, city: "Milan", country: "IT", sites: [[45.47, 9.18]], rtt: 0.5 }]);
+  const ping = { probe: { id: 77, country: "IT", latitude: 45.464, longitude: 9.19 }, result: { status: "finished", stats: { avg: 20 } } };
+  const pings = new Map([["77", [{ anchor: mil, rtt: 30 }, { anchor: iad, rtt: 20 }]]]);
+  const [r] = analysePair([ping], [ping], { anchorPings: pings, paths: false });
+  assert.equal(r.place.checked, 2);
+  assert.equal(r.place.misplaced.kind, "anchor");
+  assert.equal(r.place.misplaced.anchor, iad.fqdn);
+  assert.ok(r.place.misplaced.atLeast > 60);
+  assert.ok(r.place.misplaced.within > 2000 && r.place.misplaced.within < 2200); // 100 km + 10 ms of fibre
+  assert.equal(analysePair([ping], [ping], { anchorPings: new Map([["77", [{ anchor: mil, rtt: 0.5 }]]]), paths: false })[0].place.misplaced, null);
 });

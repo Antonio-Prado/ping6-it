@@ -1,9 +1,9 @@
-import { memo, useEffect, useMemo, useState } from "react";
-import { LONG_DELAY_MS, TROMBONE_MS, aggregateReadings, analysePair } from "./lib/soi";
-import { loadIxpIndex, loadRootAnswers, loadRootSites } from "./lib/placeData";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { LONG_DELAY_MS, TROMBONE_MS, WORLD_POINTS, WORLD_POINTS_SHORT, aggregateReadings, analysePair, pickAnchors } from "./lib/soi";
+import { loadAnchors, loadIxpIndex, loadRootAnswers, loadRootSites, pingAnchorsAtlas, pingAnchorsGlobalping } from "./lib/placeData";
 
-// Trombone routing and the place of the probes, under the tables of a traceroute or an mtr (and, for the probes of RIPE Atlas,
-// the place of the probes under any command). The method is in src/lib/soi.js.
+// Trombone routing and the place of the probes, under the tables: the reading of the trombone for a traceroute or an mtr, the
+// place of the probes under any command. The method is in src/lib/soi.js.
 
 const PLACE_CHECK_STORE = "PING6_PLACE_CHECK";
 
@@ -41,6 +41,9 @@ function misplacedText(row, isAtlas) {
   const m = row.place.misplaced;
   const who = isAtlas ? `${probeLabel(row.probe)} is not where its host places it` : `This probe is not where Globalping places it (${probeLabel(row.probe)})`;
   const floor = `while light in fibre needs at least ${fmtMs(m.atLeast)} to go there and back`;
+  if (m.kind === "anchor") {
+    return `${who}: it reaches the anchor of RIPE Atlas ${m.anchor}${m.city ? ` in ${m.city}` : ""}, ${m.km} km from that place, in ${fmtMs(m.rtt)}, ${floor}. The probe is within about ${m.within} km of that anchor.`;
+  }
   if (m.kind === "root") {
     return `${who}: the ${m.letter.toUpperCase()} root server answers it from its instance ${m.hostname} (${m.code}), ${m.km} km from that place, in ${fmtMs(m.rtt)}, ${floor}. The probe is within about ${m.within} km of that instance.`;
   }
@@ -88,13 +91,21 @@ function readingCell(row) {
   );
 }
 
-function PathChecks({ cmd, v4, v6, excludeKeys }) {
+function PathChecks({ cmd, v4, v6, excludeKeys, busy = false, atlasKey = "", getTurnstileToken = null }) {
   const paths = cmd === "traceroute" || cmd === "mtr";
   const isAtlas = Boolean(v4?.atlas || v6?.atlas);
 
   const [enabled, setEnabled] = useState(readStored);
   const [ixp, setIxp] = useState({ state: "idle", index: null }); // idle | ready | failed
   const [roots, setRoots] = useState({ state: "idle", sites: null, answers: null, key: "" });
+  // the pings to the anchors belong to one pair of measurements: `pair` tells which
+  const [anch, setAnch] = useState({ state: "idle", pings: null, msg: "", pair: "" });
+  const anchorsAbort = useRef(null);
+  const pairKey = `${v4?.id ?? ""}|${v6?.id ?? ""}`;
+  const anchorPings = anch.pair === pairKey ? anch.pings : null;
+  const anchState = anch.pair === pairKey ? anch.state : "idle";
+
+  useEffect(() => () => anchorsAbort.current?.abort(), []);
 
   const atlasIds = useMemo(() => {
     if (!isAtlas) return "";
@@ -144,14 +155,47 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
       index: enabled ? ixp.index : null,
       rootSites: enabled ? roots.sites : null,
       rootAnswers: enabled ? roots.answers : null,
+      anchorPings: enabled ? anchorPings : null,
       excludeKeys: excludeKeys instanceof Set ? excludeKeys : null,
       paths,
     });
     const rank = (r) => (r.reading ? ORDER[r.reading.level || r.reading.verdict] ?? 9 : r.place.misplaced ? 0 : 1);
     return list.map((r, i) => ({ ...r, i })).sort((a, b) => rank(a) - rank(b) || a.i - b.i);
-  }, [v4, v6, enabled, ixp.index, roots.sites, roots.answers, excludeKeys, paths]);
+  }, [v4, v6, enabled, ixp.index, roots.sites, roots.answers, anchorPings, excludeKeys, paths]);
 
-  if (!rows.length || (!paths && !isAtlas)) return null;
+  if (!rows.length) return null;
+
+  // Ask the probes to ping a few anchors of RIPE Atlas: new measurements, so only when the visitor asks.
+  const anchorsCount = isAtlas ? 3 + WORLD_POINTS.length : 3 + WORLD_POINTS_SHORT.length;
+  const canPingAnchors = !busy && anchState !== "running" && (isAtlas ? Boolean(getTurnstileToken && atlasIds) : Boolean(v4?.id || v6?.id));
+  async function runAnchors() {
+    anchorsAbort.current?.abort();
+    const ctl = new AbortController();
+    anchorsAbort.current = ctl;
+    const say = (msg) => {
+      if (!ctl.signal.aborted) setAnch({ state: "running", pings: null, msg, pair: pairKey });
+    };
+    say("choosing the anchors");
+    try {
+      const list = await loadAnchors();
+      if (!list) throw new Error("RIPE Atlas did not give the list of the anchors.");
+      const countries = [...new Set(rows.map((r) => String(r.probe?.country ?? r.probe?.country_code ?? "").toUpperCase()).filter(Boolean))];
+      const chosen = pickAnchors(list, countries, 3, isAtlas ? WORLD_POINTS : WORLD_POINTS_SHORT);
+      if (!chosen.length) throw new Error("No anchor could be chosen.");
+      let pings;
+      if (isAtlas) {
+        const turnstileToken = await getTurnstileToken(ctl.signal);
+        say(`pinging ${chosen.length} anchors`);
+        pings = await pingAnchorsAtlas({ probeIds: atlasIds.split(","), anchors: chosen, turnstileToken, atlasKey, signal: ctl.signal, onProgress: say });
+      } else {
+        say(`pinging ${chosen.length} anchors`);
+        pings = await pingAnchorsGlobalping({ measurementId: v4?.id || v6?.id, anchors: chosen, signal: ctl.signal, onProgress: say });
+      }
+      if (!ctl.signal.aborted) setAnch({ state: "done", pings, msg: `${chosen.length} anchors pinged`, pair: pairKey });
+    } catch (e) {
+      if (!ctl.signal.aborted) setAnch({ state: "failed", pings: null, msg: String(e?.message || "The anchors could not be pinged."), pair: pairKey });
+    }
+  }
 
   const c = aggregateReadings(rows);
   const h = paths ? headline(c) : null;
@@ -164,7 +208,9 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
   const refs = [
     paths ? "the exchange points that a path crosses, whose sites are known (PeeringDB)" : "",
     isAtlas ? "the instances of the DNS root servers that answer the probes in the built-in measurements of RIPE Atlas" : "",
+    anchorPings || !enabled ? `the anchors of RIPE Atlas${anchorPings ? " that the probes pinged" : ", when you ask the probes to ping them"}` : "",
   ].filter(Boolean);
+  const refsText = refs.length > 1 ? `${refs.slice(0, -1).join("; ")}; and ${refs[refs.length - 1]}` : refs[0];
   const loading = enabled && ((paths && ixp.state === "idle") || (Boolean(atlasIds) && roots.key !== atlasIds));
   const failed = [
     paths && ixp.state === "failed" ? "PeeringDB did not give the list of the exchange points (it limits how often an address can ask for it)" : "",
@@ -173,13 +219,13 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
 
   let placeLine;
   if (!enabled) {
-    placeLine = `Each probe can be checked against ${refs.join(", and ")}: a round trip to one of them shorter than light in fibre allows from the place of the probe proves that the probe is elsewhere. ${isAtlas && paths ? "PeeringDB and RIPE Atlas are" : isAtlas ? "RIPE Atlas is" : "PeeringDB is"} asked from your browser, and ${isAtlas && paths ? "see" : "sees"} your address.`;
+    placeLine = `Each probe can be checked against ${refsText}: a round trip to one of them shorter than light in fibre allows from the place of the probe proves that the probe is elsewhere. ${paths ? "PeeringDB and RIPE Atlas are" : "RIPE Atlas is"} asked from your browser, and ${paths ? "see" : "sees"} your address.`;
   } else if (loading) {
     placeLine = "Checking where the probes are…";
   } else if (!c.checked) {
-    placeLine = `The place of the probes could not be checked: ${failed.length ? `${failed.join("; ")}.` : "no reference point could be used for these probes."}`;
+    placeLine = `The place of the probes could not be checked${anchorPings ? "" : " yet"}: ${failed.length ? `${failed.join("; ")}.` : "no reference point could be used for these probes."}${anchorPings ? "" : " The anchors of RIPE Atlas can be pinged from them."}`;
   } else {
-    placeLine = `${c.checked} of the ${plural(c.probes, "probe", "probes")} could be checked against ${refs.join(", and ")}${
+    placeLine = `${c.checked} of the ${plural(c.probes, "probe", "probes")} could be checked against ${refsText}${
       c.misplaced ? `, and ${plural(c.misplaced, "is", "are")} not where ${c.misplaced === 1 ? "it is" : "they are"} said to be` : `, and ${c.checked === 1 ? "it is" : "all are"} where ${c.checked === 1 ? "it is" : "they are"} said to be`
     }.${failed.length ? ` ${failed.join("; ")}.` : ""}`;
   }
@@ -214,6 +260,25 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
           </button>
         )}
       </div>
+
+      {enabled ? (
+        <div style={{ fontSize: 12, marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <button type="button" onClick={runAnchors} disabled={!canPingAnchors} style={{ padding: "4px 10px", borderRadius: 10, font: "inherit", fontSize: 12 }}>
+            {anchState === "done" ? "Ping the anchors again" : "Ping the anchors of RIPE Atlas"}
+          </button>
+          <span style={{ flex: "1 1 320px", opacity: 0.85 }} role="status">
+            {anchState === "running"
+              ? `${anch.msg}…`
+              : anchState === "failed"
+                ? anch.msg
+                : anchState === "done"
+                  ? `${anch.msg}.`
+                  : isAtlas
+                    ? `The probes ping up to ${anchorsCount} anchors, three in their countries and one near each of eleven points of the world: new measurements on RIPE Atlas, which take a minute or two.`
+                    : `The same probes ping up to ${anchorsCount} anchors, three in their countries and four in the world: ${anchorsCount} more measurements on Globalping.`}
+          </span>
+        </div>
+      ) : null}
 
       {showTable ? (
         <div style={{ overflowX: "auto" }}>
@@ -289,9 +354,11 @@ function PathChecks({ cmd, v4, v6, excludeKeys }) {
             Izhikevich and others
           </a>{" "}
           (IMC 2026) found with the round trips to the DNS root servers that 2.4% of the probes of RIPE Atlas could not be where they were said
-          to be. The same rule is applied here with two kinds of points whose place is known: the exchange points that a traceroute crosses (a
+          to be. The same rule is applied here with three kinds of points whose place is known: the exchange points that a traceroute crosses (a
           hop on the LAN of an exchange is on the other side of its switch; margin 100 km) and, for the probes of RIPE Atlas, the instances of the
-          root servers that answer <code>hostname.bind</code> (margin 300 km, because the place of an instance is read from the code of its city).
+          root servers that answer <code>hostname.bind</code> (margin 300 km, because the place of an instance is the one of its city); and, on
+          request, the anchors of RIPE Atlas, probes in data centres whose places are checked, which the probes of the measurement ping
+          (margin 100 km).
           Queues, slow answers and tunnels only add time, so they never make a probe look misplaced. The method comes from{" "}
           <a href="https://aspa.ping6.it/guide.html#probe-place" target="_blank" rel="noopener noreferrer">
             ASPA Explorer

@@ -182,12 +182,13 @@ export function ixpRefs(hops, index, family) {
 // DNS root servers (RIPE Atlas probes only)
 
 // The built-in measurements of RIPE Atlas that ask each root server for hostname.bind, from every probe, every four minutes.
-// G names a region only, and D and I use codes of their own: they are not read.
-export const ROOT_MEASUREMENTS = { a: 10309, b: 10310, c: 10311, e: 10313, f: 10304, h: 10315, j: 10316, k: 10301, l: 10308, m: 10306 };
+export const ROOT_MEASUREMENTS = { a: 10309, b: 10310, c: 10311, d: 10312, e: 10313, f: 10304, g: 10314, h: 10315, i: 10305, j: 10316, k: 10301, l: 10308, m: 10306 };
 
 // The instance of a root server that answered hostname.bind, as the code of a place: an IATA code of an airport or of a city,
 // and a country when the name has one. Only the naming schemes of the operators are read: anything else, such as a resolver or
-// a firewall of the network of the probe that answers in their place (which is common, and fast), gives null.
+// a firewall of the network of the probe that answers in their place (which is common, and fast), gives null. D, G and I
+// have no code of a place in their names: their instances are placed by the lists of their operators only
+// (scripts/build-root-sites.mjs).
 const ROOT_NAMES = {
   a: [[/^nnn1-([a-z]{2})([a-z]{3})\d*(?:-[0-9a-z]+)?$/, 2, 1], [/^nnn1-([a-z]{3})\d*(?:-[0-9a-z]+)?$/, 1, 0]],
   b: [[/^b\d+-([a-z]{3})$/, 1, 0]],
@@ -234,6 +235,53 @@ export function rootAnswersFrom(letter, results, into = new Map()) {
   }
   return into;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Anchors of RIPE Atlas
+
+// The anchors are probes of RIPE Atlas in data centres, whose places are checked. A probe that is not where it is said to be
+// shows it with a round trip that is too short to an anchor near where it really is, so the anchors to ping are spread: up to
+// `inCountry` in the countries of the probes, as far from each other as they can be, and the one nearest to each point of a
+// world-wide list (Frankfurt, London, Ashburn, San Jose, Sao Paulo, Johannesburg, Dubai, Mumbai, Singapore, Tokyo, Sydney).
+// anchors: [{ id, fqdn, latitude, longitude, country, city }]; countries: the country codes of the probes.
+export const WORLD_POINTS = [[50.11, 8.68], [51.51, -0.13], [39.04, -77.49], [37.34, -121.89], [-23.55, -46.63], [-26.2, 28.05], [25.2, 55.27], [19.08, 72.88], [1.35, 103.82], [35.68, 139.69], [-33.87, 151.21]];
+// Fewer points, for the platforms where each ping is a measurement of its own: Frankfurt, Ashburn, Sao Paulo, Singapore.
+export const WORLD_POINTS_SHORT = [WORLD_POINTS[0], WORLD_POINTS[2], WORLD_POINTS[4], WORLD_POINTS[8]];
+
+export function pickAnchors(anchors, countries, inCountry = 3, points = WORLD_POINTS) {
+  const ok = (anchors || [])
+    .filter((a) => a && a.fqdn && typeof a.latitude === "number" && typeof a.longitude === "number")
+    .sort((a, b) => a.id - b.id);
+  const at = (a) => [a.latitude, a.longitude];
+  const wanted = new Set((Array.isArray(countries) ? countries : [countries]).map((c) => String(c || "").toUpperCase()).filter(Boolean));
+  const home = ok.filter((a) => wanted.has(String(a.country || "").toUpperCase()));
+  const chosen = [];
+  if (home.length && inCountry > 0) {
+    const mid = [home.reduce((t, a) => t + a.latitude, 0) / home.length, home.reduce((t, a) => t + a.longitude, 0) / home.length];
+    chosen.push(home.reduce((b, a) => (distanceKm(at(a), mid) < distanceKm(at(b), mid) ? a : b)));
+    while (chosen.length < Math.min(inCountry, home.length)) {
+      const rest = home.filter((a) => !chosen.includes(a));
+      chosen.push(
+        rest.reduce((b, a) => {
+          const da = Math.min(...chosen.map((c) => distanceKm(at(a), at(c))));
+          const db = Math.min(...chosen.map((c) => distanceKm(at(b), at(c))));
+          return da > db ? a : b;
+        })
+      );
+    }
+  }
+  for (const p of points) {
+    const rest = ok.filter((a) => !chosen.includes(a));
+    if (rest.length) chosen.push(rest.reduce((b, a) => (distanceKm(at(a), p) < distanceKm(at(b), p) ? a : b)));
+  }
+  return chosen;
+}
+
+// The pings of a probe to the anchors [{ anchor, rtt }] as reference points (the shortest round trip of each).
+export const anchorRefs = (pings) =>
+  (pings || [])
+    .filter((p) => p && p.anchor && typeof p.rtt === "number")
+    .map((p) => ({ kind: "anchor", anchor: p.anchor.fqdn, city: p.anchor.city || null, country: p.anchor.country || null, sites: [[p.anchor.latitude, p.anchor.longitude]], rtt: p.rtt }));
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // The results of this site (the shape of Globalping, which the results of RIPE Atlas are brought to)
@@ -334,11 +382,12 @@ export function pairResults(v4Results, v6Results, excludeKeys = null) {
 }
 
 // Every probe of a pair of measurements, with its round trips, the check of its place and the reading of the trombone.
-// opts: { index (ixpIndex), rootSites, rootAnswers (Map id -> answers), paths (false for ping and dns: no hops to read) }.
+// opts: { index (ixpIndex), rootSites, rootAnswers (Map id -> answers), anchorPings (Map key of the probe -> [{ anchor, rtt }]),
+// paths (false for ping and dns: no hops to read) }.
 // A probe that is not where it is said to be keeps its figures but gets no reading: its place is what the reading stands on
 // when it is compared with the others, and what a reader would use to make sense of its delays.
 export function analysePair(v4Results, v6Results, opts = {}) {
-  const { index = null, rootSites = null, rootAnswers = null, excludeKeys = null, paths = true } = opts;
+  const { index = null, rootSites = null, rootAnswers = null, anchorPings = null, excludeKeys = null, paths = true } = opts;
   return pairResults(v4Results, v6Results, excludeKeys).map((row) => {
     const s4 = paths && row.v4 ? summarise(row.v4) : null;
     const s6 = paths && row.v6 ? summarise(row.v6) : null;
@@ -349,6 +398,7 @@ export function analysePair(v4Results, v6Results, opts = {}) {
       ...(s4 ? ixpRefs(s4.hops, index, "IPv4") : []),
       ...(s6 ? ixpRefs(s6.hops, index, "IPv6") : []),
       ...(rootAnswers && p.id !== undefined && p.id !== null ? rootRefs(rootAnswers.get(String(p.id)), rootSites) : []),
+      ...(anchorPings ? anchorRefs(anchorPings.get(row.key)) : []),
     ];
     const place = soiCheck(lat, lon, refs);
     const n4 = s4 ? s4.net : null;
