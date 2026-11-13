@@ -6,7 +6,10 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 
 ## [Unreleased]
 
-- None.
+### Added
+- Trombone routing reading under the `traceroute` and `mtr` tables: for each probe, the round trip to the target net of the access network, over IPv4 and IPv6; when one family proves that the target is near (up to 50 ms) and the other needs 100 ms or more, the slower one is marked as a trombone. Bands and method from ASPA Explorer.
+- Probe location check, on request: a round trip shorter than light in fibre (2/3 of c, the "speed of Internet") allows from the declared place of a probe proves that the probe is elsewhere. Reference points: the exchange points that a path crosses (PeeringDB, asked from the browser and kept for a day) and, for RIPE Atlas probes on every command, the instances of the DNS root servers that answer `hostname.bind` (Izhikevich and others, IMC 2026). A probe that is not where it is said to be is marked with the figures that prove it and is not read as a trombone.
+- `src/lib/soi.js` (pure functions) with unit tests (`npm test`, run by CI), `public/data/root-sites.json` and `scripts/build-root-sites.mjs` to rebuild it.
 
 ## [2.1.0] - 2026-02-05
 

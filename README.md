@@ -29,6 +29,8 @@ Feedback: mailto:antonio@prado.it
   - **ISP** filter is best-effort and not guaranteed by upstream metadata; prefer ASN
 - **Multi-target** mode (run the same command over multiple targets)
 - **Per-probe tables** (sortable) + summary stats (medians/p95 and deltas)
+- **Trombone routing** hints on `traceroute`/`mtr`: a family that takes a detour on a probe where the other one proves the target is near
+- **Probe location check**: probes that cannot be where they are said to be, proved with the speed of light in fibre (exchange points, DNS root servers)
 - **ASN details**: click an ASN to open an in-app panel with RIPEstat data (including a RPKI validity breakdown)
 - **Exports:** JSON (raw bundle) and CSV (per-probe rows)
 - **Share link** (settings) and **Report mode** (shareable link embedding results)
@@ -51,6 +53,10 @@ Feedback: mailto:antonio@prado.it
   - [http](#http)
 - [ASN details](#asn-details)
 - [Interpreting results](#interpreting-results)
+- [Trombone routing and probe locations](#trombone-routing-and-probe-locations)
+  - [The speed of Internet](#the-speed-of-internet)
+  - [Trombone routing](#trombone-routing)
+  - [Where the probes are](#where-the-probes-are)
 - [API endpoints](#api-endpoints)
 - [Limitations and notes](#limitations-and-notes)
 - [Development](#development)
@@ -318,6 +324,55 @@ For commands where ratio is shown:
 - `> 1`: v6 slower
 - `< 1`: v6 faster
 
+## Trombone routing and probe locations
+
+Under the tables of a `traceroute` or an `mtr`, ping6.it reads the two families of each probe for **trombone routing**, and can check **where each probe really is**. For the probes of RIPE Atlas the location check is available under every command.
+
+The method was built and tested in [ASPA Explorer](https://aspa.ping6.it/guide.html#probe-place) (University of Padova) and is adapted here to what ping6.it measures: the same target, over IPv4 and IPv6, from the same probes. The code is in `src/lib/soi.js` (pure functions, with tests in `test/`).
+
+### The speed of Internet
+
+Light in fibre travels at about two thirds of its speed in vacuum: about **200 km in a millisecond**. Izhikevich and others call it the *speed of Internet* (SOI). It turns a delay into a bound on a distance:
+
+- a round trip of `t` ms proves that the two ends are **at most** `t/2 × 200` km apart;
+- a round trip to a point `d` km away takes **at least** `2 × d / 200` ms.
+
+Queues, slow answers and tunnels only add time, so the bound never lies in the other direction: a path can look longer than it is, never shorter.
+
+### Trombone routing
+
+A trombone is a path between two points that are near each other which goes far away and comes back (in the literature, a path that starts and ends in one country and crosses another one). Told by its delay, it needs to know that the two points are near, and ping6.it does not know where a target is. But it reaches the same target twice from the same probe, and **the faster family is the proof**: if IPv4 gets there in 8 ms, the target is within 800 km of the probe, and no distance explains an IPv6 round trip of 140 ms.
+
+For each probe, the round trip to the target is taken **net of the access network**: from the first public address of the path to the target (a modem, a tunnel or a mobile network add a delay that says nothing about the route). The shortest round trip of each hop is used. Then:
+
+| Faster family | Slower family | Reading |
+| --- | --- | --- |
+| up to 50 ms | 100 ms or more | **trombone over** the slower family |
+| up to 50 ms | more than 50 ms, and at least 25 ms more than the faster one | the slower family is **longer** than it should be |
+| up to 50 ms | anything else | no trombone |
+| more than 50 ms | | *far on both*: the target may simply be far, nothing is said |
+
+A probe whose trace stops before the target on either family is not read (the delay of a router on the way says nothing about the target), and neither is a probe that is not where it is said to be.
+
+What it cannot tell: a name can be served to one family from elsewhere (an anycast or a CDN with fewer sites over IPv6), which looks the same as a detour of the path. Either way it is a **lead** to follow in the hops of that probe, not a proof.
+
+The bands (50 and 100 ms) are the ones ASPA Explorer uses. They follow the LACNIC 2022 Connectivity Study, which finds that the round trips that stay inside a country are mostly below 50 ms and that those that leave it are typically above 100 ms; they are a reading, not a standard.
+
+### Where the probes are
+
+Every reading supposes that a probe is where it is said to be. Globalping places a probe by the address it connects from (geolocation databases); the hosts of RIPE Atlas place their probes on a map. Both can be wrong: [Izhikevich and others](https://doi.org/10.1145/3777912.3839804) ("Rooting Out Incorrect RIPE Atlas Probe Geolocations", IMC 2026) found that 2.4% of the probes of RIPE Atlas could not be where they were said to be, about half of them more than 1,000 km away. A probe that is not where it is said to be makes a detour that is not there.
+
+The check is the SOI bound, applied to points whose place is known: **a round trip to such a point shorter than light in fibre needs from the declared place of the probe, less a margin, is impossible from that place**, so the probe is elsewhere, within the distance that the round trip allows from that point. The probe is marked in the table with the figures that prove it, and its delays are not read as a trombone. Two kinds of points are used:
+
+- **Exchange points** (`traceroute` and `mtr`, both backends). A traceroute has its own reference points: a hop that answers from the LAN of an exchange is on the other side of its switch, so the packet went at least to the nearest site of that exchange and came back. The prefixes of the LANs and the coordinates of the facilities come from [PeeringDB](https://www.peeringdb.com/). The hops of both families are used. Margin: 100 km, because both places are cities and not points.
+- **DNS root servers** (RIPE Atlas probes, every command). This is the method of the study above. Every probe of RIPE Atlas asks each root server, every four minutes, which of its instances answers (`hostname.bind`, public built-in measurements), and the name of an instance carries the code of its city or airport. Only the instances whose place has been confirmed by the anchors of RIPE Atlas are used (`public/data/root-sites.json`): one anchor reached it within 5 ms, and none in less time than light allows from the place read from the name. An answer outside the naming scheme of the operator (often a resolver or a firewall of the network of the probe) is not used; the G, D and I roots are not read. Margin: 300 km, because the place is read from the code of a city.
+
+Not every probe can be checked: a path may cross no exchange, and Globalping cannot ask a root server which instance answers. The result says how many probes could be checked.
+
+**Privacy.** The check is off until you press *Check where the probes are* (the choice is remembered in your browser, and a checkbox turns it off). When it is on, your browser asks PeeringDB for five tables, once a day (they are kept in your browser; PeeringDB limits how often an address can ask for them, and its data are not copied to ping6.it), and RIPE Atlas for the answers of the root servers to the probes of the measurement. Both see your address. The reading of the trombone uses only the results already on the page.
+
+`public/data/root-sites.json` is rebuilt by hand with `node scripts/build-root-sites.mjs` (data of RIPE Atlas and of [OurAirports](https://ourairports.com/), public domain).
+
 ## API endpoints
 
 This repo includes Cloudflare Pages Functions used by the UI:
@@ -352,6 +407,7 @@ There is also an NLNOG Looking Glass proxy endpoint under `functions/api/nlnog/`
 - **ISP filtering is best-effort.** Prefer ASN when possible.
 - **Turnstile is enforced for pair creation.** Automated usage without a valid challenge token will fail.
 - **Pair endpoints are rate-limited.** On `429`, check `Retry-After`.
+- **Trombone readings are leads, not proofs**, and the probe location check needs a reference point on the path or, for RIPE Atlas, an answer of a root server (see [Trombone routing and probe locations](#trombone-routing-and-probe-locations)).
 - **Report mode prefers short links** when `REPORT_KV` (or `ASN_META_KV` fallback) is configured. Without KV, it falls back to embedding results into the URL (large reports may hit URL size limits).
 
 ## Development
@@ -369,6 +425,12 @@ Build:
 ```bash
 npm run build
 npm run preview
+```
+
+Test and lint:
+```bash
+npm test
+npm run lint
 ```
 
 ### Cloudflare Pages configuration
@@ -414,7 +476,11 @@ See [SECURITY.md](./SECURITY.md).
 
 ping6.it is built on top of:
 - Globalping (API + distributed probes)
-- RIPE Atlas (API + distributed probes)
+- RIPE Atlas (API + distributed probes, built-in measurements and anchors)
+- PeeringDB (exchange points and their facilities)
+- Izhikevich and others, "Rooting Out Incorrect RIPE Atlas Probe Geolocations" (IMC 2026), for the method of the probe location check
+- ASPA Explorer (University of Padova), where the trombone and probe location checks were first built
+- OurAirports (public domain airport data)
 
 ## License
 
