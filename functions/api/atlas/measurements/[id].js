@@ -10,10 +10,10 @@ function json(body, status = 200) {
   });
 }
 
-function extractAtlasKey(request, env) {
-  const headerKey = request.headers.get("X-Atlas-Key") || "";
-  const key = String(headerKey || env.ATLAS_API_KEY || "").trim();
-  return key;
+// Only a key that the visitor sends is used to read: the measurements that this site creates are public, and the key of the
+// site (ATLAS_API_KEY) must not open the private measurements of its owner to whoever knows their number.
+function extractAtlasKey(request) {
+  return String(request.headers.get("X-Atlas-Key") || "").trim();
 }
 
 async function atlasGetJson(path, apiKey, signal) {
@@ -376,12 +376,12 @@ function deriveStatus(meta, resultsLen) {
 }
 
 export async function onRequestGet(context) {
-  const { request, env, params } = context;
+  const { request, params } = context;
   const id = String(params?.id || "").trim();
   if (!id) return json({ error: "missing_id" }, 400);
 
   // NOTE: results are usually public. We try without auth when no key is provided.
-  const apiKey = extractAtlasKey(request, env);
+  const apiKey = extractAtlasKey(request);
 
   const now = Math.floor(Date.now() / 1000);
   const start = now - 3600;
