@@ -9,7 +9,7 @@ const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 const GLOBALPING_URL = "https://api.globalping.io/v1/measurements";
 
 const ALLOWED_TYPES = new Set(["ping", "traceroute", "mtr", "dns", "http"]);
-const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
+const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it"]);
 
 function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {

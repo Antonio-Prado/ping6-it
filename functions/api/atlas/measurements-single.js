@@ -6,7 +6,7 @@ const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 const ATLAS_BASE = "https://atlas.ripe.net";
 
 const ALLOWED_TYPES = new Set(["ping", "traceroute", "dns"]);
-const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
+const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it"]);
 
 function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
