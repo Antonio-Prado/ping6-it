@@ -1,4 +1,9 @@
+import { tooManyRequests } from "../../_lib/rateLimit.js";
+
 export async function onRequest(context) {
+  const limited = await tooManyRequests(context, { scope: "globalping_read", limit: 3000, windowSec: 300, cacheOnly: true });
+  if (limited) return limited;
+
   const req = context.request;
   if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 

@@ -1,3 +1,5 @@
+import { tooManyRequests } from "../_lib/rateLimit.js";
+
 const RIPESTAT_AS_OVERVIEW = "https://stat.ripe.net/data/as-overview/data.json";
 const RIPESTAT_PREFIX_SIZE_DISTRIBUTION = "https://stat.ripe.net/data/prefix-size-distribution/data.json";
 const RIPESTAT_RIS_PREFIXES = "https://stat.ripe.net/data/ris-prefixes/data.json";
@@ -484,6 +486,9 @@ async function refreshRecord({ kv, cache, asn }) {
 }
 
 export async function onRequest(context) {
+  const limited = await tooManyRequests(context, { scope: "asn_meta", limit: 600, windowSec: 300, cacheOnly: true });
+  if (limited) return limited;
+
   const asn = normalizeAsnParam(context?.params?.asn);
   if (!asn) {
     return json({ error: "bad_request", message: "Invalid ASN." }, 400, "no-store");

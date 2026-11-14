@@ -1,4 +1,9 @@
+import { tooManyRequests } from "../_lib/rateLimit.js";
+
 export async function onRequest(context) {
+  const limited = await tooManyRequests(context, { scope: "nlnog_prefix", limit: 120, windowSec: 300, cacheOnly: true });
+  if (limited) return limited;
+
   const url = new URL(context.request.url);
   const q = url.searchParams.get("q");
   const nodes = url.searchParams.get("nodes");

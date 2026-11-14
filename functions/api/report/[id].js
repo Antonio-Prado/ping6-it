@@ -1,3 +1,5 @@
+import { tooManyRequests } from "../_lib/rateLimit.js";
+
 const REPORT_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 function json(body, status = 200, extraHeaders = {}) {
@@ -17,6 +19,9 @@ function getReportsKv(env) {
 }
 
 export async function onRequestGet(context) {
+  const limited = await tooManyRequests(context, { scope: "report_read", limit: 120, windowSec: 300, cacheOnly: true });
+  if (limited) return limited;
+
   const { params, env } = context;
 
   const id = String(params?.id || "").trim();

@@ -112,6 +112,9 @@ export async function applyRateLimit({
   windowSec = 600,
   // What is counted: the address of the client, or a fixed subject (a budget shared by everybody).
   subject = null,
+  // Count in the cache of the data centre only, without KV: for the endpoints that are asked often (a KV write for each
+  // request would use up the daily writes of the account).
+  cacheOnly = false,
 }) {
   const ip = subject ? String(subject) : getClientIp(request);
   const nowSec = Math.floor(Date.now() / 1000);
@@ -119,7 +122,7 @@ export async function applyRateLimit({
   const l = clampInt(limit, { min: 1, max: 10_000, fallback: 30 });
   const w = clampInt(windowSec, { min: 5, max: 86_400, fallback: 600 });
 
-  const storage = env?.RATE_LIMIT_KV || env?.ASN_META_KV || null;
+  const storage = cacheOnly ? null : env?.RATE_LIMIT_KV || env?.ASN_META_KV || null;
   const key = `__rl:v1:${scope}:${ip}`;
 
   let entry = null;
@@ -169,4 +172,16 @@ export async function applyRateLimit({
     }),
     debug: { storedVia },
   };
+}
+
+/**
+ * The answer to a client over the limit (HTTP 429), or null when the request can go on.
+ */
+export async function tooManyRequests(context, options) {
+  const rl = await applyRateLimit({ request: context.request, env: context.env, ...options });
+  if (!rl.limited) return null;
+  return new Response(JSON.stringify({ error: "rate_limited", retryAfterSec: rl.retryAfterSec }), {
+    status: 429,
+    headers: { "content-type": "application/json; charset=utf-8", ...rl.headers },
+  });
 }

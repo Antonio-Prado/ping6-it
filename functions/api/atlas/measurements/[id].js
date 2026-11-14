@@ -1,3 +1,5 @@
+import { tooManyRequests } from "../../_lib/rateLimit.js";
+
 const ATLAS_BASE = "https://atlas.ripe.net";
 
 function json(body, status = 200) {
@@ -376,6 +378,9 @@ function deriveStatus(meta, resultsLen) {
 }
 
 export async function onRequestGet(context) {
+  const limited = await tooManyRequests(context, { scope: "atlas_read", limit: 600, windowSec: 300, cacheOnly: true });
+  if (limited) return limited;
+
   const { request, params } = context;
   const id = String(params?.id || "").trim();
   if (!id) return json({ error: "missing_id" }, 400);
