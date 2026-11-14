@@ -1,3 +1,5 @@
+import { tooManyRequests } from "../../_lib/rateLimit.js";
+
 const UPSTREAM = "https://api.globalping.io/v1/measurements";
 
 function json(status, obj) {
@@ -147,6 +149,9 @@ export async function onRequest(context) {
   const req = context.request;
 
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
+
+  const limited = await tooManyRequests(context, { scope: "globalping_create", limit: 60, windowSec: 600 });
+  if (limited) return limited;
 
   let body;
   try {
