@@ -7,7 +7,7 @@ import { resolveAtlasKey, sharedAtlasLimits, spendSharedAtlasBudget } from "../_
 
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const ATLAS_BASE = "https://atlas.ripe.net";
-const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
+const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it"]);
 const MAX_ANCHORS = 14;
 const MAX_PROBES = 50;
 const PACKETS = 3;

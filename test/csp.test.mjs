@@ -17,7 +17,7 @@ test("public/_headers carries the policy of functions/api/_lib/csp.js", () => {
 test("the page gets a new nonce at each request, and keeps its other headers", async () => {
   const nonces = [];
   for (let i = 0; i < 2; i++) {
-    const res = await onRequest({ next: async () => page() });
+    const res = await onRequest({ request: new Request("https://ping6.it/"), next: async () => page() });
     const csp = res.headers.get("content-security-policy");
     const m = /script-src [^;]*'nonce-([A-Za-z0-9+/]{24})'/.exec(csp);
     assert.ok(m, csp);
@@ -31,5 +31,13 @@ test("the page gets a new nonce at each request, and keeps its other headers", a
 
 test("the answers of the API are left as they are", async () => {
   const api = new Response("{}", { headers: { "content-type": "application/json" } });
-  assert.equal(await onRequest({ next: async () => api }), api);
+  assert.equal(await onRequest({ request: new Request("https://ping6.it/api/atlas/config"), next: async () => api }), api);
+});
+
+test("the address on pages.dev is sent to ping6.it, the previews of the branches are not", async () => {
+  const next = async () => page();
+  const res = await onRequest({ request: new Request("https://ping6-it.pages.dev/api/report/abcdefgh?x=1", { method: "POST" }), next });
+  assert.equal(res.status, 308);
+  assert.equal(res.headers.get("location"), "https://ping6.it/api/report/abcdefgh?x=1");
+  assert.equal((await onRequest({ request: new Request("https://csp.ping6-it.pages.dev/"), next })).status, 200);
 });

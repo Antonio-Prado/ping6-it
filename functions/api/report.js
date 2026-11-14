@@ -5,7 +5,7 @@ const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 // Keep aligned with front-end regexp: /^[A-Za-z0-9_-]{8,64}$/
 const REPORT_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
-const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it", "ping6-it.pages.dev"]);
+const ALLOWED_HOSTNAMES = new Set(["ping6.it", "www.ping6.it"]);
 
 function json(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {

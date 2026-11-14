@@ -2,4 +2,4 @@ Contact: mailto:antonio@prado.it
 Contact: https://github.com/Antonio-Prado/ping6-it/security
 Preferred-Languages: en, it
 Canonical: https://ping6.it/.well-known/security.txt
-Expires: 2027-01-19T00:00:00.000Z
+Expires: 2027-11-14T00:00:00.000Z

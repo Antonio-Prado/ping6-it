@@ -7,6 +7,8 @@ The format is based on **Keep a Changelog**, and this project aims to follow **S
 ## [Unreleased]
 
 ### Changed
+- The address of the project on pages.dev (`ping6-it.pages.dev`) sends the page and the API to ping6.it, where the firewall, the bot detection and the rate limiting rule of the zone apply; a Turnstile token is accepted from ping6.it only.
+- `Cross-Origin-Opener-Policy: same-origin` on every file; `security.txt` expires on 2027-11-14.
 - Globalping is the backend on every visit: the page no longer reopens on the backend used last (a share link or a history entry still selects its own).
 - RIPE Atlas is no longer labelled as experimental.
 - The RIPE Atlas key of the site is never used to read a measurement (only a key sent by the visitor is), so it cannot open private measurements of its owner.
